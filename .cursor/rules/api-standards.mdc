@@ -1,0 +1,49 @@
+---
+description: API response format — status, message, data
+globs: "**/views.py,**/urls.py,**/serializers.py,**/services/**/*.py,**/api/**/*.py"
+alwaysApply: false
+---
+
+# API Response Format
+
+Every endpoint MUST return:
+
+```json
+{
+  "status": "success",
+  "message": "Product recorded successfully.",
+  "data": { "ref": 122 }
+}
+```
+
+or on failure:
+
+```json
+{
+  "status": "error",
+  "message": "We couldn't save that product.",
+  "data": null
+}
+```
+
+Use helpers only:
+
+```python
+from core.api_response import success_response, error_response
+
+return success_response(
+    "Product recorded successfully.",
+    data={"ref": product.id},
+    status_code=201,
+)
+return error_response("We couldn't find that product.", status_code=404)
+```
+
+## Rules
+
+- `status`: only `"success"` or `"error"`
+- `message`: user-friendly, popup-ready, no tech jargon
+- `data`: payload object/list, or `null`; for creates prefer `{ "ref": <id> }`
+- Thin views; logic in services; named routes in `urls.py`
+- Correct HTTP codes: 200, 201, 400, 401, 403, 404, 409, 500
+- Never leak stack traces, SQL, or internal errors in `message`
