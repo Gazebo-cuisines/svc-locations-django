@@ -14,15 +14,20 @@ from django.db import transaction
 
 from locations.models import Location
 from product.models import (
+    AllergenCode,
     Category,
     DeliveryState,
     PackagingType,
     PhysicalState,
     Product,
+    ProductAcceptance,
+    ProductAllergen,
     ProductAudit,
     ProductClass,
     ProductCosting,
     ProductFlags,
+    ProductIngredientLabel,
+    ProductNutrition,
     ProductPackaging,
     ProductProduction,
     ProductShelfLife,
@@ -181,6 +186,9 @@ class Command(BaseCommand):
         ProductTechnical.objects.create(
             product=product,
             is_gmo_free=True,
+            is_vegetarian=False,
+            is_vegan=False,
+            country_of_origin='United Kingdom',
             spec_sign_off_date=date(2026, 1, 15),
             next_review_date=date(2026, 7, 15),
             requires_temperature_check=True,
@@ -193,6 +201,57 @@ class Command(BaseCommand):
             lan_username='demo.user',
             source_workstation='DEMO-WS-01',
             source_workstation_ip='10.0.0.42',
+        )
+        for code, contains, may_contain in (
+            (AllergenCode.GLUTEN, True, False),
+            (AllergenCode.EGGS, True, False),
+            (AllergenCode.MILK, True, False),
+            (AllergenCode.MUSTARD, True, False),
+            (AllergenCode.SESAME, False, True),
+            (AllergenCode.SOYA, False, True),
+        ):
+            ProductAllergen.objects.create(
+                product=product,
+                allergen_code=code,
+                contains=contains,
+                may_contain=may_contain,
+            )
+        ProductNutrition.objects.create(
+            product=product,
+            energy_kj=Decimal('1025.0000'),
+            energy_kcal=Decimal('245.0000'),
+            fat_g=Decimal('12.5000'),
+            saturates_g=Decimal('3.2000'),
+            carbohydrate_g=Decimal('18.0000'),
+            sugars_g=Decimal('2.1000'),
+            fibre_g=Decimal('1.5000'),
+            protein_g=Decimal('15.8000'),
+            salt_g=Decimal('1.2000'),
+        )
+        ProductIngredientLabel.objects.create(
+            product=product,
+            name='Peri Peri Burger',
+            description='Spicy peri peri chicken burger in a seeded bun.',
+            per_srp='1 burger',
+            per_box='12',
+            free_text_a='Keep refrigerated',
+            free_text_b='Do not refreeze',
+            size_text='165g',
+            storage='Store at 0–5°C. Once opened, consume within 24 hours.',
+            cooking_preparation='Oven 180°C for 12–15 mins from chilled, or grill until piping hot.',
+            average_weight='165g',
+            per_pallet='48 cases',
+            per_case='12',
+            ingredients_text=(
+                '**Chicken** (58%), **Wheat Flour**, Water, Peri Peri Sauce '
+                '(Chilli, **Mustard**, Garlic, Oil, Vinegar, Salt), '
+                '**Egg**, **Milk**, Yeast, Salt. May contain **Sesame**, **Soya**.'
+            ),
+        )
+        ProductAcceptance.objects.create(
+            product=product,
+            min_acceptable_shelf_life_days=3,
+            acceptance_note='Reject if core temp above 5°C on goods-in or packaging damaged.',
         )
 
         self.stdout.write(self.style.SUCCESS(
