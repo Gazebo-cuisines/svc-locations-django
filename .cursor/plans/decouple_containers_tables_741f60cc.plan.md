@@ -1,101 +1,109 @@
 ---
 name: Decouple Containers Tables
-overview: Split legacy tblcontainers into loc_* tables. New path = Django ORM + API only (no triggers/SPs/DB functions). Preserve integer IDs. Build in small approved chunks.
+overview: Split legacy tblcontainers into loc_* tables. New stack = Django ORM + API only (no VB, no triggers/SPs). Preserve integer IDs and business semantics (including dual hierarchy meanings). Build in approved chunks.
 todos:
   - id: chunk-1
     content: "Chunk 1: Django models + migration for empty loc_* schema (no data, no API)"
     status: completed
   - id: chunk-2
-    content: "Chunk 2: Hierarchy reconcile worksheet + signed parent map"
-    status: pending
+    content: "Chunk 2: Hierarchy reconcile — dual relation_type (zone_group + subordinate_storage)"
+    status: completed
+  - id: chunk-2b
+    content: "Chunk 2b: Add relation_type to loc_location_edge (schema tweak)"
+    status: completed
   - id: chunk-3
     content: "Chunk 3: One-shot ETL management command (legacy -> loc_*)"
-    status: pending
+    status: completed
   - id: chunk-4
-    content: "Chunk 4: Domain services (validation that replaces triggers)"
-    status: pending
+    content: "Chunk 4: Domain services (Python replaces trigger rules; accurate hierarchy helpers)"
+    status: completed
   - id: chunk-5
     content: "Chunk 5: DRF read API"
-    status: pending
+    status: completed
   - id: chunk-6
     content: "Chunk 6: DRF write API"
     status: pending
   - id: chunk-7
-    content: "Chunk 7: Dual-write / legacy compat projection for stock readers"
+    content: "Chunk 7: Optional read-compat for other services still on legacy DB (only if needed)"
     status: pending
   - id: chunk-8
-    content: "Chunk 8: Cutover checklist (stop legacy writers; drop CORE triggers later)"
+    content: "Chunk 8: Cutover — frontend on API; no VB; no new SP/trigger dependency"
     status: pending
 isProject: false
 ---
 
 # Decouple tblcontainers — chunked build plan
 
-## Locked rules
+## Locked rules (updated)
 
-- **New Locations path:** Django ORM + REST API only. Frontend calls API. **No new triggers, stored procedures, or DB functions.**
-- **Business rules** (rename/delete guards, hierarchy cycles, flag mapping) live in Python services.
-- **Never renumber** `tblcontainers.id` — new `loc_location.id` = same ints.
-- **Ignore Django admin tables** for now (no `django.contrib.admin`; do not migrate auth/sessions into ERP as a goal of this work).
-- **Do not touch** stock/planning ADJACENT procs/functions in this project.
+- **Target stack:** Django ORM + REST API only. Frontend calls API.
+- **No VB Access** going forward.
+- **No new triggers / stored procedures / DB functions.** Business logic in Python.
+- **Current ERP `production` SPs are not a runtime constraint** for this microservice — we will reimplement behaviour in Django when each consumer moves.
+- **Non-negotiable:** migration must **preserve business meaning and calculation accuracy**. Same location IDs. Same zone vs subordinate-storage semantics. Same role/stock-profile facts.
+- **Never renumber** ids (`loc_location.id` = legacy `tblcontainers.id`).
+- **Ignore Django admin tables** for now.
 
-## Target tables (Chunk 1 creates these empty)
+## Why dual hierarchy stays (accuracy, not SP loyalty)
+
+Audited on `production`: two different business relationships, both real:
+
+| relation_type | Legacy source | Business meaning | Accuracy impact if dropped |
+|---|---|---|---|
+| `zone_group` | `topcontainer` | Zone/group (Cold Storage, Low Risk) | Lose process/storage grouping used for organisation and historical top-container logic |
+| `subordinate_storage` | child-edge table | Site subordinate bins (Unit 11, Dispatch, Unit 2) | Lose “parent site includes child freezer/chiller stock” behaviour (today in sales-order stock allocation) |
+
+We keep **both in `loc_location_edge` with `relation_type`** so when Stock/Sales are rewritten in Django, calculations can match legacy behaviour. We do **not** keep MySQL SPs — we keep the **data facts** those SPs used.
+
+Signed map: [core/document/chunk2_hierarchy_reconcile.csv](core/document/chunk2_hierarchy_reconcile.csv)
+
+## Target tables
 
 | Table | Purpose |
 |---|---|
-| `loc_location` | Core identity: name, external_code, visible, static, locked, timestamps. PK = legacy id |
-| `loc_location_role` | Roles: internal, process, supplier, customer, courier, depot, storage, transform |
-| `loc_location_feature` | UI/process flags: customer_orders, forecasts, picking_list, etc. |
-| `loc_stock_profile` | 1:1 stock/production identifiers, shelf life, real_stock, etc. |
-| `loc_location_edge` | Single hierarchy: parent_id + child_id, unique pair, FKs |
-| `loc_address` | Addresses (from mainaddress + postal table) |
-| `loc_contact` | Contacts (merge of two legacy contact tables; can be empty initially) |
+| `loc_location` | Core identity; PK = legacy id |
+| `loc_location_role` | Roles |
+| `loc_location_feature` | UI/process flags |
+| `loc_stock_profile` | Stock/production identifiers, real_stock, shelf life |
+| `loc_location_edge` | parent/child + **`relation_type`** (`zone_group` \| `subordinate_storage`) |
+| `loc_address` | Addresses |
+| `loc_contact` | Contacts |
 
-Out of scope columns: `customerTotalDelivered`, packaging vessels, slope/reconcile.
+## Chunks
 
-## Chunks (approve one at a time)
+### Chunk 1 — Schema only — DONE
+Empty `loc_*` tables.
 
-### Chunk 1 — Schema only (NEXT)
-Django models + `locations` migration that creates empty `loc_*` tables. No ETL, no API, no dual-write.
+### Chunk 2 — Hierarchy sign-off — AWAITING APPROVE DUAL
+CSV map with both relationship types. No pick-one.
 
-### Chunk 2 — Hierarchy reconcile
-Worksheet of all 12 child edges + all `topcontainer` values; pick one parent truth per child. No code until signed off.
+### Chunk 2b — Edge schema tweak
+Add `relation_type` to `loc_location_edge` + unique `(relation_type, parent, child)` (and likely unique `(relation_type, child)` so one parent per type).
 
 ### Chunk 3 — ETL
-Management command: copy 61 rows (+ edges/addresses) into `loc_*` with identical IDs + parity checks.
+Copy 61 locations + both edge sets + addresses/roles/features/stock profiles into `DB_LOCATIONS` with parity checks.
 
 ### Chunk 4 — Domain services
-Python replacements for BEFORE UPDATE/DELETE trigger rules + hierarchy cycle checks + role/feature updates in one transaction.
+Python: rename/delete guards, cycle checks, helpers like `get_zone_parent`, `get_subordinate_children` (replacements for old getter/SP behaviour).
 
-### Chunk 5 — Read API
-DRF list/retrieve location (+ roles, features, stock profile, edges, addresses).
+### Chunk 5–6 — Read/Write API
+DRF only path for frontend.
 
-### Chunk 6 — Write API
-Create/update/delete via API only (frontend path).
-
-### Chunk 7 — Compat for stock
-Projection/dual-write so existing stock tables still see legacy-shaped data / same IDs until stock moves to API.
+### Chunk 7 — Compat (optional)
+Only if another service still must read legacy-shaped rows during transition. Not required if everything new goes through Locations API.
 
 ### Chunk 8 — Cutover
-Frontend on API; document when CORE triggers on `tblcontainers` can be disabled (not required for new path; only for leftover legacy writers).
+Frontend on API; document retirement of VB + container triggers/SPs on ERP when those consumers are gone.
 
 ```mermaid
 flowchart TD
-  C1[Chunk1_schema]
-  C2[Chunk2_hierarchy_signoff]
+  C1[Chunk1_schema_done]
+  C2[Chunk2_dual_hierarchy_signoff]
+  C2b[Chunk2b_relation_type_column]
   C3[Chunk3_ETL]
-  C4[Chunk4_services]
+  C4[Chunk4_python_services]
   C5[Chunk5_read_API]
   C6[Chunk6_write_API]
-  C7[Chunk7_compat]
-  C8[Chunk8_cutover]
-  C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7 --> C8
+  C8[Chunk8_API_cutover]
+  C1 --> C2 --> C2b --> C3 --> C4 --> C5 --> C6 --> C8
 ```
-
-## Legacy diagnosis (short)
-
-- `tblcontainers` = god table (61 rows).
-- Dual hierarchy is inconsistent (edge parent≠`topcontainer`).
-- CORE triggers = audit + rename/delete guards → move to Python.
-- CORE functions = thin getters → move to Python/API.
-- Hard FKs from `tblproducts` etc. force ID preservation + strangler.

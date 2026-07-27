@@ -120,6 +120,11 @@ class LocationStockProfile(models.Model):
         return f'stock:{self.location_id}'
 
 
+class LocationRelationType(models.TextChoices):
+    ZONE_GROUP = 'zone_group', 'Zone group'
+    SUBORDINATE_STORAGE = 'subordinate_storage', 'Subordinate storage'
+
+
 class LocationEdge(models.Model):
     parent = models.ForeignKey(
         Location,
@@ -133,13 +138,22 @@ class LocationEdge(models.Model):
         related_name='parent_edges',
         db_column='child_id',
     )
+    relation_type = models.CharField(
+        max_length=32,
+        choices=LocationRelationType.choices,
+        default=LocationRelationType.ZONE_GROUP,
+    )
 
     class Meta:
         db_table = 'loc_location_edge'
         constraints = [
             models.UniqueConstraint(
-                fields=['parent', 'child'],
+                fields=['relation_type', 'parent', 'child'],
                 name='uq_loc_location_edge',
+            ),
+            models.UniqueConstraint(
+                fields=['relation_type', 'child'],
+                name='uq_loc_location_edge_child_per_type',
             ),
             models.CheckConstraint(
                 check=~models.Q(parent=models.F('child')),
@@ -148,7 +162,7 @@ class LocationEdge(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.parent_id}->{self.child_id}'
+        return f'{self.relation_type}:{self.parent_id}->{self.child_id}'
 
 
 class LocationAddress(models.Model):

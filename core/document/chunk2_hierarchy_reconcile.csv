@@ -1,0 +1,37 @@
+child_id,child_name,relationship,parent_id,parent_name,source,status,notes
+14,Freezer - 503104,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+22,Freezer - 502005,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+23,Freezer - 4005012,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+24,Freezer - 4005706,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+25,Freezer - 2200220,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+26,Freezer - 2200468,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+27,Freezer - Unit 2,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+169,Chiller - 503102,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+170,Chiller - 503927,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+195,Chiller - RC 1,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+196,Chiller - RC 2,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+228,Freezer - 2200067,zone_group,168,Cold Storage,topcontainer,KEEP,storage zone grouping
+32,Belts,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+34,Fryers,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+36,Forming,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+80,Deboxing,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+81,Ovens,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+82,Cooking,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+84,Mixers,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+85,Marination,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+86,Pasteurising,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+223,Steaming,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+224,Mincing,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+225,Soaking,zone_group,3,Low Risk,topcontainer,KEEP,process zone grouping
+23,Freezer - 4005012,subordinate_storage,2,Unit 11,child_edge,KEEP,used for site stock rollup
+24,Freezer - 4005706,subordinate_storage,2,Unit 11,child_edge,KEEP,used for site stock rollup
+25,Freezer - 2200220,subordinate_storage,2,Unit 11,child_edge,KEEP,used for site stock rollup
+26,Freezer - 2200468,subordinate_storage,2,Unit 11,child_edge,KEEP,used for site stock rollup
+228,Freezer - 2200067,subordinate_storage,2,Unit 11,child_edge,KEEP,used for site stock rollup
+14,Freezer - 503104,subordinate_storage,6,Dispatch,child_edge,KEEP,LIVE in procSalesOrderAvailableStockAllocation
+22,Freezer - 502005,subordinate_storage,6,Dispatch,child_edge,KEEP,LIVE in procSalesOrderAvailableStockAllocation
+169,Chiller - 503102,subordinate_storage,6,Dispatch,child_edge,KEEP,LIVE in procSalesOrderAvailableStockAllocation
+170,Chiller - 503927,subordinate_storage,6,Dispatch,child_edge,KEEP,LIVE in procSalesOrderAvailableStockAllocation
+27,Freezer - Unit 2,subordinate_storage,8,Unit 2,child_edge,KEEP,used for site stock rollup
+195,Chiller - RC 1,subordinate_storage,8,Unit 2,child_edge,KEEP,used for site stock rollup
+196,Chiller - RC 2,subordinate_storage,8,Unit 2,child_edge,KEEP,used for site stock rollup
