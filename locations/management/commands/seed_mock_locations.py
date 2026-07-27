@@ -23,6 +23,7 @@ from locations.models import (
     LocationEdge,
     LocationFeature,
     LocationFeatureAssignment,
+    LocationRelationType,
     LocationRole,
     LocationRoleAssignment,
     LocationStockProfile,
@@ -215,7 +216,11 @@ class Command(BaseCommand):
             LocationEdge.objects.filter(child=loc).delete()
             parent_id = row.get('parent_id')
             if parent_id is not None:
-                LocationEdge.objects.create(parent_id=parent_id, child=loc)
+                LocationEdge.objects.create(
+                    parent_id=parent_id,
+                    child=loc,
+                    relation_type=LocationRelationType.ZONE_GROUP,
+                )
 
             LocationAddress.objects.filter(location=loc).delete()
             for addr in row.get('addresses', []):
