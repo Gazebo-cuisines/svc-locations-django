@@ -1,0 +1,125 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Gazebo — Locations & Products",
+    "description": "## Overview\n\nLocal Django microservice APIs for **locations/containers** and **products**.\n\n**Base URL:** `{{base_url}}` (default `http://127.0.0.1:8000`)\n\n## Response envelope\n\n```json\n{\n  \"status\": \"success|error\",\n  \"message\": \"...\",\n  \"data\": {}\n}\n```\n\n## Product notes\n\n- `GET /product/` lists active products.\n- `POST /product/` creates a **core** product row (lookups + containers must already exist).\n- Demo seed product: `id=900001` Peri Peri Burger (`python manage.py seed_demo_product`).\n- Demo containers: `900001`–`900004`.\n- Demo lookups: class/category/range/unit ids `9001` (+ unit case `9002`).\n\n## Containers\n\nContainers are `loc_location` rows. Use `GET /container/` for a flat list (useful for `source_container_id` / `destination_container_id`).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "product_id",
+      "value": "900001"
+    }
+  ],
+  "item": [
+    {
+      "name": "Containers",
+      "description": "Location/container endpoints.",
+      "item": [
+        {
+          "name": "List all containers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/container/?q=&visible=",
+              "host": ["{{base_url}}"],
+              "path": ["container", ""],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Optional name search",
+                  "disabled": true
+                },
+                {
+                  "key": "visible",
+                  "value": "true",
+                  "description": "Optional filter: true|false",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "### List all containers\n\n`GET /container/`\n\nReturns a flat list of all locations (containers) for FK selection when creating products.\n\n**Query params**\n| Param | Description |\n|---|---|\n| `q` | Filter by name (icontains) |\n| `visible` | `true` / `false` |\n\n**Success `data`**\n- `count` — number of rows\n- `results[]` — `{ id, container_id, name, external_code, visible, static, locked, roles }`\n- `endpoints` — related route map"
+          },
+          "response": []
+        },
+        {
+          "name": "List locations (tree)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/container/locations/",
+              "host": ["{{base_url}}"],
+              "path": ["container", "locations", ""]
+            },
+            "description": "### Location tree list\n\n`GET /container/locations/`\n\nRicher hierarchy-oriented location listing (tree). Prefer `/container/` for simple product FK dropdowns."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "description": "Product master APIs (core identity + classification).",
+      "item": [
+        {
+          "name": "List products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/",
+              "host": ["{{base_url}}"],
+              "path": ["product", ""]
+            },
+            "description": "### List products\n\n`GET /product/`\n\nReturns active products (`is_active=true`).\n\n**Success `data`** — array of:\n```json\n{\n  \"id\": 900001,\n  \"name\": \"Peri Peri Burger\",\n  \"alternate_name\": \"PP Burger\",\n  \"recipe_code\": \"PPB-001\",\n  \"is_active\": true,\n  \"product_class_id\": 9001,\n  \"category_id\": 9001,\n  \"range_id\": 9001,\n  \"unit_id\": 9001\n}\n```"
+          },
+          "response": []
+        },
+        {
+          "name": "Get product",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", ""]
+            },
+            "description": "### Get product detail\n\n`GET /product/:id/`\n\nReturns full core product fields including container FKs and timestamps.\n\n**404** if product does not exist."
+          },
+          "response": []
+        },
+        {
+          "name": "Create product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 900010,\n  \"name\": \"Demo Chicken Wrap\",\n  \"alternate_name\": \"DC Wrap\",\n  \"recipe_code\": \"DCW-001\",\n  \"is_active\": true,\n  \"is_downtime\": false,\n  \"product_class_id\": 9001,\n  \"category_id\": 9001,\n  \"range_id\": 9001,\n  \"sub_range_id\": 9001,\n  \"unit_id\": 9001,\n  \"purchasing_unit_id\": 9002,\n  \"purchase_shape_format_id\": 9001,\n  \"source_container_id\": 900001,\n  \"destination_container_id\": 900002,\n  \"ingredient_count\": 5,\n  \"remarks\": \"Created via Postman\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/product/",
+              "host": ["{{base_url}}"],
+              "path": ["product", ""]
+            },
+            "description": "### Create product\n\n`POST /product/`\n\nCreates a **core** `product` row only (no satellite tables yet).\n\n#### Required body fields\n| Field | Type | Notes |\n|---|---|---|\n| `id` | int | Explicit PK (legacy-compatible) |\n| `name` | string | Unique |\n| `product_class_id` | int | Must exist |\n| `category_id` | int | Must exist |\n| `range_id` | int | Must exist |\n| `unit_id` | int | Must exist |\n| `source_container_id` | int | `GET /container/` |\n| `destination_container_id` | int | `GET /container/` |\n\n#### Optional\n`alternate_name`, `recipe_code`, `alternate_recipe_code`, `gff_code`, `secondary_gff_recipe`, `external_barcode`, `is_active`, `is_downtime`, `purchasing_version`, `ingredient_count`, `remarks`, `sub_range_id`, `purchasing_unit_id`, `purchase_shape_format_id`\n\n#### Status codes\n| Code | Meaning |\n|---|---|\n| 201 | Created |\n| 400 | Validation / missing fields / bad FK |\n| 409 | `id` already exists |\n\n**Tip:** Call `GET /container/` first to pick container ids. Demo lookups use id `9001`."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
