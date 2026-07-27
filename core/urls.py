@@ -2,6 +2,8 @@
 
 from django.urls import include, path
 
+
 urlpatterns = [
     path('', include('locations.urls')),
+    path('product/', include('product.urls')),
 ]

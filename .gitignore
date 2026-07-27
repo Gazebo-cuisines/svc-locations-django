@@ -17,3 +17,7 @@ build/
 .DS_Store
 staticfiles/
 media/
+
+*.pem
+deploy/
+gazebo-erp-20260723.pem

@@ -2,10 +2,9 @@ from django.views.decorators.http import require_GET
 
 from locations.models import LocationRole
 from locations.presentation import location_detail_dict, location_list_dict
-from locations.utils.api_response import api_success
 from locations.utils.location_api import (
-    apply_list_filters,
     json_location_detail,
+    json_location_list,
     location_queryset,
 )
 
@@ -16,15 +15,11 @@ def _storage_queryset():
 
 @require_GET
 def storage_location_list_api(request):
-    qs = apply_list_filters(request, _storage_queryset())
-    results = [location_list_dict(item) for item in qs]
-    storage_class = request.GET.get('storage_class')
-    if storage_class:
-        needle = storage_class.lower()
-        results = [row for row in results if needle in (row.get('name') or '').lower()]
-    return api_success(
-        'Storage location list fetched successfully.',
-        data={'count': len(results), 'results': results},
+    return json_location_list(
+        request,
+        _storage_queryset(),
+        location_list_dict,
+        message='Storage location list fetched successfully.',
     )
 
 

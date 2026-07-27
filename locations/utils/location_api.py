@@ -1,6 +1,7 @@
 from django.http import HttpRequest
 
 from locations.models import Location
+from locations.services.location_tree import locations_queryset_to_tree
 from locations.utils.api_response import api_error, api_success
 
 
@@ -33,15 +34,18 @@ def apply_list_filters(request: HttpRequest, queryset):
     query = request.GET.get('q')
     if query:
         queryset = queryset.filter(name__icontains=query)
+    storage_class = request.GET.get('storage_class')
+    if storage_class:
+        queryset = queryset.filter(name__icontains=storage_class)
     return queryset
 
 
 def json_location_list(request: HttpRequest, queryset, serialize_list, *, message: str):
     queryset = apply_list_filters(request, queryset)
-    results = [serialize_list(item) for item in queryset]
+    results, count = locations_queryset_to_tree(queryset)
     return api_success(
         message,
-        data={'count': len(results), 'results': results},
+        data={'count': count, 'results': results},
     )
 
 
