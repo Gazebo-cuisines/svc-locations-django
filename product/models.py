@@ -479,6 +479,9 @@ class ProductTechnical(models.Model):
         related_name='technical',
     )
     is_gmo_free = models.BooleanField(default=False)
+    is_vegetarian = models.BooleanField(default=False)
+    is_vegan = models.BooleanField(default=False)
+    country_of_origin = models.CharField(max_length=64, null=True, blank=True)
     spec_sign_off_date = models.DateField(null=True, blank=True)
     next_review_date = models.DateField(null=True, blank=True)
     requires_temperature_check = models.BooleanField(default=False)
@@ -515,3 +518,113 @@ class ProductAudit(models.Model):
 
     def __str__(self):
         return f'audit:{self.product_id}'
+
+
+class AllergenCode(models.TextChoices):
+    NONE = 'none', 'None'
+    CELERY = 'celery', 'Celery'
+    CRUSTACEANS = 'crustaceans', 'Crustaceans'
+    EGGS = 'eggs', 'Eggs'
+    FISH = 'fish', 'Fish'
+    GLUTEN = 'gluten', 'Gluten'
+    LUPIN = 'lupin', 'Lupin'
+    MILK = 'milk', 'Milk'
+    MOLLUSCS = 'molluscs', 'Molluscs'
+    MUSTARD = 'mustard', 'Mustard'
+    NUTS = 'nuts', 'Nuts'
+    PEANUTS = 'peanuts', 'Peanuts'
+    SESAME = 'sesame', 'Sesame'
+    SOYA = 'soya', 'Soya'
+    SULPHITES = 'sulphites', 'Sulphites'
+
+
+class ProductAllergen(models.Model):
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='allergens',
+    )
+    allergen_code = models.CharField(max_length=16, choices=AllergenCode.choices)
+    contains = models.BooleanField(default=False)
+    may_contain = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'product_allergen'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'allergen_code'],
+                name='uniq_product_allergen_code',
+            ),
+        ]
+
+    def __str__(self):
+        return f'allergen:{self.product_id}:{self.allergen_code}'
+
+
+class ProductNutrition(models.Model):
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name='nutrition',
+    )
+    energy_kj = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    energy_kcal = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    fat_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    saturates_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    carbohydrate_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    sugars_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    fibre_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    protein_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    salt_g = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+
+    class Meta:
+        db_table = 'product_nutrition'
+
+    def __str__(self):
+        return f'nutrition:{self.product_id}'
+
+
+class ProductIngredientLabel(models.Model):
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name='ingredient_label',
+    )
+    name = models.CharField(max_length=128, null=True, blank=True)
+    description = models.TextField(null=True, blank=True)
+    per_srp = models.CharField(max_length=64, null=True, blank=True)
+    per_box = models.CharField(max_length=64, null=True, blank=True)
+    free_text_a = models.TextField(null=True, blank=True)
+    free_text_b = models.TextField(null=True, blank=True)
+    size_text = models.CharField(max_length=64, null=True, blank=True)
+    storage = models.TextField(null=True, blank=True)
+    cooking_preparation = models.TextField(null=True, blank=True)
+    average_weight = models.CharField(max_length=64, null=True, blank=True)
+    per_pallet = models.CharField(max_length=64, null=True, blank=True)
+    per_case = models.CharField(max_length=64, null=True, blank=True)
+    ingredients_text = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'product_ingredient_label'
+
+    def __str__(self):
+        return f'ingredient_label:{self.product_id}'
+
+
+class ProductAcceptance(models.Model):
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name='acceptance',
+    )
+    min_acceptable_shelf_life_days = models.IntegerField(null=True, blank=True)
+    acceptance_note = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'product_acceptance'
+
+    def __str__(self):
+        return f'acceptance:{self.product_id}'
