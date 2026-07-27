@@ -1,0 +1,1 @@
+{"sessionId": "2c8c6f", "hypothesisId": "H1-H3", "location": "core/settings.py", "message": "effective_db_config", "data": {"db_host": "3.10.84.186", "db_port": 3306, "db_name": "production_dev", "db_user": "gazebo_dev", "shell_db_host": "3.10.84.186", "dotenv_exists": true, "tcp_ok": true, "tcp_err": null}, "timestamp": 1785154934003, "runId": "post-fix"}
