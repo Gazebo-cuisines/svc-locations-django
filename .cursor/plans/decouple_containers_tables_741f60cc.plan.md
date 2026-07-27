@@ -13,13 +13,13 @@ todos:
     status: completed
   - id: chunk-3
     content: "Chunk 3: One-shot ETL management command (legacy -> loc_*)"
-    status: pending
+    status: completed
   - id: chunk-4
     content: "Chunk 4: Domain services (Python replaces trigger rules; accurate hierarchy helpers)"
-    status: pending
+    status: completed
   - id: chunk-5
     content: "Chunk 5: DRF read API"
-    status: pending
+    status: completed
   - id: chunk-6
     content: "Chunk 6: DRF write API"
     status: pending
