@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'locations',
     'product',
     'recipe',
+    'stock_ledger',
     'users_rbac',
 ]
 
@@ -95,6 +96,9 @@ CORS_ALLOWED_ORIGINS = [
     'https://www.gazeboo.cloud',
 ]
 
+AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
+AWS_PROFILE = os.getenv('AWS_PROFILE')
+AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-2')
 CORS_ALLOW_HEADERS = (
     'accept',
     'authorization',
