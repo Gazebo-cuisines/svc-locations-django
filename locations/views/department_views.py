@@ -1,4 +1,4 @@
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from locations.models import LocationRole
 from locations.presentation import location_detail_dict, location_list_dict
@@ -44,3 +44,16 @@ def department_detail_api(request, location_id: int):
         message='Department fetched successfully.',
         not_found_message='Department not found.',
     )
+
+@require_POST
+def create_department(request): 
+    data = json.loads(request.body)
+    name = data.get('name')
+    description = data.get('description')
+    location = data.get('location')
+    if not name:
+        return api_error(400, 'Name is required.')
+    if not location:
+        return api_error(400, 'Location is required.')
+    department = Department.objects.create(name=name, description=description, location=location)
+    return api_success(201, 'Department created successfully.', data=department_detail_dict(department))

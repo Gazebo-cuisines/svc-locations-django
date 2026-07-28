@@ -7,11 +7,11 @@ _CONTAINER_ENDPOINTS = {
     'containers': '/container/',
     'locations': '/container/locations/',
     'suppliers': '/container/suppliers/',
+    'couriers': '/container/couriers/',
     'customers': '/container/customers/',
     'departments': '/container/departments/',
     'storage': '/container/storage/',
 }
-
 
 def container_list_dict(location: Location) -> dict:
     return {
