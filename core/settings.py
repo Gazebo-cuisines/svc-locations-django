@@ -94,3 +94,5 @@ CORS_ALLOWED_ORIGINS = [
     'https://gazeboo.cloud',
     'https://www.gazeboo.cloud',
 ]
+
+AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
