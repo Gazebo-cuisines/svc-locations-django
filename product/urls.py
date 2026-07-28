@@ -13,10 +13,6 @@ urlpatterns = [
     path('<int:pk>/technical/', product_technical_api, name='product-technical'),
     path('<int:pk>/allergens/', product_allergens_api, name='product-allergens'),
     path('<int:pk>/nutrition/', product_nutrition_api, name='product-nutrition'),
-    path(
-        '<int:pk>/ingredient-label/',
-        product_ingredient_label_api,
-        name='product-ingredient-label',
-    ),
+    path('<int:pk>/ingredient-label/', product_ingredient_label_api, name='product-ingredient-label'),
     path('<int:pk>/acceptance/', product_acceptance_api, name='product-acceptance'),
 ]
