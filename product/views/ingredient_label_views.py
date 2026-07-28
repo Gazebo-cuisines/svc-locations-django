@@ -1,7 +1,10 @@
-from django.views.decorators.http import require_GET
+import json
+
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
-from product.models import ProductIngredientLabel
+from product.models import Product, ProductIngredientLabel
 
 
 def ingredient_label_dict(label: ProductIngredientLabel) -> dict:
@@ -23,13 +26,63 @@ def ingredient_label_dict(label: ProductIngredientLabel) -> dict:
     }
 
 
-@require_GET
-def product_ingredient_label_api(request, pk: int):
+def _parse_json_body(request):
     try:
-        label = ProductIngredientLabel.objects.get(pk=pk)
-    except ProductIngredientLabel.DoesNotExist:
-        return api_error('Ingredient label not found.', status_code=404)
+        return json.loads(request.body.decode('utf-8') or '{}')
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+_LABEL_FIELDS = (
+    'name',
+    'description',
+    'per_srp',
+    'per_box',
+    'free_text_a',
+    'free_text_b',
+    'size_text',
+    'storage',
+    'cooking_preparation',
+    'average_weight',
+    'per_pallet',
+    'per_case',
+    'ingredients_text',
+)
+
+
+@require_http_methods(['GET', 'PUT', 'DELETE'])
+@csrf_exempt
+def product_ingredient_label_api(request, pk: int):
+    if request.method == 'GET':
+        try:
+            label = ProductIngredientLabel.objects.get(pk=pk)
+        except ProductIngredientLabel.DoesNotExist:
+            return api_error('Ingredient label not found.', status_code=404)
+        return api_success(
+            'Ingredient label fetched successfully.',
+            ingredient_label_dict(label),
+        )
+
+    if not Product.objects.filter(pk=pk).exists():
+        return api_error('Product not found.', status_code=404)
+
+    if request.method == 'DELETE':
+        deleted, _ = ProductIngredientLabel.objects.filter(pk=pk).delete()
+        if not deleted:
+            return api_error('Ingredient label not found.', status_code=404)
+        return api_success('Ingredient label deleted successfully.', data=None)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    defaults = {field: body.get(field) for field in _LABEL_FIELDS}
+    label, created = ProductIngredientLabel.objects.update_or_create(
+        product_id=pk,
+        defaults=defaults,
+    )
     return api_success(
-        'Ingredient label fetched successfully.',
+        'Ingredient label saved successfully.',
         ingredient_label_dict(label),
+        status_code=201 if created else 200,
     )

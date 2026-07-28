@@ -2,7 +2,7 @@ import json
 
 from django.db import IntegrityError
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_http_methods
 
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
@@ -72,13 +72,85 @@ def product_collection_api(request):
     return product_create_api(request)
 
 
-@require_GET
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@csrf_exempt
 def product_detail_api(request, pk: int):
     try:
         product = Product.objects.get(pk=pk)
     except Product.DoesNotExist:
         return api_error('Product not found.', status_code=404)
-    return api_success('Product fetched successfully.', product_detail_dict(product))
+
+    if request.method == 'GET':
+        return api_success('Product fetched successfully.', product_detail_dict(product))
+    if request.method == 'DELETE':
+        product.is_active = False
+        product.save(update_fields=['is_active', 'updated_at'])
+        return api_success(
+            'Product deactivated successfully.',
+            product_detail_dict(product),
+        )
+    return product_update_api(request, product)
+
+
+def product_update_api(request, product: Product):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    lookup_checks = (
+        ('product_class_id', ProductClass),
+        ('category_id', Category),
+        ('range_id', Range),
+        ('unit_id', Unit),
+        ('sub_range_id', SubRange),
+        ('purchasing_unit_id', Unit),
+        ('purchase_shape_format_id', PurchaseShapeFormat),
+        ('source_container_id', Location),
+        ('destination_container_id', Location),
+    )
+    for field, model in lookup_checks:
+        if field not in body:
+            continue
+        value = body[field]
+        if value is None:
+            if field in (
+                'sub_range_id',
+                'purchasing_unit_id',
+                'purchase_shape_format_id',
+            ):
+                setattr(product, field, None)
+                continue
+            return api_error(f'{field} cannot be null.', status_code=400)
+        if not model.objects.filter(pk=value).exists():
+            return api_error(f'{field}={value} not found.', status_code=400)
+        setattr(product, field, value)
+
+    for field in (
+        'name',
+        'alternate_name',
+        'recipe_code',
+        'alternate_recipe_code',
+        'gff_code',
+        'secondary_gff_recipe',
+        'external_barcode',
+        'is_active',
+        'is_downtime',
+        'purchasing_version',
+        'ingredient_count',
+        'remarks',
+    ):
+        if field in body:
+            setattr(product, field, body[field])
+
+    try:
+        product.save()
+    except IntegrityError as exc:
+        return api_error(f'Could not update product: {exc}', status_code=400)
+
+    return api_success(
+        'Product updated successfully.',
+        product_detail_dict(product),
+    )
 
 
 def product_create_api(request):
