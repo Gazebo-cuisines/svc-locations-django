@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'locations',
     'product',
+    'recipe',
     'users_rbac',
 ]
 

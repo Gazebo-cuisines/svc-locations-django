@@ -6,5 +6,6 @@ from django.urls import include, path
 urlpatterns = [
     path('', include('locations.urls')),
     path('product/', include('product.urls')),
+    path('recipe/', include('recipe.urls')),
     path('api/auth/', include('users_rbac.urls')),
 ]
