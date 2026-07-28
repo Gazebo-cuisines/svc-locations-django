@@ -91,6 +91,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
+    'http://localhost:5174',
     'https://gazeboo.cloud',
     'https://www.gazeboo.cloud',
 ]
@@ -98,3 +99,12 @@ CORS_ALLOWED_ORIGINS = [
 AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
 AWS_PROFILE = os.getenv('AWS_PROFILE')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-2')
+CORS_ALLOW_HEADERS = (
+    'accept',
+    'authorization',
+    'content-type',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-api-token',
+)
