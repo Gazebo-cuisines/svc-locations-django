@@ -35,15 +35,19 @@ def auth_middleware(view_func):
 
 container_urlpatterns = [
     path('', auth_middleware(container_index_api), name='container-index'),
-    path('locations/', auth_middleware(location_list_api), name='location-list'),
-    path('locations/<int:location_id>/', auth_middleware(location_detail_api), name='location-detail'),
+    path('locations/', csrf_exempt(auth_middleware(location_list_api)), name='location-list'),
+    path(
+        'locations/<int:location_id>/',
+        csrf_exempt(auth_middleware(location_detail_api)),
+        name='location-detail',
+    ),
     path('suppliers/', auth_middleware(supplier_list_api), name='supplier-list'),
     path('suppliers/<int:location_id>/', auth_middleware(supplier_detail_api), name='supplier-detail'),
     path('couriers/', auth_middleware(courier_list_api), name='courier-list'),
     path('couriers/<int:location_id>/', auth_middleware(courier_detail_api), name='courier-detail'),
     path('customers/', auth_middleware(customer_list_api), name='customer-list'),
     path('customers/<int:location_id>/', auth_middleware(customer_detail_api), name='customer-detail'),
-    
+
     path('departments/', department_list_api, name='department-list'),
     path('departments/<int:location_id>/', auth_middleware(department_detail_api), name='department-detail'),
     path('departments/create/', csrf_exempt(auth_middleware(create_department)), name='create-department'),

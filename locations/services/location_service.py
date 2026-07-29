@@ -4,8 +4,10 @@ from django.db import transaction
 from locations.legacy_import import features_from_row, roles_from_row
 from locations.models import (
     Location,
+    LocationFeature,
     LocationFeatureAssignment,
     LocationRelationType,
+    LocationRole,
     LocationRoleAssignment,
     LocationStockProfile,
 )
@@ -15,24 +17,35 @@ from locations.services.hierarchy import remove_parent_edge, set_parent_edge
 # product/stock tables are owned by new services.
 
 
-def _sync_roles(location: Location, legacy_row: dict) -> None:
+def _set_roles(location: Location, roles: list[str]) -> None:
+    invalid = [role for role in roles if role not in LocationRole.values]
+    if invalid:
+        raise ValidationError(f'Invalid roles: {", ".join(invalid)}')
     LocationRoleAssignment.objects.filter(location=location).delete()
     LocationRoleAssignment.objects.bulk_create(
-        [
-            LocationRoleAssignment(location=location, role=role)
-            for role in roles_from_row(legacy_row)
-        ]
+        [LocationRoleAssignment(location=location, role=role) for role in roles]
     )
 
 
-def _sync_features(location: Location, legacy_row: dict) -> None:
+def _set_features(location: Location, features: list[str]) -> None:
+    invalid = [feature for feature in features if feature not in LocationFeature.values]
+    if invalid:
+        raise ValidationError(f'Invalid features: {", ".join(invalid)}')
     LocationFeatureAssignment.objects.filter(location=location).delete()
     LocationFeatureAssignment.objects.bulk_create(
         [
             LocationFeatureAssignment(location=location, feature=feature)
-            for feature in features_from_row(legacy_row)
+            for feature in features
         ]
     )
+
+
+def _sync_roles(location: Location, legacy_row: dict) -> None:
+    _set_roles(location, roles_from_row(legacy_row))
+
+
+def _sync_features(location: Location, legacy_row: dict) -> None:
+    _set_features(location, features_from_row(legacy_row))
 
 
 @transaction.atomic
@@ -46,6 +59,8 @@ def create_location(
     locked: bool = False,
     remarks: str | None = None,
     po_remarks: str | None = None,
+    roles: list[str] | None = None,
+    features: list[str] | None = None,
     role_flags: dict | None = None,
     feature_flags: dict | None = None,
     stock_profile: dict | None = None,
@@ -66,9 +81,14 @@ def create_location(
         po_remarks=po_remarks,
     )
 
-    flags = role_flags or {}
-    _sync_roles(location, flags)
-    _sync_features(location, feature_flags or {})
+    if roles is not None:
+        _set_roles(location, roles)
+    elif role_flags is not None:
+        _sync_roles(location, role_flags)
+    if features is not None:
+        _set_features(location, features)
+    elif feature_flags is not None:
+        _sync_features(location, feature_flags)
 
     profile = stock_profile or {}
     LocationStockProfile.objects.create(
@@ -114,6 +134,8 @@ def update_location(
     locked: bool | None = None,
     remarks: str | None = None,
     po_remarks: str | None = None,
+    roles: list[str] | None = None,
+    features: list[str] | None = None,
     role_flags: dict | None = None,
     feature_flags: dict | None = None,
     stock_profile: dict | None = None,
@@ -140,9 +162,13 @@ def update_location(
         location.po_remarks = po_remarks
     location.save()
 
-    if role_flags is not None:
+    if roles is not None:
+        _set_roles(location, roles)
+    elif role_flags is not None:
         _sync_roles(location, role_flags)
-    if feature_flags is not None:
+    if features is not None:
+        _set_features(location, features)
+    elif feature_flags is not None:
         _sync_features(location, feature_flags)
 
     if stock_profile is not None:
