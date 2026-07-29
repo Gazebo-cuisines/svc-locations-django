@@ -399,4 +399,3 @@ def reservation_consume_api(request, pk: int):
     except StockValidationError as exc:
         return api_error(str(exc))
     return api_success('Reservation consumed.', reservation_dict(row))
--
