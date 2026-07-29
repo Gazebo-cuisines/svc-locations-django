@@ -50,6 +50,8 @@ def product_unit_dict(product_unit) -> dict:
     return {
         'id': product_unit.id,
         'name': product_unit.name,
+        'unit_group': product_unit.unit_group,
+        'to_base_factor': product_unit.to_base_factor,
     }
 
 

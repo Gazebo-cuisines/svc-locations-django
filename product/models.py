@@ -73,11 +73,40 @@ class SubRange(models.Model):
         return f'{self.id}:{self.name}'
 
 
+class UnitGroup(models.TextChoices):
+    COUNT = 'count', 'Count'      # bag, box, each, of, pack, roll
+    WEIGHT = 'weight', 'Weight'   # kg (base), g
+    LIQUID = 'liquid', 'Liquid'   # L (base), mL
+
+
 class Unit(models.Model):
-    """Lookup stub. PK matches legacy Units.id."""
+    """
+    Lookup stub. PK matches legacy Units.id.
+
+    unit_group    — which measurement family this unit belongs to.
+    to_base_factor — multiply quantity in this unit by this factor to get
+                     the canonical base unit for that group:
+                       count  → each (factor = 1 for most; 12 for a dozen etc.)
+                       weight → kg   (g = 0.001, kg = 1)
+                       liquid → L    (mL = 0.001, L = 1)
+                     NULL means 1:1 (treat as base).
+    """
 
     id = models.IntegerField(primary_key=True)
     name = models.CharField(max_length=64)
+    unit_group = models.CharField(
+        max_length=8,
+        choices=UnitGroup.choices,
+        null=True,
+        blank=True,
+    )
+    to_base_factor = models.DecimalField(
+        max_digits=20,
+        decimal_places=10,
+        null=True,
+        blank=True,
+        help_text='Multiply by this to convert to the base unit of the group.',
+    )
 
     class Meta:
         db_table = 'product_unit'
@@ -85,6 +114,12 @@ class Unit(models.Model):
 
     def __str__(self):
         return f'{self.id}:{self.name}'
+
+    def convert_to_base(self, quantity: 'Decimal') -> 'Decimal':
+        """Return quantity expressed in the base unit of this unit's group."""
+        from decimal import Decimal
+        factor = self.to_base_factor if self.to_base_factor is not None else Decimal('1')
+        return Decimal(str(quantity)) * factor
 
 
 class PurchaseShapeFormat(models.Model):
