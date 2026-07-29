@@ -9,9 +9,16 @@ import boto3
 from botocore.exceptions import ClientError
 
 
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    raise ValueError('Auth service is not configured.')
+
+
 def _secret_hash(username: str) -> str:
-    msg = (username + os.environ["COGNITO_CLIENT_ID"]).encode()
-    key = os.environ["COGNITO_CLIENT_SECRET"].encode()
+    msg = (username + _require_env("COGNITO_CLIENT_ID")).encode()
+    key = _require_env("COGNITO_CLIENT_SECRET").encode()
     dig = hmac.new(key, msg, hashlib.sha256).digest()
     return base64.b64encode(dig).decode()
 
@@ -30,7 +37,7 @@ def login(username: str, password: str) -> dict:
     """
     try:
         resp = _client().initiate_auth(
-            ClientId=os.environ["COGNITO_CLIENT_ID"],
+            ClientId=_require_env("COGNITO_CLIENT_ID"),
             AuthFlow="USER_PASSWORD_AUTH",
             AuthParameters={
                 "USERNAME": username,
