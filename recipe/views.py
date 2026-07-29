@@ -116,8 +116,14 @@ def component_dict(component: RecipeComponent) -> dict:
         'recipe_version_id': component.recipe_version_id,
         'line_no': component.line_no,
         'component_product_id': component.component_product_id,
+        'component_product_name': (
+            component.component_product.name
+            if component.component_product_id
+            else None
+        ),
         'quantity': _dec(component.quantity),
         'unit_id': component.unit_id,
+        'unit_name': component.unit.name if component.unit_id else None,
         'batch_quantity': _dec(component.batch_quantity),
         'gross_batch_quantity': _dec(component.gross_batch_quantity),
         'step_instructions': component.step_instructions,
@@ -254,7 +260,10 @@ def recipe_version_collection_api(request, pk: int):
 @csrf_exempt
 def recipe_version_detail_api(request, pk: int):
     try:
-        version = RecipeVersion.objects.prefetch_related('components').get(pk=pk)
+        version = RecipeVersion.objects.prefetch_related(
+            'components__component_product',
+            'components__unit',
+        ).get(pk=pk)
     except RecipeVersion.DoesNotExist:
         return api_error('Recipe version not found.', status_code=404)
 
@@ -337,7 +346,10 @@ def recipe_version_update_api(request, version: RecipeVersion):
     except IntegrityError as exc:
         return api_error(f'Could not update recipe version: {exc}', status_code=400)
 
-    version = RecipeVersion.objects.prefetch_related('components').get(pk=version.pk)
+    version = RecipeVersion.objects.prefetch_related(
+        'components__component_product',
+        'components__unit',
+    ).get(pk=version.pk)
     return api_success(
         'Recipe version updated successfully.',
         recipe_version_detail_dict(version),
@@ -353,7 +365,10 @@ def recipe_version_activate_api(request, pk: int):
         return api_error('Recipe version not found.', status_code=404)
 
     version = activate_version(version)
-    version = RecipeVersion.objects.prefetch_related('components').get(pk=version.pk)
+    version = RecipeVersion.objects.prefetch_related(
+        'components__component_product',
+        'components__unit',
+    ).get(pk=version.pk)
     return api_success(
         'Recipe version activated successfully.',
         recipe_version_detail_dict(version),
@@ -412,6 +427,10 @@ def recipe_component_collection_api(request, pk: int):
             is_implicit=bool(body.get('is_implicit', False)),
         )
         sync_has_recipe(version.recipe.product_id)
+        component = RecipeComponent.objects.select_related(
+            'component_product',
+            'unit',
+        ).get(pk=component.pk)
     except RecipeValidationError as exc:
         return api_error(str(exc), status_code=400)
     except ValueError as exc:
@@ -432,6 +451,8 @@ def recipe_component_detail_api(request, pk: int):
     try:
         component = RecipeComponent.objects.select_related(
             'recipe_version__recipe',
+            'component_product',
+            'unit',
         ).get(pk=pk)
     except RecipeComponent.DoesNotExist:
         return api_error('Recipe component not found.', status_code=404)
@@ -487,6 +508,10 @@ def recipe_component_detail_api(request, pk: int):
             component.is_implicit = bool(body['is_implicit'])
 
         component.save()
+        component = RecipeComponent.objects.select_related(
+            'component_product',
+            'unit',
+        ).get(pk=component.pk)
     except RecipeValidationError as exc:
         return api_error(str(exc), status_code=400)
     except ValueError as exc:

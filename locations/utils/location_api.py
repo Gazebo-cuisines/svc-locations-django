@@ -16,6 +16,11 @@ def location_queryset():
 
 
 def apply_list_filters(request: HttpRequest, queryset):
+    include_hidden = (request.GET.get('include_hidden') or '').lower() in (
+        '1', 'true', 'yes',
+    )
+    if not include_hidden:
+        queryset = queryset.filter(visible=True)
     role = request.GET.get('role')
     if role:
         queryset = queryset.filter(roles__role=role).distinct()
