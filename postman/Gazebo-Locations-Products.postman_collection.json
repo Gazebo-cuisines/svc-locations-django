@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "Gazebo — Locations & Products",
-    "description": "## Overview\n\nLocal Django microservice APIs for **locations/containers** and **products**.\n\n**Base URL:** `{{base_url}}` (default `http://127.0.0.1:8000`)\n\n## Response envelope\n\n```json\n{\n  \"status\": \"success|error\",\n  \"message\": \"...\",\n  \"data\": {}\n}\n```\n\n## Product routes\n\n| Method | Path | Notes |\n|---|---|---|\n| GET/POST | `/product/` | List active / create core product |\n| GET/PATCH/DELETE | `/product/:id/` | Detail / partial update / soft-deactivate |\n| GET/PUT/DELETE | `/product/:id/flags/` | Attribute flags (full replace on PUT) |\n| GET/PUT/DELETE | `/product/:id/technical/` | Technical satellite |\n| GET/POST | `/product/:id/allergens/` | Allergens collection |\n| GET/PUT/DELETE | `/product/:id/nutrition/` | Nutrition |\n| GET/PUT/DELETE | `/product/:id/ingredient-label/` | Ingredient label |\n| GET/PUT/DELETE | `/product/:id/acceptance/` | Acceptance |\n\n## Demo seed\n\n- Product: `id=900001` Peri Peri Burger (`python manage.py seed_demo_product`)\n- Containers: `900001`–`900004`\n- Lookups: class/category/range/unit ids `9001` (+ unit case `9002`)\n\n## Containers\n\nContainers are `loc_location` rows. Use `GET /container/` for a flat list (useful for `source_container_id` / `destination_container_id`).",
+    "description": "Product + location collection.\n\nEmpty optional satellites return HTTP 200 with `data: null` and message like `... is not set yet.`\n\nTimeline endpoint: `GET /product/:id/timeline/`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -17,48 +17,61 @@
   ],
   "item": [
     {
-      "name": "Containers",
-      "description": "Location/container endpoints.",
+      "name": "Product Lookups",
       "item": [
         {
-          "name": "List all containers",
+          "name": "List classes",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/container/?q=&visible=",
+              "raw": "{{base_url}}/product/class/",
               "host": ["{{base_url}}"],
-              "path": ["container", ""],
-              "query": [
-                {
-                  "key": "q",
-                  "value": "",
-                  "description": "Optional name search",
-                  "disabled": true
-                },
-                {
-                  "key": "visible",
-                  "value": "true",
-                  "description": "Optional filter: true|false",
-                  "disabled": true
-                }
-              ]
+              "path": ["product", "class", ""]
             },
-            "description": "### List all containers\n\n`GET /container/`\n\nReturns a flat list of all locations (containers) for FK selection when creating products.\n\n**Query params**\n| Param | Description |\n|---|---|\n| `q` | Filter by name (icontains) |\n| `visible` | `true` / `false` |\n\n**Success `data`**\n- `count` — number of rows\n- `results[]` — `{ id, container_id, name, external_code, visible, static, locked, roles }`\n- `endpoints` — related route map"
+            "description": "GET product class lookup list."
           },
           "response": []
         },
         {
-          "name": "List locations (tree)",
+          "name": "List categories",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{base_url}}/container/locations/",
+              "raw": "{{base_url}}/product/category/",
               "host": ["{{base_url}}"],
-              "path": ["container", "locations", ""]
+              "path": ["product", "category", ""]
             },
-            "description": "### Location tree list\n\n`GET /container/locations/`\n\nRicher hierarchy-oriented location listing (tree). Prefer `/container/` for simple product FK dropdowns."
+            "description": "GET product category lookup list."
+          },
+          "response": []
+        },
+        {
+          "name": "List ranges",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/range/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "range", ""]
+            },
+            "description": "GET product range lookup list."
+          },
+          "response": []
+        },
+        {
+          "name": "List units",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/unit/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "unit", ""]
+            },
+            "description": "GET product unit lookup list."
           },
           "response": []
         }
@@ -66,7 +79,7 @@
     },
     {
       "name": "Products",
-      "description": "Product master APIs (core identity + classification).\n\n- Collection: `GET|POST /product/`\n- Detail: `GET|PATCH|DELETE /product/:id/`",
+      "description": "Core product routes.",
       "item": [
         {
           "name": "List products",
@@ -78,7 +91,7 @@
               "host": ["{{base_url}}"],
               "path": ["product", ""]
             },
-            "description": "### List products\n\n`GET /product/`\n\nReturns active products (`is_active=true`).\n\n**Success `data`** — array of:\n```json\n{\n  \"id\": 900001,\n  \"name\": \"Peri Peri Burger\",\n  \"alternate_name\": \"PP Burger\",\n  \"recipe_code\": \"PPB-001\",\n  \"is_active\": true,\n  \"product_class_id\": 9001,\n  \"category_id\": 9001,\n  \"range_id\": 9001,\n  \"unit_id\": 9001\n}\n```"
+            "description": "GET active products."
           },
           "response": []
         },
@@ -92,7 +105,7 @@
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", ""]
             },
-            "description": "### Get product detail\n\n`GET /product/:id/`\n\nReturns full core product fields including container FKs and timestamps.\n\n**404** if product does not exist.\n\n**Success `data`** includes list fields plus:\n`alternate_recipe_code`, `gff_code`, `secondary_gff_recipe`, `external_barcode`, `is_downtime`, `purchasing_version`, `ingredient_count`, `remarks`, `sub_range_id`, `purchasing_unit_id`, `purchase_shape_format_id`, `source_container_id`, `destination_container_id`, `created_at`, `updated_at`"
+            "description": "GET product detail."
           },
           "response": []
         },
@@ -115,7 +128,7 @@
               "host": ["{{base_url}}"],
               "path": ["product", ""]
             },
-            "description": "### Create product\n\n`POST /product/`\n\nCreates a **core** `product` row only (no satellite tables yet).\n\n#### Required body fields\n| Field | Type | Notes |\n|---|---|---|\n| `id` | int | Explicit PK (legacy-compatible) |\n| `name` | string | Unique |\n| `product_class_id` | int | Must exist |\n| `category_id` | int | Must exist |\n| `range_id` | int | Must exist |\n| `unit_id` | int | Must exist |\n| `source_container_id` | int | `GET /container/` |\n| `destination_container_id` | int | `GET /container/` |\n\n#### Optional\n`alternate_name`, `recipe_code`, `alternate_recipe_code`, `gff_code`, `secondary_gff_recipe`, `external_barcode`, `is_active`, `is_downtime`, `purchasing_version`, `ingredient_count`, `remarks`, `sub_range_id`, `purchasing_unit_id`, `purchase_shape_format_id`\n\n#### Status codes\n| Code | Meaning |\n|---|---|\n| 201 | Created |\n| 400 | Validation / missing fields / bad FK |\n| 409 | `id` already exists |\n\n**Tip:** Call `GET /container/` first to pick container ids. Demo lookups use id `9001`."
+            "description": "POST create core product row."
           },
           "response": []
         },
@@ -138,7 +151,7 @@
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", ""]
             },
-            "description": "### Update product (partial)\n\n`PATCH /product/:id/`\n\nPartial update of core product fields. Only keys present in the body are applied.\n\nLookup FKs are validated when provided. Nullable optional FKs: `sub_range_id`, `purchasing_unit_id`, `purchase_shape_format_id`.\n\n#### Status codes\n| Code | Meaning |\n|---|---|\n| 200 | Updated |\n| 400 | Invalid JSON / bad FK / validation |\n| 404 | Product not found |"
+            "description": "PATCH partial update product."
           },
           "response": []
         },
@@ -152,18 +165,32 @@
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", ""]
             },
-            "description": "### Soft-deactivate product\n\n`DELETE /product/:id/`\n\nSets `is_active=false` (soft delete). Returns the updated product detail.\n\n**404** if product does not exist."
+            "description": "DELETE soft deactivate product."
+          },
+          "response": []
+        },
+        {
+          "name": "Get product timeline",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/timeline/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "timeline", ""]
+            },
+            "description": "GET full product lifecycle timeline."
           },
           "response": []
         }
       ]
     },
     {
-      "name": "Product Flags",
-      "description": "Attribute flags for stock, recipe and planning.\n\n`GET|PUT|DELETE /product/:id/flags/`\n\n- **PUT** = full replace — omitted boolean keys default to `false`\n- Excludes `record_flag`; chilling loss **factor** lives on yield, not flags\n- Product must exist for PUT/DELETE (404 if not)",
+      "name": "Product Satellites",
+      "description": "All optional satellites. Unset GET returns 200 + data null.",
       "item": [
         {
-          "name": "Get product flags",
+          "name": "Get flags",
           "request": {
             "method": "GET",
             "header": [],
@@ -172,12 +199,12 @@
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", "flags", ""]
             },
-            "description": "### Get product flags\n\n`GET /product/:id/flags/`\n\n**404** if no flags row exists for this product.\n\n**Success `data`**\n```json\n{\n  \"product_id\": 900001,\n  \"in_stock_list\": true,\n  \"auto_yield\": false,\n  \"has_plan\": false,\n  \"auto_rate\": false,\n  \"auto_clear_stock\": false,\n  \"consider_stock_in_plan\": false,\n  \"has_recipe\": true,\n  \"full_batches_only\": false,\n  \"auto_trends\": false,\n  \"is_implicit\": false,\n  \"include_in_projections\": false,\n  \"has_chilling_loss\": false,\n  \"use_batch_quantity\": false,\n  \"freezer_no_deduct\": false,\n  \"is_purchase_item\": true,\n  \"is_sales_item\": true,\n  \"is_dispatch_support\": false\n}\n```"
+            "description": "GET flags."
           },
           "response": []
         },
         {
-          "name": "Save product flags",
+          "name": "Put flags",
           "request": {
             "method": "PUT",
             "header": [
@@ -195,12 +222,172 @@
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", "flags", ""]
             },
-            "description": "### Save product flags (full replace)\n\n`PUT /product/:id/flags/`\n\nCreates or updates the flags row (`update_or_create`).\n\n**Semantics:** omitted keys → `false`. Send the full set of flags you care about.\n\n#### Flag fields (17)\n| Field | Meaning |\n|---|---|\n| `in_stock_list` | Include in global stock list |\n| `auto_yield` | Automatically calculate yield |\n| `has_plan` | Has plan |\n| `auto_rate` | Automatically calculate rate |\n| `auto_clear_stock` | Automatically clear stock residuals |\n| `consider_stock_in_plan` | Consider stock in plan |\n| `has_recipe` | Has recipe |\n| `full_batches_only` | Full batches only |\n| `auto_trends` | Automatically calculate trend |\n| `is_implicit` | Implicit stock auto consumption |\n| `include_in_projections` | Include in sales projections |\n| `has_chilling_loss` | Has chilling / process loss |\n| `use_batch_quantity` | Use batch quantity for stock |\n| `freezer_no_deduct` | Exempt 2-day defrost deduction |\n| `is_purchase_item` | Purchase item |\n| `is_sales_item` | Sales item |\n| `is_dispatch_support` | Dispatch support |\n\n#### Status codes\n| Code | Meaning |\n|---|---|\n| 200 | Updated existing flags |\n| 201 | Created flags row |\n| 400 | Invalid JSON |\n| 404 | Product not found |"
+            "description": "PUT flags full replace."
           },
           "response": []
         },
         {
-          "name": "Delete product flags",
+          "name": "Get technical",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/technical/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "technical", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get costing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/costing/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "costing", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get shelf life",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/shelf-life/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "shelf-life", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get stock policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/stock-policy/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "stock-policy", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get packaging",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/packaging/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "packaging", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get production",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/production/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "production", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get yield",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/yield/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "yield", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get allergens",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/allergens/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "allergens", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Post allergen",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"allergen_code\": \"gluten\",\n  \"contains\": true,\n  \"may_contain\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/allergens/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "allergens", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get nutrition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/nutrition/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "nutrition", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get ingredient label",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/ingredient-label/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "ingredient-label", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get acceptance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/acceptance/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "acceptance", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete flags",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -209,7 +396,7 @@
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", "flags", ""]
             },
-            "description": "### Delete product flags\n\n`DELETE /product/:id/flags/`\n\nRemoves the flags row for the product.\n\n#### Status codes\n| Code | Meaning |\n|---|---|\n| 200 | Deleted (`data: null`) |\n| 404 | Product not found, or flags row missing |"
+            "description": "DELETE flags row."
           },
           "response": []
         }
