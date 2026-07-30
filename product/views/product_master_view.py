@@ -6,6 +6,7 @@ from django.views.decorators.http import require_http_methods
 
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import (
     Category,
     Product,
@@ -39,12 +40,14 @@ def product_detail_dict(product: Product) -> dict:
         'secondary_gff_recipe': product.secondary_gff_recipe,
         'external_barcode': product.external_barcode,
         'is_downtime': product.is_downtime,
-        'purchasing_version': product.purchasing_version,
         'ingredient_count': product.ingredient_count,
         'remarks': product.remarks,
         'sub_range_id': product.sub_range_id,
-        'purchasing_unit_id': product.purchasing_unit_id,
-        'purchase_shape_format_id': product.purchase_shape_format_id,
+        'purchase_details': {
+            'purchase_unit_id': product.purchasing_unit_id,
+            'purchase_format': product.purchase_shape_format_id,
+            'purchase_version': product.purchasing_version,
+        },
         'source_container_id': product.source_container_id,
         'destination_container_id': product.destination_container_id,
         'created_at': product.created_at.isoformat() if product.created_at else None,
@@ -58,6 +61,58 @@ def _parse_json_body(request):
         return json.loads(request.body.decode('utf-8') or '{}')
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _purchase_details_from_body(body: dict) -> dict | None:
+    """Return purchase payload keys to apply, or None if none provided."""
+    nested = body.get('purchase_details')
+    if isinstance(nested, dict):
+        payload = {}
+        if 'purchase_unit_id' in nested:
+            payload['purchase_unit_id'] = nested.get('purchase_unit_id')
+        if 'purchase_format' in nested:
+            payload['purchase_format'] = nested.get('purchase_format')
+        if 'purchase_version' in nested:
+            payload['purchase_version'] = nested.get('purchase_version')
+        return payload or None
+
+    payload = {}
+    if 'purchase_unit_id' in body or 'purchasing_unit_id' in body:
+        payload['purchase_unit_id'] = body.get(
+            'purchase_unit_id', body.get('purchasing_unit_id'),
+        )
+    if 'purchase_format' in body or 'purchase_shape_format_id' in body:
+        payload['purchase_format'] = body.get(
+            'purchase_format', body.get('purchase_shape_format_id'),
+        )
+    if 'purchase_version' in body or 'purchasing_version' in body:
+        payload['purchase_version'] = body.get(
+            'purchase_version', body.get('purchasing_version'),
+        )
+    return payload or None
+
+
+def _apply_purchase_details(product: Product, purchase: dict):
+    if 'purchase_unit_id' in purchase:
+        unit_id = purchase['purchase_unit_id']
+        if unit_id is None:
+            product.purchasing_unit_id = None
+        elif not Unit.objects.filter(pk=unit_id).exists():
+            raise ValueError(f'purchase_unit_id={unit_id} not found.')
+        else:
+            product.purchasing_unit_id = unit_id
+
+    if 'purchase_format' in purchase:
+        format_id = purchase['purchase_format']
+        if format_id is None:
+            product.purchase_shape_format_id = None
+        elif not PurchaseShapeFormat.objects.filter(pk=format_id).exists():
+            raise ValueError(f'purchase_format={format_id} not found.')
+        else:
+            product.purchase_shape_format_id = format_id
+
+    if 'purchase_version' in purchase:
+        product.purchasing_version = purchase.get('purchase_version')
 
 
 @require_http_methods(['GET', 'POST'])
@@ -83,16 +138,27 @@ def product_detail_api(request, pk: int):
     if request.method == 'GET':
         return api_success('Product fetched successfully.', product_detail_dict(product))
     if request.method == 'DELETE':
+        before_data = product_detail_dict(product)
         product.is_active = False
         product.save(update_fields=['is_active', 'updated_at'])
+        after_data = product_detail_dict(product)
+        capture_product_audit(
+            request,
+            product_id=product.id,
+            entity='product',
+            action='delete',
+            before_data=before_data,
+            after_data=after_data,
+        )
         return api_success(
             'Product deactivated successfully.',
-            product_detail_dict(product),
+            after_data,
         )
     return product_update_api(request, product)
 
 
 def product_update_api(request, product: Product):
+    before_data = product_detail_dict(product)
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
@@ -103,8 +169,6 @@ def product_update_api(request, product: Product):
         ('range_id', Range),
         ('unit_id', Unit),
         ('sub_range_id', SubRange),
-        ('purchasing_unit_id', Unit),
-        ('purchase_shape_format_id', PurchaseShapeFormat),
         ('source_container_id', Location),
         ('destination_container_id', Location),
     )
@@ -113,11 +177,7 @@ def product_update_api(request, product: Product):
             continue
         value = body[field]
         if value is None:
-            if field in (
-                'sub_range_id',
-                'purchasing_unit_id',
-                'purchase_shape_format_id',
-            ):
+            if field == 'sub_range_id':
                 setattr(product, field, None)
                 continue
             return api_error(f'{field} cannot be null.', status_code=400)
@@ -135,21 +195,36 @@ def product_update_api(request, product: Product):
         'external_barcode',
         'is_active',
         'is_downtime',
-        'purchasing_version',
         'ingredient_count',
         'remarks',
     ):
         if field in body:
             setattr(product, field, body[field])
 
+    purchase = _purchase_details_from_body(body)
+    if purchase is not None:
+        try:
+            _apply_purchase_details(product, purchase)
+        except ValueError as exc:
+            return api_error(str(exc), status_code=400)
+
     try:
         product.save()
     except IntegrityError as exc:
         return api_error(f'Could not update product: {exc}', status_code=400)
 
+    after_data = product_detail_dict(product)
+    capture_product_audit(
+        request,
+        product_id=product.id,
+        entity='product',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Product updated successfully.',
-        product_detail_dict(product),
+        after_data,
     )
 
 
@@ -196,32 +271,13 @@ def product_create_api(request):
     if sub_range_id is not None and not SubRange.objects.filter(pk=sub_range_id).exists():
         return api_error(f'sub_range_id={sub_range_id} not found.', status_code=400)
 
-    purchasing_unit_id = body.get('purchasing_unit_id')
-    if (
-        purchasing_unit_id is not None
-        and not Unit.objects.filter(pk=purchasing_unit_id).exists()
-    ):
-        return api_error(
-            f'purchasing_unit_id={purchasing_unit_id} not found.',
-            status_code=400,
-        )
-
-    purchase_shape_format_id = body.get('purchase_shape_format_id')
-    if (
-        purchase_shape_format_id is not None
-        and not PurchaseShapeFormat.objects.filter(pk=purchase_shape_format_id).exists()
-    ):
-        return api_error(
-            f'purchase_shape_format_id={purchase_shape_format_id} not found.',
-            status_code=400,
-        )
-
     for field in ('source_container_id', 'destination_container_id'):
         if not Location.objects.filter(pk=body[field]).exists():
             return api_error(f'{field}={body[field]} not found.', status_code=400)
 
+    purchase = _purchase_details_from_body(body) or {}
     try:
-        product = Product.objects.create(
+        product = Product(
             id=body['id'],
             name=body['name'],
             alternate_name=body.get('alternate_name'),
@@ -232,7 +288,6 @@ def product_create_api(request):
             external_barcode=body.get('external_barcode'),
             is_active=body.get('is_active', True),
             is_downtime=body.get('is_downtime', False),
-            purchasing_version=body.get('purchasing_version'),
             ingredient_count=body.get('ingredient_count'),
             remarks=body.get('remarks'),
             product_class_id=body['product_class_id'],
@@ -240,16 +295,27 @@ def product_create_api(request):
             range_id=body['range_id'],
             sub_range_id=sub_range_id,
             unit_id=body['unit_id'],
-            purchasing_unit_id=purchasing_unit_id,
-            purchase_shape_format_id=purchase_shape_format_id,
             source_container_id=body['source_container_id'],
             destination_container_id=body['destination_container_id'],
         )
+        _apply_purchase_details(product, purchase)
+        product.save()
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
         return api_error(f'Could not create product: {exc}', status_code=400)
 
+    after_data = product_detail_dict(product)
+    capture_product_audit(
+        request,
+        product_id=product.id,
+        entity='product',
+        action='create',
+        before_data=None,
+        after_data=after_data,
+    )
     return api_success(
         'Product created successfully.',
-        product_detail_dict(product),
+        after_data,
         status_code=201,
     )

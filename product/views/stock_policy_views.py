@@ -6,25 +6,20 @@ from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
-from product.models import Product, ProductNutrition
+from product.models import Product, ProductStockPolicy
 
 
 def _dec(value):
     return str(value) if value is not None else None
 
 
-def nutrition_dict(n: ProductNutrition) -> dict:
+def stock_policy_dict(row: ProductStockPolicy) -> dict:
     return {
-        'product_id': n.product_id,
-        'energy_kj': _dec(n.energy_kj),
-        'energy_kcal': _dec(n.energy_kcal),
-        'fat_g': _dec(n.fat_g),
-        'saturates_g': _dec(n.saturates_g),
-        'carbohydrate_g': _dec(n.carbohydrate_g),
-        'sugars_g': _dec(n.sugars_g),
-        'fibre_g': _dec(n.fibre_g),
-        'protein_g': _dec(n.protein_g),
-        'salt_g': _dec(n.salt_g),
+        'product_id': row.product_id,
+        'reorder_level': _dec(row.reorder_level),
+        'min_stock': _dec(row.min_stock),
+        'max_stock': _dec(row.max_stock),
+        'clear_stock_level': _dec(row.clear_stock_level),
     }
 
 
@@ -44,50 +39,37 @@ def _parse_decimal(value, field_name: str):
         raise ValueError(f'Invalid decimal for {field_name}.')
 
 
-_NUTRITION_FIELDS = (
-    'energy_kj',
-    'energy_kcal',
-    'fat_g',
-    'saturates_g',
-    'carbohydrate_g',
-    'sugars_g',
-    'fibre_g',
-    'protein_g',
-    'salt_g',
-)
-
-
 @require_http_methods(['GET', 'PUT', 'DELETE'])
 @csrf_exempt
-def product_nutrition_api(request, pk: int):
+def product_stock_policy_api(request, pk: int):
     if request.method == 'GET':
         try:
-            nutrition = ProductNutrition.objects.get(pk=pk)
-        except ProductNutrition.DoesNotExist:
-            return api_success('Nutrition is not set yet.', data=None)
+            row = ProductStockPolicy.objects.get(pk=pk)
+        except ProductStockPolicy.DoesNotExist:
+            return api_success('Product stock policy is not set yet.', data=None)
         return api_success(
-            'Nutrition fetched successfully.',
-            nutrition_dict(nutrition),
+            'Product stock policy fetched successfully.',
+            stock_policy_dict(row),
         )
 
     if not Product.objects.filter(pk=pk).exists():
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':
-        existing = ProductNutrition.objects.filter(pk=pk).first()
-        before_data = nutrition_dict(existing) if existing else None
-        deleted, _ = ProductNutrition.objects.filter(pk=pk).delete()
+        existing = ProductStockPolicy.objects.filter(pk=pk).first()
+        before_data = stock_policy_dict(existing) if existing else None
+        deleted, _ = ProductStockPolicy.objects.filter(pk=pk).delete()
         if not deleted:
-            return api_error('Nutrition not found.', status_code=404)
+            return api_error('Product stock policy not found.', status_code=404)
         capture_product_audit(
             request,
             product_id=pk,
-            entity='nutrition',
+            entity='stock_policy',
             action='delete',
             before_data=before_data,
             after_data=None,
         )
-        return api_success('Nutrition deleted successfully.', data=None)
+        return api_success('Product stock policy deleted successfully.', data=None)
 
     body = _parse_json_body(request)
     if body is None:
@@ -95,29 +77,34 @@ def product_nutrition_api(request, pk: int):
 
     try:
         defaults = {
-            field: _parse_decimal(body.get(field), field)
-            for field in _NUTRITION_FIELDS
+            'reorder_level': _parse_decimal(body.get('reorder_level'), 'reorder_level'),
+            'min_stock': _parse_decimal(body.get('min_stock'), 'min_stock'),
+            'max_stock': _parse_decimal(body.get('max_stock'), 'max_stock'),
+            'clear_stock_level': _parse_decimal(
+                body.get('clear_stock_level'),
+                'clear_stock_level',
+            ),
         }
-        existing = ProductNutrition.objects.filter(pk=pk).first()
-        before_data = nutrition_dict(existing) if existing else None
-        nutrition, created = ProductNutrition.objects.update_or_create(
+        existing = ProductStockPolicy.objects.filter(pk=pk).first()
+        before_data = stock_policy_dict(existing) if existing else None
+        row, created = ProductStockPolicy.objects.update_or_create(
             product_id=pk,
             defaults=defaults,
         )
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
 
-    after_data = nutrition_dict(nutrition)
+    after_data = stock_policy_dict(row)
     capture_product_audit(
         request,
         product_id=pk,
-        entity='nutrition',
+        entity='stock_policy',
         action='create' if created else 'update',
         before_data=before_data,
         after_data=after_data,
     )
     return api_success(
-        'Nutrition saved successfully.',
+        'Product stock policy saved successfully.',
         after_data,
         status_code=201 if created else 200,
     )

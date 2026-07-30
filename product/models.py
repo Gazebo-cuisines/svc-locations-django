@@ -174,6 +174,134 @@ class Product(models.Model):
         return f'{self.id}:{self.name}'
 
 
+class ProductSupplier(models.Model):
+    """Supplier buy-pack for a product. Shape: outer_qty x outer_unit x inner_qty x inner_unit."""
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='suppliers',
+    )
+    supplier = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.PROTECT,
+        related_name='supplied_products',
+    )
+    supplier_code = models.CharField(max_length=64)
+    supplier_product_name = models.CharField(max_length=128)
+    cost = models.DecimalField(
+        max_digits=16, decimal_places=6, null=True, blank=True,
+    )
+    # Shape Format: e.g. 2 Bag x 5 KG = 10 KG
+    outer_qty = models.DecimalField(max_digits=16, decimal_places=6)
+    outer_unit = models.ForeignKey(
+        Unit,
+        on_delete=models.PROTECT,
+        related_name='supplier_products_outer',
+    )
+    inner_qty = models.DecimalField(max_digits=16, decimal_places=6)
+    inner_unit = models.ForeignKey(
+        Unit,
+        on_delete=models.PROTECT,
+        related_name='supplier_products_inner',
+    )
+    multiplier = models.DecimalField(max_digits=16, decimal_places=6)
+    shape_format_label = models.CharField(max_length=128)
+    purchase_shape_format = models.ForeignKey(
+        PurchaseShapeFormat,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='supplier_products',
+    )
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'product_supplier'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'supplier', 'supplier_code'],
+                name='uniq_product_supplier_code',
+            ),
+            models.CheckConstraint(
+                check=models.Q(outer_qty__gt=0),
+                name='chk_product_supplier_outer_qty_positive',
+            ),
+            models.CheckConstraint(
+                check=models.Q(inner_qty__gt=0),
+                name='chk_product_supplier_inner_qty_positive',
+            ),
+            models.CheckConstraint(
+                check=models.Q(multiplier__gt=0),
+                name='chk_product_supplier_multiplier_positive',
+            ),
+            models.UniqueConstraint(
+                fields=['product'],
+                condition=models.Q(is_default=True),
+                name='uniq_product_supplier_default',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['supplier'], name='idx_product_supplier_supplier'),
+        ]
+
+    def __str__(self):
+        return f'supplier_product:{self.product_id}:{self.supplier_id}:{self.supplier_code}'
+
+    @staticmethod
+    def build_multiplier(outer_qty: Decimal, inner_qty: Decimal) -> Decimal:
+        return (outer_qty * inner_qty).quantize(Decimal('0.000001'))
+
+    @staticmethod
+    def build_shape_label(
+        outer_qty: Decimal,
+        outer_unit_name: str,
+        inner_qty: Decimal,
+        inner_unit_name: str,
+        multiplier: Decimal,
+    ) -> str:
+        def _fmt(value: Decimal) -> str:
+            text = format(value.normalize(), 'f')
+            if '.' in text:
+                text = text.rstrip('0').rstrip('.')
+            return text
+
+        outer_u = (outer_unit_name or '').strip().upper()
+        inner_u = (inner_unit_name or '').strip().upper()
+        return (
+            f'{_fmt(outer_qty)}{outer_u} x {_fmt(inner_qty)}{inner_u}'
+            f' = {_fmt(multiplier)}{inner_u}'
+        )
+
+    def apply_shape_calc(self):
+        self.multiplier = self.build_multiplier(self.outer_qty, self.inner_qty)
+        outer_name = ''
+        inner_name = ''
+        if self.outer_unit_id:
+            if getattr(self, 'outer_unit', None) is not None:
+                outer_name = self.outer_unit.name
+            else:
+                outer_name = Unit.objects.filter(pk=self.outer_unit_id).values_list(
+                    'name', flat=True,
+                ).first() or ''
+        if self.inner_unit_id:
+            if getattr(self, 'inner_unit', None) is not None:
+                inner_name = self.inner_unit.name
+            else:
+                inner_name = Unit.objects.filter(pk=self.inner_unit_id).values_list(
+                    'name', flat=True,
+                ).first() or ''
+        self.shape_format_label = self.build_shape_label(
+            self.outer_qty, outer_name, self.inner_qty, inner_name, self.multiplier,
+        )
+
+    def save(self, *args, **kwargs):
+        self.apply_shape_calc()
+        super().save(*args, **kwargs)
+
 class PackagingType(models.Model):
     """Lookup stub for legacy packagingType."""
 
@@ -320,25 +448,25 @@ class ProductPackaging(models.Model):
     )
     is_gas_flush = models.BooleanField(default=False)
     container_vessel = models.ForeignKey(
-        'locations.Location',
+        Product,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='vessel_packaged_products',
+        related_name='packaging_as_container_vessel',
     )
     tray = models.ForeignKey(
-        'locations.Location',
+        Product,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='tray_packaged_products',
+        related_name='packaging_as_tray',
     )
     box = models.ForeignKey(
-        'locations.Location',
+        Product,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='box_packaged_products',
+        related_name='packaging_as_box',
     )
     packaging_type = models.ForeignKey(
         PackagingType,
@@ -499,8 +627,14 @@ class ProductTechnical(models.Model):
         return f'technical:{self.product_id}'
 
 
+class ProductAuditAction(models.TextChoices):
+    CREATE = 'create', 'Create'
+    UPDATE = 'update', 'Update'
+    DELETE = 'delete', 'Delete'
+
+
 class ProductAudit(models.Model):
-    """Transitional — replace workstation/IP with device_id later (Manual 8)."""
+    """Product lifecycle timeline per product."""
 
     product = models.OneToOneField(
         Product,
@@ -509,9 +643,13 @@ class ProductAudit(models.Model):
         related_name='audit',
     )
     created_by_user_id = models.IntegerField(null=True, blank=True)
-    lan_username = models.CharField(max_length=64, null=True, blank=True)
-    source_workstation = models.CharField(max_length=64, null=True, blank=True)
+    lan_username = models.CharField(max_length=128, null=True, blank=True)
+    actor_email = models.CharField(max_length=128, null=True, blank=True)
+    actor_sub = models.CharField(max_length=128, null=True, blank=True)
+    source_workstation = models.CharField(max_length=255, null=True, blank=True)
     source_workstation_ip = models.CharField(max_length=45, null=True, blank=True)
+    timeline_events = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'product_audit'

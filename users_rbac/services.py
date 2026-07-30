@@ -6,7 +6,7 @@ import hmac
 import os
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ProfileNotFound
 
 
 def _require_env(name: str) -> str:
@@ -24,7 +24,12 @@ def _secret_hash(username: str) -> str:
 
 
 def _client():
-    return boto3.client(
+    profile = os.environ.get("AWS_PROFILE") or None
+    try:
+        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
+    except ProfileNotFound:
+        session = boto3.Session()  # fall back to default credentials
+    return session.client(
         "cognito-idp",
         region_name=os.environ.get("COGNITO_REGION", "eu-west-2"),
     )
@@ -45,6 +50,10 @@ def login(username: str, password: str) -> dict:
                 "SECRET_HASH": _secret_hash(username),
             },
         )
+    except ProfileNotFound as exc:
+        raise ValueError(
+            "AWS profile not found. Unset AWS_PROFILE or configure it with aws configure."
+        ) from exc
     except ClientError as exc:
         code = exc.response["Error"]["Code"]
         if code in ("NotAuthorizedException", "UserNotFoundException"):

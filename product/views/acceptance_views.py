@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import Product, ProductAcceptance
 
 
@@ -29,7 +30,7 @@ def product_acceptance_api(request, pk: int):
         try:
             acceptance = ProductAcceptance.objects.get(pk=pk)
         except ProductAcceptance.DoesNotExist:
-            return api_error('Acceptance data not found.', status_code=404)
+            return api_success('Acceptance data is not set yet.', data=None)
         return api_success(
             'Acceptance data fetched successfully.',
             acceptance_dict(acceptance),
@@ -39,9 +40,19 @@ def product_acceptance_api(request, pk: int):
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':
+        existing = ProductAcceptance.objects.filter(pk=pk).first()
+        before_data = acceptance_dict(existing) if existing else None
         deleted, _ = ProductAcceptance.objects.filter(pk=pk).delete()
         if not deleted:
             return api_error('Acceptance data not found.', status_code=404)
+        capture_product_audit(
+            request,
+            product_id=pk,
+            entity='acceptance',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Acceptance data deleted successfully.', data=None)
 
     body = _parse_json_body(request)
@@ -60,6 +71,8 @@ def product_acceptance_api(request, pk: int):
     else:
         shelf_life = None
 
+    existing = ProductAcceptance.objects.filter(pk=pk).first()
+    before_data = acceptance_dict(existing) if existing else None
     acceptance, created = ProductAcceptance.objects.update_or_create(
         product_id=pk,
         defaults={
@@ -67,8 +80,17 @@ def product_acceptance_api(request, pk: int):
             'acceptance_note': body.get('acceptance_note'),
         },
     )
+    after_data = acceptance_dict(acceptance)
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='acceptance',
+        action='create' if created else 'update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Acceptance data saved successfully.',
-        acceptance_dict(acceptance),
+        after_data,
         status_code=201 if created else 200,
     )

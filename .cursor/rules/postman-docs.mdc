@@ -1,0 +1,29 @@
+---
+description: Postman request docs must use full Gazebo Food API markdown style
+alwaysApply: true
+---
+
+# Postman documentation standard
+
+Whenever creating or updating Postman requests (MCP or local `postman/*.json`), **never** ship one-line descriptions. Match **Gazebo - Food API** style (see List suppliers / Save product flags).
+
+## Every request description must include
+
+1. Title heading: `### <Action name>`
+2. Route line: `` `METHOD /path/:param/` ``
+3. Short purpose paragraph (what / why, real example when useful)
+4. **Path parameters** table (if any)
+5. **Query parameters** table (if any) — mark required/optional
+6. **Request body** — `**None**.` or field table (required?, meaning)
+7. **Response body** — shape, important fields, success message text
+8. **Status codes** table (200/201/400/404/409 as applicable)
+
+## Folder description
+
+When adding a folder, set a markdown overview: domain purpose, table name, key vars.
+
+## Do not
+
+- One-liners like "GET list" or "POST create"
+- Skip status codes or field tables on write endpoints
+---
