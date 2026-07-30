@@ -431,14 +431,14 @@
             "header": [{"key": "Content-Type", "value": "application/json"}],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"supplier_id\": 1,\n  \"supplier_code\": \"CST-RICE-5\",\n  \"supplier_product_name\": \"Basmati Rice 5kg Bag\",\n  \"cost\": \"12.50\",\n  \"pack_unit_id\": 9001,\n  \"conversion_to_base\": \"5\",\n  \"purchase_shape_format_id\": null,\n  \"is_active\": true\n}"
+              "raw": "{\n  \"supplier_id\": 1,\n  \"supplier_code\": \"CST-RICE-2X5\",\n  \"supplier_product_name\": \"Basmati Rice 2 x 5kg\",\n  \"outer_qty\": \"2\",\n  \"outer_unit_id\": 9001,\n  \"inner_qty\": \"5\",\n  \"inner_unit_id\": 9002,\n  \"is_default\": true,\n  \"is_active\": true\n}"
             },
             "url": {
               "raw": "{{base_url}}/product/{{product_id}}/suppliers/",
               "host": ["{{base_url}}"],
               "path": ["product", "{{product_id}}", "suppliers", ""]
             },
-            "description": "POST supplier+pack row. cost is per pack; conversion_to_base is 1 pack = N product.unit."
+            "description": "POST supplier+Shape Format. Server sets multiplier = outer_qty x inner_qty and shape_format_label."
           },
           "response": []
         },

@@ -175,7 +175,7 @@ class Product(models.Model):
 
 
 class ProductSupplier(models.Model):
-    """One way of buying a product from one supplier, with its pack conversion."""
+    """Supplier buy-pack for a product. Shape: outer_qty x outer_unit x inner_qty x inner_unit."""
 
     product = models.ForeignKey(
         Product,
@@ -190,14 +190,23 @@ class ProductSupplier(models.Model):
     supplier_code = models.CharField(max_length=64)
     supplier_product_name = models.CharField(max_length=128)
     cost = models.DecimalField(
-        max_digits=16, decimal_places=6, default=Decimal('0'),
+        max_digits=16, decimal_places=6, null=True, blank=True,
     )
-    pack_unit = models.ForeignKey(
+    # Shape Format: e.g. 2 Bag x 5 KG = 10 KG
+    outer_qty = models.DecimalField(max_digits=16, decimal_places=6)
+    outer_unit = models.ForeignKey(
         Unit,
         on_delete=models.PROTECT,
-        related_name='supplier_products',
+        related_name='supplier_products_outer',
     )
-    conversion_to_base = models.DecimalField(max_digits=16, decimal_places=6)
+    inner_qty = models.DecimalField(max_digits=16, decimal_places=6)
+    inner_unit = models.ForeignKey(
+        Unit,
+        on_delete=models.PROTECT,
+        related_name='supplier_products_inner',
+    )
+    multiplier = models.DecimalField(max_digits=16, decimal_places=6)
+    shape_format_label = models.CharField(max_length=128)
     purchase_shape_format = models.ForeignKey(
         PurchaseShapeFormat,
         on_delete=models.PROTECT,
@@ -205,6 +214,7 @@ class ProductSupplier(models.Model):
         blank=True,
         related_name='supplier_products',
     )
+    is_default = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -217,8 +227,21 @@ class ProductSupplier(models.Model):
                 name='uniq_product_supplier_code',
             ),
             models.CheckConstraint(
-                check=models.Q(conversion_to_base__gt=0),
-                name='chk_product_supplier_conversion_positive',
+                check=models.Q(outer_qty__gt=0),
+                name='chk_product_supplier_outer_qty_positive',
+            ),
+            models.CheckConstraint(
+                check=models.Q(inner_qty__gt=0),
+                name='chk_product_supplier_inner_qty_positive',
+            ),
+            models.CheckConstraint(
+                check=models.Q(multiplier__gt=0),
+                name='chk_product_supplier_multiplier_positive',
+            ),
+            models.UniqueConstraint(
+                fields=['product'],
+                condition=models.Q(is_default=True),
+                name='uniq_product_supplier_default',
             ),
         ]
         indexes = [
@@ -228,6 +251,56 @@ class ProductSupplier(models.Model):
     def __str__(self):
         return f'supplier_product:{self.product_id}:{self.supplier_id}:{self.supplier_code}'
 
+    @staticmethod
+    def build_multiplier(outer_qty: Decimal, inner_qty: Decimal) -> Decimal:
+        return (outer_qty * inner_qty).quantize(Decimal('0.000001'))
+
+    @staticmethod
+    def build_shape_label(
+        outer_qty: Decimal,
+        outer_unit_name: str,
+        inner_qty: Decimal,
+        inner_unit_name: str,
+        multiplier: Decimal,
+    ) -> str:
+        def _fmt(value: Decimal) -> str:
+            text = format(value.normalize(), 'f')
+            if '.' in text:
+                text = text.rstrip('0').rstrip('.')
+            return text
+
+        outer_u = (outer_unit_name or '').strip().upper()
+        inner_u = (inner_unit_name or '').strip().upper()
+        return (
+            f'{_fmt(outer_qty)}{outer_u} x {_fmt(inner_qty)}{inner_u}'
+            f' = {_fmt(multiplier)}{inner_u}'
+        )
+
+    def apply_shape_calc(self):
+        self.multiplier = self.build_multiplier(self.outer_qty, self.inner_qty)
+        outer_name = ''
+        inner_name = ''
+        if self.outer_unit_id:
+            if getattr(self, 'outer_unit', None) is not None:
+                outer_name = self.outer_unit.name
+            else:
+                outer_name = Unit.objects.filter(pk=self.outer_unit_id).values_list(
+                    'name', flat=True,
+                ).first() or ''
+        if self.inner_unit_id:
+            if getattr(self, 'inner_unit', None) is not None:
+                inner_name = self.inner_unit.name
+            else:
+                inner_name = Unit.objects.filter(pk=self.inner_unit_id).values_list(
+                    'name', flat=True,
+                ).first() or ''
+        self.shape_format_label = self.build_shape_label(
+            self.outer_qty, outer_name, self.inner_qty, inner_name, self.multiplier,
+        )
+
+    def save(self, *args, **kwargs):
+        self.apply_shape_calc()
+        super().save(*args, **kwargs)
 
 class PackagingType(models.Model):
     """Lookup stub for legacy packagingType."""

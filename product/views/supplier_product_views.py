@@ -1,7 +1,7 @@
 import json
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -17,12 +17,6 @@ def _dec(value) -> str | None:
     return str(value)
 
 
-def _cost_per_base(cost: Decimal, conversion: Decimal) -> str | None:
-    if conversion is None or conversion <= 0:
-        return None
-    return str((cost / conversion).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP))
-
-
 def supplier_product_dict(row: ProductSupplier) -> dict:
     return {
         'id': row.id,
@@ -33,12 +27,17 @@ def supplier_product_dict(row: ProductSupplier) -> dict:
         'supplier_code': row.supplier_code,
         'supplier_product_name': row.supplier_product_name,
         'cost': _dec(row.cost),
-        'pack_unit_id': row.pack_unit_id,
-        'pack_unit_name': row.pack_unit.name,
-        'conversion_to_base': _dec(row.conversion_to_base),
+        'outer_qty': _dec(row.outer_qty),
+        'outer_unit_id': row.outer_unit_id,
+        'outer_unit_name': row.outer_unit.name,
+        'inner_qty': _dec(row.inner_qty),
+        'inner_unit_id': row.inner_unit_id,
+        'inner_unit_name': row.inner_unit.name,
+        'multiplier': _dec(row.multiplier),
+        'shape_format_label': row.shape_format_label,
         'base_unit_name': row.product.unit.name,
-        'cost_per_base_unit': _cost_per_base(row.cost, row.conversion_to_base),
         'purchase_shape_format_id': row.purchase_shape_format_id,
+        'is_default': row.is_default,
         'is_active': row.is_active,
         'created_at': row.created_at.isoformat() if row.created_at else None,
         'updated_at': row.updated_at.isoformat() if row.updated_at else None,
@@ -48,7 +47,8 @@ def supplier_product_dict(row: ProductSupplier) -> dict:
 def _base_qs():
     return ProductSupplier.objects.select_related(
         'supplier',
-        'pack_unit',
+        'outer_unit',
+        'inner_unit',
         'product',
         'product__unit',
         'purchase_shape_format',
@@ -112,6 +112,21 @@ def _is_supplier(location_id: int) -> bool:
     ).exists()
 
 
+def _require_unit(unit_id, field_name: str) -> int:
+    if unit_id in (None, ''):
+        raise ValueError(f'{field_name} is required.')
+    if not Unit.objects.filter(pk=unit_id).exists():
+        raise ValueError(f'{field_name}={unit_id} not found.')
+    return unit_id
+
+
+def _require_positive_decimal(value, field_name: str) -> Decimal:
+    parsed = _parse_decimal(value, field_name)
+    if parsed is None or parsed <= 0:
+        raise ValueError(f'{field_name} must be greater than 0.')
+    return parsed
+
+
 def _validate_write_fields(body: dict, *, partial: bool = False) -> dict:
     """Return cleaned fields to apply. Raises ValueError on bad input."""
     data = {}
@@ -145,35 +160,26 @@ def _validate_write_fields(body: dict, *, partial: bool = False) -> dict:
                 raise ValueError('supplier_product_name cannot be empty.')
             data['supplier_product_name'] = name
 
-    if 'pack_unit_id' in body or not partial:
-        if 'pack_unit_id' not in body and not partial:
-            raise ValueError('Missing required fields: pack_unit_id')
-        if 'pack_unit_id' in body:
-            pack_unit_id = body.get('pack_unit_id')
-            if pack_unit_id in (None, ''):
-                raise ValueError('pack_unit_id is required.')
-            if not Unit.objects.filter(pk=pack_unit_id).exists():
-                raise ValueError(f'pack_unit_id={pack_unit_id} not found.')
-            data['pack_unit_id'] = pack_unit_id
+    shape_required = ('outer_qty', 'outer_unit_id', 'inner_qty', 'inner_unit_id')
+    if not partial:
+        missing = [key for key in shape_required if key not in body]
+        if missing:
+            raise ValueError(f'Missing required fields: {", ".join(missing)}')
 
-    if 'conversion_to_base' in body or not partial:
-        if 'conversion_to_base' not in body and not partial:
-            raise ValueError('Missing required fields: conversion_to_base')
-        if 'conversion_to_base' in body:
-            conversion = _parse_decimal(body.get('conversion_to_base'), 'conversion_to_base')
-            if conversion is None or conversion <= 0:
-                raise ValueError('conversion_to_base must be greater than 0.')
-            data['conversion_to_base'] = conversion
+    if 'outer_qty' in body:
+        data['outer_qty'] = _require_positive_decimal(body.get('outer_qty'), 'outer_qty')
+    if 'outer_unit_id' in body:
+        data['outer_unit_id'] = _require_unit(body.get('outer_unit_id'), 'outer_unit_id')
+    if 'inner_qty' in body:
+        data['inner_qty'] = _require_positive_decimal(body.get('inner_qty'), 'inner_qty')
+    if 'inner_unit_id' in body:
+        data['inner_unit_id'] = _require_unit(body.get('inner_unit_id'), 'inner_unit_id')
 
     if 'cost' in body:
         cost = _parse_decimal(body.get('cost'), 'cost')
-        if cost is None:
-            cost = Decimal('0')
-        if cost < 0:
+        if cost is not None and cost < 0:
             raise ValueError('cost cannot be negative.')
         data['cost'] = cost
-    elif not partial:
-        data['cost'] = Decimal('0')
 
     if 'purchase_shape_format_id' in body:
         format_id = body.get('purchase_shape_format_id')
@@ -184,10 +190,19 @@ def _validate_write_fields(body: dict, *, partial: bool = False) -> dict:
         else:
             data['purchase_shape_format_id'] = format_id
 
+    if 'is_default' in body:
+        data['is_default'] = bool(body['is_default'])
     if 'is_active' in body:
         data['is_active'] = bool(body['is_active'])
 
     return data
+
+
+def _clear_other_defaults(product_id: int, keep_id: int | None = None):
+    qs = ProductSupplier.objects.filter(product_id=product_id, is_default=True)
+    if keep_id is not None:
+        qs = qs.exclude(pk=keep_id)
+    qs.update(is_default=False)
 
 
 @require_http_methods(['GET', 'POST'])
@@ -197,7 +212,7 @@ def product_suppliers_api(request, pk: int):
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'GET':
-        rows = _supplier_qs(pk).order_by('supplier__name', 'supplier_code')
+        rows = _supplier_qs(pk).order_by('-is_default', 'supplier__name', 'supplier_code')
         return api_success(
             'Product suppliers fetched successfully.',
             [supplier_product_dict(row) for row in rows],
@@ -213,7 +228,11 @@ def product_suppliers_api(request, pk: int):
         return api_error(str(exc), status_code=400)
 
     try:
-        row = ProductSupplier.objects.create(product_id=pk, **data)
+        with transaction.atomic():
+            if data.get('is_default'):
+                _clear_other_defaults(pk)
+            row = ProductSupplier(product_id=pk, **data)
+            row.save()
     except IntegrityError:
         return api_error(
             'Supplier product with this supplier_code already exists for this supplier.',
@@ -277,11 +296,13 @@ def product_supplier_detail_api(request, pk: int, row_id: int):
         return api_error('No fields to update.', status_code=400)
 
     before_data = supplier_product_dict(row)
-    for field, value in data.items():
-        setattr(row, field, value)
-
     try:
-        row.save()
+        with transaction.atomic():
+            if data.get('is_default'):
+                _clear_other_defaults(pk, keep_id=row.id)
+            for field, value in data.items():
+                setattr(row, field, value)
+            row.save()
     except IntegrityError:
         return api_error(
             'Supplier product with this supplier_code already exists for this supplier.',
