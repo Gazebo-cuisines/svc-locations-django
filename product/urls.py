@@ -10,9 +10,16 @@ from product.views.costing_views import product_costing_api
 from product.views.flags_views import product_flags_api
 from product.views.ingredient_label_views import product_ingredient_label_api
 from product.views.lookups_views import (
+    product_allergen_code_list_api,
     product_category_list_api,
     product_class_list_api,
+    product_delivery_state_list_api,
+    product_packaging_type_list_api,
+    product_physical_state_list_api,
+    product_purchase_format_detail_api,
+    product_purchase_format_list_api,
     product_range_list_api,
+    product_sub_range_list_api,
     product_unit_list_api,
 )
 from product.views.nutrition_views import product_nutrition_api
@@ -21,6 +28,11 @@ from product.views.product_master_view import product_collection_api, product_de
 from product.views.production_views import product_production_api
 from product.views.shelf_life_views import product_shelf_life_api
 from product.views.stock_policy_views import product_stock_policy_api
+from product.views.supplier_product_views import (
+    product_supplier_detail_api,
+    product_suppliers_api,
+    supplier_products_list_api,
+)
 from product.views.technical_views import product_technical_api
 from product.views.yield_views import product_yield_api
 
@@ -28,7 +40,19 @@ urlpatterns = [
     path('class/', product_class_list_api, name='product-class-list'),
     path('category/', product_category_list_api, name='product-category-list'),
     path('range/', product_range_list_api, name='product-range-list'),
+    path('sub-range/', product_sub_range_list_api, name='product-sub-range-list'),
     path('unit/', product_unit_list_api, name='product-unit-list'),
+    path('purchase-format/', product_purchase_format_list_api, name='product-purchase-format-list'),
+    path(
+        'purchase-format/<int:pk>/',
+        product_purchase_format_detail_api,
+        name='product-purchase-format-detail',
+    ),
+    path('packaging-type/', product_packaging_type_list_api, name='product-packaging-type-list'),
+    path('physical-state/', product_physical_state_list_api, name='product-physical-state-list'),
+    path('delivery-state/', product_delivery_state_list_api, name='product-delivery-state-list'),
+    path('allergen-code/', product_allergen_code_list_api, name='product-allergen-code-list'),
+    path('supplier-products/', supplier_products_list_api, name='supplier-products-list'),
     path('', product_collection_api, name='product-collection'),
     path('<int:pk>/', product_detail_api, name='product-detail'),
     path('<int:pk>/flags/', product_flags_api, name='product-flags'),
@@ -48,5 +72,11 @@ urlpatterns = [
     path('<int:pk>/stock-policy/', product_stock_policy_api, name='product-stock-policy'),
     path('<int:pk>/packaging/', product_packaging_api, name='product-packaging'),
     path('<int:pk>/production/', product_production_api, name='product-production'),
+    path('<int:pk>/suppliers/', product_suppliers_api, name='product-suppliers'),
+    path(
+        '<int:pk>/suppliers/<int:row_id>/',
+        product_supplier_detail_api,
+        name='product-supplier-detail',
+    ),
     path('<int:pk>/timeline/', product_timeline_api, name='product-timeline'),
 ]

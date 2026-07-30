@@ -13,6 +13,10 @@
     {
       "key": "product_id",
       "value": "900001"
+    },
+    {
+      "key": "supplier_product_id",
+      "value": "1"
     }
   ],
   "item": [
@@ -397,6 +401,105 @@
               "path": ["product", "{{product_id}}", "flags", ""]
             },
             "description": "DELETE flags row."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Supplier Products",
+      "description": "Map products to suppliers with pack conversion (1 pack = N base units).",
+      "item": [
+        {
+          "name": "List product suppliers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/suppliers/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "suppliers", ""]
+            },
+            "description": "GET suppliers linked to one product."
+          },
+          "response": []
+        },
+        {
+          "name": "Create supplier product",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplier_id\": 1,\n  \"supplier_code\": \"CST-RICE-5\",\n  \"supplier_product_name\": \"Basmati Rice 5kg Bag\",\n  \"cost\": \"12.50\",\n  \"pack_unit_id\": 9001,\n  \"conversion_to_base\": \"5\",\n  \"purchase_shape_format_id\": null,\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/suppliers/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "suppliers", ""]
+            },
+            "description": "POST supplier+pack row. cost is per pack; conversion_to_base is 1 pack = N product.unit."
+          },
+          "response": []
+        },
+        {
+          "name": "Get supplier product",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/suppliers/{{supplier_product_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "suppliers", "{{supplier_product_id}}", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update supplier product",
+          "request": {
+            "method": "PATCH",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cost\": \"13.00\",\n  \"conversion_to_base\": \"5\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/suppliers/{{supplier_product_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "suppliers", "{{supplier_product_id}}", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete supplier product",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/suppliers/{{supplier_product_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "suppliers", "{{supplier_product_id}}", ""]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List all supplier products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/supplier-products/?supplier_id=1&product_id={{product_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["product", "supplier-products", ""],
+              "query": [
+                {"key": "supplier_id", "value": "1"},
+                {"key": "product_id", "value": "{{product_id}}"}
+              ]
+            },
+            "description": "Cross list. Optional filters: supplier_id, product_id."
           },
           "response": []
         }

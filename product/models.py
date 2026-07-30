@@ -174,6 +174,61 @@ class Product(models.Model):
         return f'{self.id}:{self.name}'
 
 
+class ProductSupplier(models.Model):
+    """One way of buying a product from one supplier, with its pack conversion."""
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='suppliers',
+    )
+    supplier = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.PROTECT,
+        related_name='supplied_products',
+    )
+    supplier_code = models.CharField(max_length=64)
+    supplier_product_name = models.CharField(max_length=128)
+    cost = models.DecimalField(
+        max_digits=16, decimal_places=6, default=Decimal('0'),
+    )
+    pack_unit = models.ForeignKey(
+        Unit,
+        on_delete=models.PROTECT,
+        related_name='supplier_products',
+    )
+    conversion_to_base = models.DecimalField(max_digits=16, decimal_places=6)
+    purchase_shape_format = models.ForeignKey(
+        PurchaseShapeFormat,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='supplier_products',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'product_supplier'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'supplier', 'supplier_code'],
+                name='uniq_product_supplier_code',
+            ),
+            models.CheckConstraint(
+                check=models.Q(conversion_to_base__gt=0),
+                name='chk_product_supplier_conversion_positive',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['supplier'], name='idx_product_supplier_supplier'),
+        ]
+
+    def __str__(self):
+        return f'supplier_product:{self.product_id}:{self.supplier_id}:{self.supplier_code}'
+
+
 class PackagingType(models.Model):
     """Lookup stub for legacy packagingType."""
 
