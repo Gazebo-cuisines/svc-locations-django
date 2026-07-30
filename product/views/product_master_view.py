@@ -6,6 +6,7 @@ from django.views.decorators.http import require_http_methods
 
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import (
     Category,
     Product,
@@ -83,16 +84,27 @@ def product_detail_api(request, pk: int):
     if request.method == 'GET':
         return api_success('Product fetched successfully.', product_detail_dict(product))
     if request.method == 'DELETE':
+        before_data = product_detail_dict(product)
         product.is_active = False
         product.save(update_fields=['is_active', 'updated_at'])
+        after_data = product_detail_dict(product)
+        capture_product_audit(
+            request,
+            product_id=product.id,
+            entity='product',
+            action='delete',
+            before_data=before_data,
+            after_data=after_data,
+        )
         return api_success(
             'Product deactivated successfully.',
-            product_detail_dict(product),
+            after_data,
         )
     return product_update_api(request, product)
 
 
 def product_update_api(request, product: Product):
+    before_data = product_detail_dict(product)
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
@@ -147,9 +159,18 @@ def product_update_api(request, product: Product):
     except IntegrityError as exc:
         return api_error(f'Could not update product: {exc}', status_code=400)
 
+    after_data = product_detail_dict(product)
+    capture_product_audit(
+        request,
+        product_id=product.id,
+        entity='product',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Product updated successfully.',
-        product_detail_dict(product),
+        after_data,
     )
 
 
@@ -248,8 +269,17 @@ def product_create_api(request):
     except IntegrityError as exc:
         return api_error(f'Could not create product: {exc}', status_code=400)
 
+    after_data = product_detail_dict(product)
+    capture_product_audit(
+        request,
+        product_id=product.id,
+        entity='product',
+        action='create',
+        before_data=None,
+        after_data=after_data,
+    )
     return api_success(
         'Product created successfully.',
-        product_detail_dict(product),
+        after_data,
         status_code=201,
     )

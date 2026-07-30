@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import Product, ProductIngredientLabel
 
 
@@ -57,7 +58,7 @@ def product_ingredient_label_api(request, pk: int):
         try:
             label = ProductIngredientLabel.objects.get(pk=pk)
         except ProductIngredientLabel.DoesNotExist:
-            return api_error('Ingredient label not found.', status_code=404)
+            return api_success('Ingredient label is not set yet.', data=None)
         return api_success(
             'Ingredient label fetched successfully.',
             ingredient_label_dict(label),
@@ -67,9 +68,19 @@ def product_ingredient_label_api(request, pk: int):
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':
+        existing = ProductIngredientLabel.objects.filter(pk=pk).first()
+        before_data = ingredient_label_dict(existing) if existing else None
         deleted, _ = ProductIngredientLabel.objects.filter(pk=pk).delete()
         if not deleted:
             return api_error('Ingredient label not found.', status_code=404)
+        capture_product_audit(
+            request,
+            product_id=pk,
+            entity='ingredient_label',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Ingredient label deleted successfully.', data=None)
 
     body = _parse_json_body(request)
@@ -77,12 +88,23 @@ def product_ingredient_label_api(request, pk: int):
         return api_error('Invalid JSON body.', status_code=400)
 
     defaults = {field: body.get(field) for field in _LABEL_FIELDS}
+    existing = ProductIngredientLabel.objects.filter(pk=pk).first()
+    before_data = ingredient_label_dict(existing) if existing else None
     label, created = ProductIngredientLabel.objects.update_or_create(
         product_id=pk,
         defaults=defaults,
     )
+    after_data = ingredient_label_dict(label)
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='ingredient_label',
+        action='create' if created else 'update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Ingredient label saved successfully.',
-        ingredient_label_dict(label),
+        after_data,
         status_code=201 if created else 200,
     )

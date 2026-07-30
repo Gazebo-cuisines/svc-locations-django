@@ -22,7 +22,6 @@ from product.models import (
     Product,
     ProductAcceptance,
     ProductAllergen,
-    ProductAudit,
     ProductClass,
     ProductCosting,
     ProductFlags,
@@ -43,8 +42,6 @@ from product.models import (
 DEMO_PRODUCT_ID = 900001
 DEMO_LOCATION_SRC_ID = 900001
 DEMO_LOCATION_DST_ID = 900002
-DEMO_LOCATION_TRAY_ID = 900003
-DEMO_LOCATION_BOX_ID = 900004
 
 
 class Command(BaseCommand):
@@ -71,7 +68,7 @@ class Command(BaseCommand):
             )
             return
 
-        src, dst, tray, box = self._ensure_demo_locations()
+        src, dst = self._ensure_demo_locations()
         lookups = self._ensure_lookups()
 
         product = Product.objects.create(
@@ -136,8 +133,8 @@ class Command(BaseCommand):
             units_per_batch=Decimal('120.000000'),
             is_gas_flush=False,
             container_vessel=None,
-            tray=tray,
-            box=box,
+            tray=None,
+            box=None,
             packaging_type=lookups['packaging_type'],
             physical_state=lookups['physical_state'],
             delivery_state=lookups['delivery_state'],
@@ -194,13 +191,6 @@ class Command(BaseCommand):
             requires_temperature_check=True,
             temp_check_lower_bound=Decimal('0.0000'),
             temp_check_upper_bound=Decimal('5.0000'),
-        )
-        ProductAudit.objects.create(
-            product=product,
-            created_by_user_id=1,
-            lan_username='demo.user',
-            source_workstation='DEMO-WS-01',
-            source_workstation_ip='10.0.0.42',
         )
         for code, contains, may_contain in (
             (AllergenCode.GLUTEN, True, False),
@@ -265,8 +255,6 @@ class Command(BaseCommand):
             pk__in=[
                 DEMO_LOCATION_SRC_ID,
                 DEMO_LOCATION_DST_ID,
-                DEMO_LOCATION_TRAY_ID,
-                DEMO_LOCATION_BOX_ID,
             ],
         ).delete()
         self.stdout.write('Flushed demo product and demo locations.')
@@ -288,23 +276,7 @@ class Command(BaseCommand):
                 'visible': True,
             },
         )
-        tray, _ = Location.objects.get_or_create(
-            id=DEMO_LOCATION_TRAY_ID,
-            defaults={
-                'name': 'Demo Burger Tray',
-                'external_code': 'DEMO-TRAY',
-                'visible': True,
-            },
-        )
-        box, _ = Location.objects.get_or_create(
-            id=DEMO_LOCATION_BOX_ID,
-            defaults={
-                'name': 'Demo Dispatch Box',
-                'external_code': 'DEMO-BOX',
-                'visible': True,
-            },
-        )
-        return src, dst, tray, box
+        return src, dst
 
     def _ensure_lookups(self):
         product_class, _ = ProductClass.objects.get_or_create(

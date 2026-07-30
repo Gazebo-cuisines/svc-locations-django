@@ -5,6 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import Product, ProductYield
 
 
@@ -52,9 +53,19 @@ def product_yield_api(request, pk: int):
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':
+        existing = ProductYield.objects.filter(pk=pk).first()
+        before_data = yield_dict(existing) if existing else None
         deleted, _ = ProductYield.objects.filter(pk=pk).delete()
         if not deleted:
             return api_error('Product yield not found.', status_code=404)
+        capture_product_audit(
+            request,
+            product_id=pk,
+            entity='yield',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Product yield deleted successfully.', data=None)
 
     body = _parse_json_body(request)
@@ -73,6 +84,8 @@ def product_yield_api(request, pk: int):
                 body.get('chilling_loss_factor'), 'chilling_loss_factor',
             ),
         }
+        existing = ProductYield.objects.filter(pk=pk).first()
+        before_data = yield_dict(existing) if existing else None
         row, created = ProductYield.objects.update_or_create(
             product_id=pk,
             defaults=defaults,
@@ -80,8 +93,17 @@ def product_yield_api(request, pk: int):
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
 
+    after_data = yield_dict(row)
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='yield',
+        action='create' if created else 'update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Product yield saved successfully.',
-        yield_dict(row),
+        after_data,
         status_code=201 if created else 200,
     )

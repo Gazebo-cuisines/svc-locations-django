@@ -1,10 +1,9 @@
 import json
-
-from django.db import IntegrityError
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import AllergenCode, Product, ProductAllergen
 
 
@@ -56,11 +55,23 @@ def product_allergens_api(request, pk: int):
             may_contain=bool(body.get('may_contain', False)),
         )
     except IntegrityError:
-        return api_error(
+        allergen = ProductAllergen.objects.get(
+            product_id=pk,
+            allergen_code=allergen_code,
+        )
+        return api_success(
             f'Allergen {allergen_code} already exists for this product.',
-            status_code=409,
+            allergen_dict(allergen),
         )
 
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='allergen',
+        action='create',
+        before_data=None,
+        after_data=allergen_dict(allergen),
+    )
     return api_success(
         'Allergen created successfully.',
         allergen_dict(allergen),
@@ -80,17 +91,36 @@ def product_allergen_detail_api(request, pk: int, allergen_code: str):
         return api_error('Allergen not found.', status_code=404)
 
     if request.method == 'DELETE':
+        before_data = allergen_dict(allergen)
         allergen.delete()
+        capture_product_audit(
+            request,
+            product_id=pk,
+            entity='allergen',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Allergen deleted successfully.', data=None)
 
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
+    before_data = allergen_dict(allergen)
     if 'contains' in body:
         allergen.contains = bool(body['contains'])
     if 'may_contain' in body:
         allergen.may_contain = bool(body['may_contain'])
     allergen.save()
+    after_data = allergen_dict(allergen)
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='allergen',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
 
-    return api_success('Allergen updated successfully.', allergen_dict(allergen))
+    return api_success('Allergen updated successfully.', after_data)

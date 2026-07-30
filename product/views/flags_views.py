@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import Product, ProductFlags
 
 # One API for all product attribute flags.
@@ -57,9 +58,19 @@ def product_flags_api(request, pk: int):
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':
+        existing = ProductFlags.objects.filter(pk=pk).first()
+        before_data = flags_dict(existing) if existing else None
         deleted, _ = ProductFlags.objects.filter(pk=pk).delete()
         if not deleted:
             return api_error('Product flags not found.', status_code=404)
+        capture_product_audit(
+            request,
+            product_id=pk,
+            entity='flags',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Product flags deleted successfully.', data=None)
 
     body = _parse_json_body(request)
@@ -68,12 +79,23 @@ def product_flags_api(request, pk: int):
 
     # Full replace: omitted keys default to False (same pattern as technical booleans).
     defaults = {field: bool(body.get(field, False)) for field in FLAG_FIELDS}
+    existing = ProductFlags.objects.filter(pk=pk).first()
+    before_data = flags_dict(existing) if existing else None
     flags, created = ProductFlags.objects.update_or_create(
         product_id=pk,
         defaults=defaults,
     )
+    after_data = flags_dict(flags)
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='flags',
+        action='create' if created else 'update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Product flags saved successfully.',
-        flags_dict(flags),
+        after_data,
         status_code=201 if created else 200,
     )

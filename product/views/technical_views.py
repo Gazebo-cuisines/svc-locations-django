@@ -6,6 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from product.audit_log import capture_product_audit
 from product.models import Product, ProductTechnical
 
 
@@ -66,7 +67,7 @@ def product_technical_api(request, pk: int):
         try:
             technical = ProductTechnical.objects.get(pk=pk)
         except ProductTechnical.DoesNotExist:
-            return api_error('Technical data not found.', status_code=404)
+            return api_success('Technical data is not set yet.', data=None)
         return api_success(
             'Technical data fetched successfully.',
             technical_dict(technical),
@@ -76,9 +77,19 @@ def product_technical_api(request, pk: int):
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':
+        existing = ProductTechnical.objects.filter(pk=pk).first()
+        before_data = technical_dict(existing) if existing else None
         deleted, _ = ProductTechnical.objects.filter(pk=pk).delete()
         if not deleted:
             return api_error('Technical data not found.', status_code=404)
+        capture_product_audit(
+            request,
+            product_id=pk,
+            entity='technical',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Technical data deleted successfully.', data=None)
 
     body = _parse_json_body(request)
@@ -107,6 +118,8 @@ def product_technical_api(request, pk: int):
                 body.get('temp_check_upper_bound'), 'temp_check_upper_bound',
             ),
         }
+        existing = ProductTechnical.objects.filter(pk=pk).first()
+        before_data = technical_dict(existing) if existing else None
         technical, created = ProductTechnical.objects.update_or_create(
             product_id=pk,
             defaults=defaults,
@@ -114,8 +127,17 @@ def product_technical_api(request, pk: int):
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
 
+    after_data = technical_dict(technical)
+    capture_product_audit(
+        request,
+        product_id=pk,
+        entity='technical',
+        action='create' if created else 'update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Technical data saved successfully.',
-        technical_dict(technical),
+        after_data,
         status_code=201 if created else 200,
     )

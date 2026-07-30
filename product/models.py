@@ -320,25 +320,25 @@ class ProductPackaging(models.Model):
     )
     is_gas_flush = models.BooleanField(default=False)
     container_vessel = models.ForeignKey(
-        'locations.Location',
+        Product,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='vessel_packaged_products',
+        related_name='packaging_as_container_vessel',
     )
     tray = models.ForeignKey(
-        'locations.Location',
+        Product,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='tray_packaged_products',
+        related_name='packaging_as_tray',
     )
     box = models.ForeignKey(
-        'locations.Location',
+        Product,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='box_packaged_products',
+        related_name='packaging_as_box',
     )
     packaging_type = models.ForeignKey(
         PackagingType,
@@ -499,8 +499,14 @@ class ProductTechnical(models.Model):
         return f'technical:{self.product_id}'
 
 
+class ProductAuditAction(models.TextChoices):
+    CREATE = 'create', 'Create'
+    UPDATE = 'update', 'Update'
+    DELETE = 'delete', 'Delete'
+
+
 class ProductAudit(models.Model):
-    """Transitional — replace workstation/IP with device_id later (Manual 8)."""
+    """Product lifecycle timeline per product."""
 
     product = models.OneToOneField(
         Product,
@@ -509,9 +515,13 @@ class ProductAudit(models.Model):
         related_name='audit',
     )
     created_by_user_id = models.IntegerField(null=True, blank=True)
-    lan_username = models.CharField(max_length=64, null=True, blank=True)
-    source_workstation = models.CharField(max_length=64, null=True, blank=True)
+    lan_username = models.CharField(max_length=128, null=True, blank=True)
+    actor_email = models.CharField(max_length=128, null=True, blank=True)
+    actor_sub = models.CharField(max_length=128, null=True, blank=True)
+    source_workstation = models.CharField(max_length=255, null=True, blank=True)
     source_workstation_ip = models.CharField(max_length=45, null=True, blank=True)
+    timeline_events = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'product_audit'
