@@ -8,5 +8,5 @@ urlpatterns = [
     path('product/', include('product.urls')),
     path('recipe/', include('recipe.urls')),
     path('stock/', include('stock_ledger.urls')),
-    path('api/auth/', include('users_rbac.urls')),
+    path('auth/', include('users_rbac.urls')),
 ]

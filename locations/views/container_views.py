@@ -51,3 +51,16 @@ def container_index_api(request):
             'endpoints': _CONTAINER_ENDPOINTS,
         },
     )
+
+@require_GET
+def global_container_index_api(request):
+    """List all containers (locations) for product FK selection and discovery."""
+    qs = Location.objects.prefetch_related('roles').order_by('name')
+    results = [container_list_dict(loc) for loc in qs]
+    return api_success(
+        'Global container list fetched successfully.',
+        data={
+            'count': len(results),
+            'results': results,
+        },
+    )
