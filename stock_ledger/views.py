@@ -1,13 +1,24 @@
 import json
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from django.db import IntegrityError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.utils.api_response import api_error, api_success
-from stock_ledger.models import StockBalance, StockEntry, StockLot, StockReservation
+from product.models import Product, PurchaseShapeFormat, Unit
+from recipe.models import RecipeVersion
+from stock_ledger.models import (
+    StockBalance,
+    StockEntry,
+    StockLot,
+    StockLotOrigin,
+    StockReservation,
+    StockUnitConversion,
+)
 from stock_ledger.util import reservations, services
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.trace import (
@@ -44,6 +55,48 @@ def _parse_effective_at(value):
     if timezone.is_naive(dt):
         dt = timezone.make_aware(dt, timezone.get_current_timezone())
     return dt
+
+
+def _parse_date(value, field_name: str):
+    if value in (None, ''):
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValueError(f'Invalid date for {field_name}. Use YYYY-MM-DD.') from exc
+
+
+def julian_trace_number(day: date) -> str:
+    """YY + day-of-year, e.g. 2026-05-05 → 26125."""
+    return f'{day.year % 100:02d}{day.timetuple().tm_yday:03d}'
+
+
+def lot_dict(lot: StockLot) -> dict:
+    return {
+        'id': lot.id,
+        'product_id': lot.product_id,
+        'recipe_version_id': lot.recipe_version_id,
+        'shape_format_id': lot.shape_format_id,
+        'trace_number': lot.trace_number,
+        'supplier_lot_code': lot.supplier_lot_code,
+        'origin': lot.origin,
+        'production_date': (
+            lot.production_date.isoformat() if lot.production_date else None
+        ),
+        'use_by': lot.use_by.isoformat() if lot.use_by else None,
+        'created_at': lot.created_at.isoformat() if lot.created_at else None,
+    }
+
+
+def unit_conversion_dict(row: StockUnitConversion) -> dict:
+    return {
+        'id': row.id,
+        'unit_id': row.unit_id,
+        'product_id': row.product_id,
+        'to_kg': _dec(row.to_kg),
+        'source': row.source,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+    }
 
 
 def entry_dict(entry: StockEntry) -> dict:
@@ -102,6 +155,160 @@ def _common_write_kwargs(body: dict) -> dict:
         'source_document_line': body.get('source_document_line'),
     }
     return {k: v for k, v in kwargs.items() if v is not None}
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def lots_collection_api(request):
+    if request.method == 'GET':
+        qs = StockLot.objects.all().order_by('-id')
+        product_id = request.GET.get('product_id')
+        if product_id not in (None, ''):
+            try:
+                qs = qs.filter(product_id=int(product_id))
+            except (TypeError, ValueError):
+                return api_error('product_id must be an integer.')
+        return api_success('Lots fetched.', [lot_dict(lot) for lot in qs[:500]])
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+
+    required = ['product_id', 'origin']
+    missing = [key for key in required if body.get(key) in (None, '')]
+    if missing:
+        return api_error(f'Missing required field: {missing[0]}')
+
+    origin = body['origin']
+    if origin not in StockLotOrigin.values:
+        return api_error(
+            f'Invalid origin. Use one of: {", ".join(StockLotOrigin.values)}',
+        )
+
+    product_id = body['product_id']
+    if not Product.objects.filter(pk=product_id).exists():
+        return api_error(f'product_id={product_id} not found.', status_code=404)
+
+    recipe_version_id = body.get('recipe_version_id')
+    if (
+        recipe_version_id not in (None, '')
+        and not RecipeVersion.objects.filter(pk=recipe_version_id).exists()
+    ):
+        return api_error(
+            f'recipe_version_id={recipe_version_id} not found.',
+            status_code=400,
+        )
+
+    shape_format_id = body.get('shape_format_id')
+    if (
+        shape_format_id not in (None, '')
+        and not PurchaseShapeFormat.objects.filter(pk=shape_format_id).exists()
+    ):
+        return api_error(
+            f'shape_format_id={shape_format_id} not found.',
+            status_code=400,
+        )
+
+    try:
+        production_date = _parse_date(body.get('production_date'), 'production_date')
+        use_by = _parse_date(body.get('use_by'), 'use_by')
+        trace_date = _parse_date(body.get('trace_date'), 'trace_date')
+        trace_number = body.get('trace_number')
+        if trace_number in (None, ''):
+            # Julian: YY + day-of-year from stock-in / production date.
+            day = trace_date or production_date or timezone.localdate()
+            trace_number = julian_trace_number(day)
+            if production_date is None:
+                production_date = day
+        else:
+            trace_number = str(trace_number)
+
+        lot = StockLot.objects.create(
+            product_id=product_id,
+            trace_number=trace_number,
+            origin=origin,
+            supplier_lot_code=body.get('supplier_lot_code') or None,
+            recipe_version_id=recipe_version_id or None,
+            shape_format_id=shape_format_id or None,
+            production_date=production_date,
+            use_by=use_by,
+        )
+    except ValueError as exc:
+        return api_error(str(exc))
+    except IntegrityError:
+        return api_error('Lot with this identity already exists.', status_code=409)
+
+    return api_success('Lot created.', lot_dict(lot), status_code=201)
+
+
+@csrf_exempt
+@require_GET
+def lot_detail_api(request, pk: int):
+    try:
+        lot = StockLot.objects.get(pk=pk)
+    except StockLot.DoesNotExist:
+        return api_error('Lot not found.', status_code=404)
+    return api_success('Lot fetched.', lot_dict(lot))
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def unit_conversions_api(request):
+    if request.method == 'GET':
+        qs = StockUnitConversion.objects.all().order_by('unit_id', 'product_id')
+        product_id = request.GET.get('product_id')
+        unit_id = request.GET.get('unit_id')
+        if product_id not in (None, ''):
+            try:
+                qs = qs.filter(product_id=int(product_id))
+            except (TypeError, ValueError):
+                return api_error('product_id must be an integer.')
+        if unit_id not in (None, ''):
+            try:
+                qs = qs.filter(unit_id=int(unit_id))
+            except (TypeError, ValueError):
+                return api_error('unit_id must be an integer.')
+        return api_success(
+            'Unit conversions fetched.',
+            [unit_conversion_dict(row) for row in qs[:500]],
+        )
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+
+    required = ['unit_id', 'to_kg']
+    missing = [key for key in required if body.get(key) in (None, '')]
+    if missing:
+        return api_error(f'Missing required field: {missing[0]}')
+
+    unit_id = body['unit_id']
+    if not Unit.objects.filter(pk=unit_id).exists():
+        return api_error(f'unit_id={unit_id} not found.', status_code=404)
+
+    product_id = body.get('product_id')
+    if product_id not in (None, ''):
+        if not Product.objects.filter(pk=product_id).exists():
+            return api_error(f'product_id={product_id} not found.', status_code=404)
+    else:
+        product_id = None
+
+    try:
+        to_kg = _parse_decimal(body['to_kg'], 'to_kg')
+        if to_kg <= 0:
+            return api_error('to_kg must be greater than 0.')
+    except ValueError as exc:
+        return api_error(str(exc))
+
+    row, _created = StockUnitConversion.objects.update_or_create(
+        unit_id=unit_id,
+        product_id=product_id,
+        defaults={
+            'to_kg': to_kg,
+            'source': body.get('source') or 'manual',
+        },
+    )
+    return api_success('Unit conversion saved.', unit_conversion_dict(row), status_code=201)
 
 
 @csrf_exempt

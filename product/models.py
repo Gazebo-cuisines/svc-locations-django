@@ -95,9 +95,9 @@ class PurchaseShapeFormat(models.Model):
 
 
 class Product(models.Model):
-    """Core product identity + classification. PK matches legacy tblproducts.id."""
+    """Core product identity + classification."""
 
-    id = models.IntegerField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=128, unique=True)
     alternate_name = models.CharField(max_length=128, null=True, blank=True)
     recipe_code = models.CharField(max_length=32, unique=True, null=True, blank=True)

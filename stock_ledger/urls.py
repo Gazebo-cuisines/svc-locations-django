@@ -3,6 +3,9 @@ from django.urls import path
 from stock_ledger import views
 
 urlpatterns = [
+    path('lots/', views.lots_collection_api, name='stock-lots'),
+    path('lots/<int:pk>/', views.lot_detail_api, name='stock-lot-detail'),
+    path('unit-conversions/', views.unit_conversions_api, name='stock-unit-conversions'),
     # Stock movement endpoints
     path('receipt/', views.receipt_api, name='stock-receipt'),
     path('issue/', views.issue_api, name='stock-issue'),

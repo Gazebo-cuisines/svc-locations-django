@@ -235,7 +235,6 @@ def product_create_api(request):
         return api_error('Invalid JSON body.', status_code=400)
 
     required = [
-        'id',
         'name',
         'product_class_id',
         'category_id',
@@ -250,9 +249,6 @@ def product_create_api(request):
             f'Missing required fields: {", ".join(missing)}',
             status_code=400,
         )
-
-    if Product.objects.filter(pk=body['id']).exists():
-        return api_error(f'Product id={body["id"]} already exists.', status_code=409)
 
     try:
         ProductClass.objects.get(pk=body['product_class_id'])
@@ -278,7 +274,6 @@ def product_create_api(request):
     purchase = _purchase_details_from_body(body) or {}
     try:
         product = Product(
-            id=body['id'],
             name=body['name'],
             alternate_name=body.get('alternate_name'),
             recipe_code=body.get('recipe_code'),
@@ -316,6 +311,6 @@ def product_create_api(request):
     )
     return api_success(
         'Product created successfully.',
-        after_data,
+        {'ref': product.id, **after_data},
         status_code=201,
     )
