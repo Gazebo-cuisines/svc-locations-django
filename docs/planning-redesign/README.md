@@ -15,8 +15,8 @@ Do not edit production code on `main` for Planning until a PR is requested.
 | [CHUNKS.md](CHUNKS.md) | Chunk list + process |
 | [chunk-01-requirements/PLANNING_REQUIREMENTS.md](chunk-01-requirements/PLANNING_REQUIREMENTS.md) | Chunk 1 — signed |
 | [chunk-02-erd/PLANNING_ERD.md](chunk-02-erd/PLANNING_ERD.md) | Chunk 2 — ERD |
-| `chunk-03-api/` | Chunk 3 (next) |
-| `chunk-04-ui/` | Chunk 4 |
+| [chunk-03-api/PLANNING_API.md](chunk-03-api/PLANNING_API.md) | Chunk 3 — API |
+| `chunk-04-ui/` | Chunk 4 (next) |
 
 **Related read-only sources (do not modify for this work):**
 
