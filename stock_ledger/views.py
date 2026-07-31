@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError
+from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
@@ -19,8 +20,10 @@ from stock_ledger.models import (
     StockReservation,
     StockUnitConversion,
 )
+from stock_ledger.stream import iter_sse, subscribe
 from stock_ledger.util import reservations, services
 from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util.serialize import BALANCE_SELECT_RELATED, serialize_balance_row
 from stock_ledger.util.trace import (
     mass_balance_for_output,
     trace_backward,
@@ -473,25 +476,33 @@ def entry_detail_api(request, pk: int):
 @csrf_exempt
 @require_GET
 def balance_list_api(request):
-    qs = StockBalance.objects.all().order_by('lot_id', 'location_id')
+    qs = StockBalance.objects.select_related(*BALANCE_SELECT_RELATED).order_by(
+        'lot_id', 'location_id'
+    )
     lot_id = request.GET.get('lot_id')
     location_id = request.GET.get('location_id')
     if lot_id:
         qs = qs.filter(lot_id=lot_id)
     if location_id:
         qs = qs.filter(location_id=location_id)
-    data = [
-        {
-            'lot_id': b.lot_id,
-            'location_id': b.location_id,
-            'quantity': _dec(b.quantity),
-            'quantity_base': _dec(b.quantity_base),
-            'last_entry_id': b.last_entry_id,
-            'updated_at': b.updated_at.isoformat() if b.updated_at else None,
-        }
-        for b in qs[:500]
-    ]
+
+    data = [serialize_balance_row(b) for b in qs[:500]]
     return api_success('Balances fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+def balance_stream_api(request):
+    # Holds a gunicorn sync worker for the connection lifetime — fine for a few
+    # overview tabs; use gevent/ASGI if many concurrent streams.
+    q = subscribe()
+    response = StreamingHttpResponse(
+        iter_sse(q),
+        content_type='text/event-stream',
+    )
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 @csrf_exempt

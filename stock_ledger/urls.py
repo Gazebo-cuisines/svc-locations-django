@@ -22,7 +22,8 @@ urlpatterns = [
     path('entries/<int:pk>/', views.entry_detail_api, name='stock-entry-detail'),
     # Stock balance endpoints
     path('balances/', views.balance_list_api, name='stock-balances'),
-    
+    path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),
+
     # Stock ATP endpoints
     path('atp/', views.atp_api, name='stock-atp'),
 

@@ -40,9 +40,65 @@ def product_class_list_api(request):
     return api_success('Product classes fetched successfully.', _rows(ProductClass.objects.all()))
 
 
+def _category_dict(row: Category) -> dict:
+    return {
+        'id': row.id,
+        'name': row.name,
+        'parent_id': row.parent_id,
+        'is_default': row.is_default,
+        'is_container': row.is_container,
+        'purchase_unit_id': row.purchase_unit_id,
+        'multiplier': str(row.multiplier) if row.multiplier is not None else None,
+        'path': row.path,
+        'path_nodes': row.path_nodes,
+        'code_generator': row.code_generator,
+        'code_generator_path': row.code_generator_path,
+        'last_increment_auto_code': row.last_increment_auto_code,
+        'item_flag': row.item_flag,
+        'is_range': row.is_range,
+        'is_resource': row.is_resource,
+        'is_container_flag': row.is_container_flag,
+        'is_other': row.is_other,
+        'is_locked': row.is_locked,
+        'is_locked_assigned': row.is_locked_assigned,
+        'is_locked_path': row.is_locked_path,
+        'remarks': row.remarks,
+        'children': [],
+    }
+
+
+def _category_tree(root_parent_id=None) -> list:
+    nodes = {
+        row.id: _category_dict(row)
+        for row in Category.objects.all().order_by('name')
+    }
+    roots = []
+    for node in nodes.values():
+        parent_id = node['parent_id']
+        if parent_id in nodes:
+            nodes[parent_id]['children'].append(node)
+        else:
+            # null parent or orphan parent_id → top-level
+            roots.append(node)
+    if root_parent_id is None:
+        return roots
+    parent = nodes.get(root_parent_id)
+    return parent['children'] if parent else []
+
+
 @require_GET
 def product_category_list_api(request):
-    return api_success('Product categories fetched successfully.', _rows(Category.objects.all()))
+    parent_id = request.GET.get('parent_id')
+    if parent_id in (None, ''):
+        tree = _category_tree(root_parent_id=None)
+    elif parent_id in ('0', 'null'):
+        tree = _category_tree(root_parent_id=None)
+    else:
+        try:
+            tree = _category_tree(root_parent_id=int(parent_id))
+        except (TypeError, ValueError):
+            return api_error('parent_id must be an integer.', status_code=400)
+    return api_success('Product categories fetched successfully.', tree)
 
 
 @require_GET
