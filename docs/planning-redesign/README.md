@@ -19,7 +19,8 @@ Do not edit production code on `main` for Planning until a PR is requested.
 | [chunk-04-ui/PLANNING_UI.md](chunk-04-ui/PLANNING_UI.md) | Chunk 4 — UI spec |
 | [chunk-05-django-schema/NOTES.md](chunk-05-django-schema/NOTES.md) | Chunk 5 — Django schema |
 | [chunk-06-services/NOTES.md](chunk-06-services/NOTES.md) | Chunk 6 — MRP services |
-| Chunk 7 (code) | Django HTTP APIs (next) |
+| [chunk-07-http-api/NOTES.md](chunk-07-http-api/NOTES.md) | Chunk 7 — HTTP APIs |
+| Chunk 8 (code) | React Planning UI (next) |
 
 **Related read-only sources (do not modify for this work):**
 
