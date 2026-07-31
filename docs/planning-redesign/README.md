@@ -17,7 +17,8 @@ Do not edit production code on `main` for Planning until a PR is requested.
 | [chunk-02-erd/PLANNING_ERD.md](chunk-02-erd/PLANNING_ERD.md) | Chunk 2 — ERD |
 | [chunk-03-api/PLANNING_API.md](chunk-03-api/PLANNING_API.md) | Chunk 3 — API |
 | [chunk-04-ui/PLANNING_UI.md](chunk-04-ui/PLANNING_UI.md) | Chunk 4 — UI spec |
-| `chunk-05` (code) | Chunk 5 — Django schema (next) |
+| [chunk-05-django-schema/NOTES.md](chunk-05-django-schema/NOTES.md) | Chunk 5 — Django schema |
+| Chunk 6 (code) | Django MRP services (next) |
 
 **Related read-only sources (do not modify for this work):**
 
