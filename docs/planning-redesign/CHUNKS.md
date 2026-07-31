@@ -50,8 +50,8 @@ flowchart LR
 | **3** | API contracts | Design doc | [chunk-03-api/PLANNING_API.md](chunk-03-api/PLANNING_API.md) | **DONE** (on `Plan`) |
 | **4** | Frontend UI spec | Design doc | [chunk-04-ui/PLANNING_UI.md](chunk-04-ui/PLANNING_UI.md) | **DONE** (on `Plan`) |
 | **5** | Django schema | Code | [chunk-05-django-schema/NOTES.md](chunk-05-django-schema/NOTES.md) + `planning/` app | **DONE** (on `Plan`) |
-| **6** | Django MRP services | Code | explode / netting / FEFO / lifecycle | **NEXT — awaiting approve** |
-| **7** | Django HTTP APIs | Code | `/planning/…` | Blocked on Chunk 6 |
+| **6** | Django MRP services | Code | [chunk-06-services/NOTES.md](chunk-06-services/NOTES.md) | **DONE** (on `Plan`) |
+| **7** | Django HTTP APIs | Code | `/planning/…` | **NEXT — awaiting approve** |
 | **8** | React Planning UI | Code | `gazeboo-cloud-web/src/features/planning/` | Blocked on Chunk 7 |
 | **9** | Resource board | Later | Infinite-capacity sequencing | After MVP |
 | **10** | Forecast / shortage | Later | Demand profiles + shortage | After MVP |
