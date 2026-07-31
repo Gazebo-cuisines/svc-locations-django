@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
@@ -40,9 +41,261 @@ def product_class_list_api(request):
     return api_success('Product classes fetched successfully.', _rows(ProductClass.objects.all()))
 
 
-@require_GET
+def _category_dict(row: Category, *, include_children: bool = True) -> dict:
+    data = {
+        'id': row.id,
+        'name': row.name,
+        'parent_id': row.parent_id,
+        'is_default': row.is_default,
+        'is_container': row.is_container,
+        'purchase_unit_id': row.purchase_unit_id,
+        'multiplier': str(row.multiplier) if row.multiplier is not None else None,
+        'path': row.path,
+        'path_nodes': row.path_nodes,
+        'code_generator': row.code_generator,
+        'code_generator_path': row.code_generator_path,
+        'last_increment_auto_code': row.last_increment_auto_code,
+        'item_flag': row.item_flag,
+        'is_range': row.is_range,
+        'is_resource': row.is_resource,
+        'is_container_flag': row.is_container_flag,
+        'is_other': row.is_other,
+        'is_locked': row.is_locked,
+        'is_locked_assigned': row.is_locked_assigned,
+        'is_locked_path': row.is_locked_path,
+        'remarks': row.remarks,
+    }
+    if include_children:
+        data['children'] = []
+    return data
+
+
+def _category_tree(root_parent_id=None) -> list:
+    nodes = {
+        row.id: _category_dict(row)
+        for row in Category.objects.all().order_by('name')
+    }
+    roots = []
+    for node in nodes.values():
+        parent_id = node['parent_id']
+        if parent_id in nodes:
+            nodes[parent_id]['children'].append(node)
+        else:
+            roots.append(node)
+    if root_parent_id is None:
+        return roots
+    parent = nodes.get(root_parent_id)
+    return parent['children'] if parent else []
+
+
+def _parse_optional_int(body, key):
+    if key not in body:
+        return None, False
+    value = body.get(key)
+    if value in (None, '', 'null'):
+        return None, True
+    try:
+        return int(value), True
+    except (TypeError, ValueError):
+        return None, False
+
+
+def _is_descendant(ancestor_id: int, maybe_child_id: int) -> bool:
+    """True if maybe_child_id is ancestor_id or under it in the tree."""
+    if ancestor_id == maybe_child_id:
+        return True
+    current = Category.objects.filter(pk=maybe_child_id).values_list('parent_id', flat=True).first()
+    seen = set()
+    while current is not None:
+        if current == ancestor_id:
+            return True
+        if current in seen:
+            break
+        seen.add(current)
+        current = (
+            Category.objects.filter(pk=current).values_list('parent_id', flat=True).first()
+        )
+    return False
+
+
+def _apply_category_fields(row: Category, body: dict, *, creating: bool):
+    """Apply writable fields from body. Returns error response or None."""
+    if 'name' in body or creating:
+        name = (body.get('name') or '').strip()
+        if not name:
+            return api_error('name cannot be empty.', status_code=400)
+        row.name = name
+
+    if 'parent_id' in body or creating:
+        parent_id, ok = _parse_optional_int(body, 'parent_id') if 'parent_id' in body else (None, True)
+        if 'parent_id' in body and not ok:
+            return api_error('parent_id must be an integer or null.', status_code=400)
+        if creating and 'parent_id' not in body:
+            parent_id = None
+        if parent_id is not None:
+            if parent_id == row.id:
+                return api_error('Category cannot be its own parent.', status_code=400)
+            if not Category.objects.filter(pk=parent_id).exists():
+                return api_error(f'Parent category id={parent_id} not found.', status_code=400)
+            if row.id and _is_descendant(row.id, parent_id):
+                return api_error('Cannot set parent to a descendant category.', status_code=400)
+        row.parent_id = parent_id
+
+    if 'purchase_unit_id' in body:
+        unit_id, ok = _parse_optional_int(body, 'purchase_unit_id')
+        if not ok:
+            return api_error('purchase_unit_id must be an integer or null.', status_code=400)
+        if unit_id is not None and not Unit.objects.filter(pk=unit_id).exists():
+            return api_error(f'Unit id={unit_id} not found.', status_code=400)
+        row.purchase_unit_id = unit_id
+
+    if 'multiplier' in body:
+        raw = body.get('multiplier')
+        if raw in (None, '', 'null'):
+            row.multiplier = None
+        else:
+            try:
+                row.multiplier = Decimal(str(raw))
+            except (InvalidOperation, ValueError):
+                return api_error('multiplier must be a decimal number.', status_code=400)
+
+    str_fields = (
+        'path',
+        'path_nodes',
+        'code_generator',
+        'code_generator_path',
+        'remarks',
+    )
+    for field in str_fields:
+        if field in body:
+            value = body.get(field)
+            setattr(row, field, None if value in (None, '') else str(value))
+
+    bool_fields = (
+        'is_default',
+        'is_container',
+        'is_range',
+        'is_resource',
+        'is_container_flag',
+        'is_other',
+        'is_locked',
+        'is_locked_assigned',
+        'is_locked_path',
+    )
+    for field in bool_fields:
+        if field in body:
+            value = body.get(field)
+            if field == 'is_container' and value is None:
+                row.is_container = None
+            else:
+                setattr(row, field, bool(value))
+
+    if 'item_flag' in body:
+        try:
+            row.item_flag = int(body.get('item_flag'))
+        except (TypeError, ValueError):
+            return api_error('item_flag must be an integer.', status_code=400)
+
+    if 'last_increment_auto_code' in body:
+        try:
+            row.last_increment_auto_code = int(body.get('last_increment_auto_code'))
+        except (TypeError, ValueError):
+            return api_error('last_increment_auto_code must be an integer.', status_code=400)
+
+    return None
+
+
+@require_http_methods(['GET', 'POST'])
+@csrf_exempt
 def product_category_list_api(request):
-    return api_success('Product categories fetched successfully.', _rows(Category.objects.all()))
+    if request.method == 'GET':
+        parent_id = request.GET.get('parent_id')
+        if parent_id in (None, ''):
+            tree = _category_tree(root_parent_id=None)
+        elif parent_id in ('0', 'null'):
+            tree = _category_tree(root_parent_id=None)
+        else:
+            try:
+                tree = _category_tree(root_parent_id=int(parent_id))
+            except (TypeError, ValueError):
+                return api_error('parent_id must be an integer.', status_code=400)
+        return api_success('Product categories fetched successfully.', tree)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    category_id = body.get('id')
+    if category_id in (None, ''):
+        return api_error('Missing required fields: id, name', status_code=400)
+    try:
+        category_id = int(category_id)
+    except (TypeError, ValueError):
+        return api_error('id must be an integer.', status_code=400)
+
+    if Category.objects.filter(pk=category_id).exists():
+        return api_error(f'Category id={category_id} already exists.', status_code=409)
+
+    row = Category(id=category_id)
+    err = _apply_category_fields(row, body, creating=True)
+    if err is not None:
+        return err
+
+    try:
+        row.save()
+    except IntegrityError as exc:
+        return api_error(f'Could not create category: {exc}', status_code=400)
+
+    return api_success(
+        'Product category created successfully.',
+        _category_dict(row, include_children=False),
+        status_code=201,
+    )
+
+
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@csrf_exempt
+def product_category_detail_api(request, pk: int):
+    try:
+        row = Category.objects.get(pk=pk)
+    except Category.DoesNotExist:
+        return api_error('Product category not found.', status_code=404)
+
+    if request.method == 'GET':
+        return api_success(
+            'Product category fetched successfully.',
+            _category_dict(row, include_children=False),
+        )
+
+    if request.method == 'DELETE':
+        try:
+            row.delete()
+        except ProtectedError:
+            return api_error(
+                'Category is in use (products or child categories) and cannot be deleted.',
+                status_code=409,
+            )
+        return api_success('Product category deleted successfully.', data=None)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    if not body:
+        return api_error('No fields to update.', status_code=400)
+
+    err = _apply_category_fields(row, body, creating=False)
+    if err is not None:
+        return err
+
+    try:
+        row.save()
+    except IntegrityError as exc:
+        return api_error(f'Could not update category: {exc}', status_code=400)
+
+    return api_success(
+        'Product category updated successfully.',
+        _category_dict(row, include_children=False),
+    )
 
 
 @require_GET

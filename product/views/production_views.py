@@ -6,6 +6,7 @@ from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
+from product.query import active_products
 from product.models import Product, ProductProduction
 
 
@@ -58,6 +59,9 @@ def _parse_int(value, field_name: str):
 @require_http_methods(['GET', 'PUT', 'DELETE'])
 @csrf_exempt
 def product_production_api(request, pk: int):
+    if not active_products().filter(pk=pk).exists():
+        return api_error('Product not found.', status_code=404)
+
     if request.method == 'GET':
         try:
             row = ProductProduction.objects.get(pk=pk)
@@ -65,7 +69,7 @@ def product_production_api(request, pk: int):
             return api_success('Product production is not set yet.', data=None)
         return api_success('Product production fetched successfully.', production_dict(row))
 
-    if not Product.objects.filter(pk=pk).exists():
+    if not active_products().filter(pk=pk).exists():
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':

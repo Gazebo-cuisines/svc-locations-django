@@ -18,10 +18,41 @@ class ProductClass(models.Model):
 
 
 class Category(models.Model):
-    """Lookup stub. PK matches legacy Categories.id."""
+    """Category tree. PK matches legacy tblcategories.id."""
 
     id = models.IntegerField(primary_key=True)
-    name = models.CharField(max_length=64)
+    name = models.CharField(max_length=256)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        related_name='children',
+        null=True,
+        blank=True,
+    )
+    is_default = models.BooleanField(default=False)
+    is_container = models.BooleanField(null=True, blank=True)
+    purchase_unit = models.ForeignKey(
+        'Unit',
+        on_delete=models.PROTECT,
+        related_name='purchase_unit_categories',
+        null=True,
+        blank=True,
+    )
+    multiplier = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    path = models.CharField(max_length=256, null=True, blank=True)
+    path_nodes = models.CharField(max_length=128, null=True, blank=True)
+    code_generator = models.CharField(max_length=256, null=True, blank=True)
+    code_generator_path = models.CharField(max_length=256, null=True, blank=True)
+    last_increment_auto_code = models.IntegerField(default=0)
+    item_flag = models.SmallIntegerField(default=-1)
+    is_range = models.BooleanField(default=False)
+    is_resource = models.BooleanField(default=False)
+    is_container_flag = models.BooleanField(default=False)
+    is_other = models.BooleanField(default=False)
+    is_locked = models.BooleanField(default=False)
+    is_locked_assigned = models.BooleanField(default=False)
+    is_locked_path = models.BooleanField(default=False)
+    remarks = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = 'product_category'
@@ -95,9 +126,9 @@ class PurchaseShapeFormat(models.Model):
 
 
 class Product(models.Model):
-    """Core product identity + classification. PK matches legacy tblproducts.id."""
+    """Core product identity + classification."""
 
-    id = models.IntegerField(primary_key=True)
+    id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=128, unique=True)
     alternate_name = models.CharField(max_length=128, null=True, blank=True)
     recipe_code = models.CharField(max_length=32, unique=True, null=True, blank=True)

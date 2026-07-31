@@ -5,6 +5,7 @@ from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
+from product.query import active_products
 from product.models import Product, ProductFlags
 
 # One API for all product attribute flags.
@@ -47,6 +48,9 @@ def _parse_json_body(request):
 @require_http_methods(['GET', 'PUT', 'DELETE'])
 @csrf_exempt
 def product_flags_api(request, pk: int):
+    if not active_products().filter(pk=pk).exists():
+        return api_error('Product not found.', status_code=404)
+
     if request.method == 'GET':
         try:
             flags = ProductFlags.objects.get(pk=pk)
@@ -54,7 +58,7 @@ def product_flags_api(request, pk: int):
             return api_error('Product flags not found.', status_code=404)
         return api_success('Product flags fetched successfully.', flags_dict(flags))
 
-    if not Product.objects.filter(pk=pk).exists():
+    if not active_products().filter(pk=pk).exists():
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'DELETE':

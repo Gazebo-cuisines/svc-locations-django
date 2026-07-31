@@ -16,6 +16,7 @@ from product.models import (
     SubRange,
     Unit,
 )
+from product.query import active_products
 
 
 def product_list_dict(product: Product) -> dict:
@@ -119,7 +120,7 @@ def _apply_purchase_details(product: Product, purchase: dict):
 @csrf_exempt
 def product_collection_api(request):
     if request.method == 'GET':
-        products = Product.objects.filter(is_active=True)
+        products = active_products()
         return api_success(
             'Product list fetched successfully.',
             [product_list_dict(p) for p in products],
@@ -131,7 +132,10 @@ def product_collection_api(request):
 @csrf_exempt
 def product_detail_api(request, pk: int):
     try:
-        product = Product.objects.get(pk=pk)
+        if request.method == 'GET':
+            product = active_products().get(pk=pk)
+        else:
+            product = Product.objects.get(pk=pk)
     except Product.DoesNotExist:
         return api_error('Product not found.', status_code=404)
 
@@ -235,7 +239,6 @@ def product_create_api(request):
         return api_error('Invalid JSON body.', status_code=400)
 
     required = [
-        'id',
         'name',
         'product_class_id',
         'category_id',
@@ -250,9 +253,6 @@ def product_create_api(request):
             f'Missing required fields: {", ".join(missing)}',
             status_code=400,
         )
-
-    if Product.objects.filter(pk=body['id']).exists():
-        return api_error(f'Product id={body["id"]} already exists.', status_code=409)
 
     try:
         ProductClass.objects.get(pk=body['product_class_id'])
@@ -278,7 +278,6 @@ def product_create_api(request):
     purchase = _purchase_details_from_body(body) or {}
     try:
         product = Product(
-            id=body['id'],
             name=body['name'],
             alternate_name=body.get('alternate_name'),
             recipe_code=body.get('recipe_code'),
@@ -316,6 +315,6 @@ def product_create_api(request):
     )
     return api_success(
         'Product created successfully.',
-        after_data,
+        {'ref': product.id, **after_data},
         status_code=201,
     )

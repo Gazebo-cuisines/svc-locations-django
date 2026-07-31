@@ -11,6 +11,7 @@ from product.views.flags_views import product_flags_api
 from product.views.ingredient_label_views import product_ingredient_label_api
 from product.views.lookups_views import (
     product_allergen_code_list_api,
+    product_category_detail_api,
     product_category_list_api,
     product_class_list_api,
     product_delivery_state_list_api,
@@ -39,6 +40,7 @@ from product.views.yield_views import product_yield_api
 urlpatterns = [
     path('class/', product_class_list_api, name='product-class-list'),
     path('category/', product_category_list_api, name='product-category-list'),
+    path('category/<int:pk>/', product_category_detail_api, name='product-category-detail'),
     path('range/', product_range_list_api, name='product-range-list'),
     path('sub-range/', product_sub_range_list_api, name='product-sub-range-list'),
     path('unit/', product_unit_list_api, name='product-unit-list'),

@@ -8,9 +8,12 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from product.models import Product, ProductCosting
+from product.query import active_products
 
 from stock_ledger.models import StockBalance, StockEntry, StockEntryType, StockGenealogy, StockLot, StockPeriod, StockPeriodStatus
+from stock_ledger.stream import publish_balance_delta
 from stock_ledger.util.conversions import StockValidationError, resolve_to_kg
+from stock_ledger.util.serialize import load_balance_for_row, serialize_balance_row
 
 MYSQL_DUP_ENTRY = 1062
 
@@ -31,6 +34,8 @@ def resolve_open_period(effective_at):
 
 
 def _mass_fields(*, product_id: int, unit_id: int, quantity: Decimal):
+    if not active_products().filter(pk=product_id).exists():
+        raise StockValidationError(f'product_id={product_id} is inactive or missing')
     try:
         factor = resolve_to_kg(unit_id=unit_id, product_id=product_id)
     except StockValidationError:
@@ -66,7 +71,7 @@ def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> Stoc
         neg_auth_id = entry.id
 
     if balance is None:
-        return StockBalance.objects.create(
+        balance = StockBalance.objects.create(
             lot_id=entry.lot_id,
             location_id=entry.location_id,
             quantity=new_qty,
@@ -80,6 +85,8 @@ def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> Stoc
             negative_authorised_by_entry_id=neg_auth_id,
             updated_at=timezone.now(),
         )
+        _schedule_balance_stream(balance)
+        return balance
 
     balance.quantity = new_qty
     balance.quantity_base = new_base
@@ -89,7 +96,31 @@ def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> Stoc
     if entry.entry_type == StockEntryType.COUNT_ADJUSTMENT:
         balance.last_count_entry_id = entry.id
     balance.save()
+    _schedule_balance_stream(balance)
     return balance
+
+
+def _schedule_balance_stream(balance: StockBalance) -> None:
+    """Publish upsert/remove after commit. Build payload now; fan-out stays off hot path."""
+    lot_id = balance.lot_id
+    location_id = balance.location_id
+    at = timezone.now().isoformat()
+    if balance.quantity == 0:
+        event = {
+            'type': 'remove',
+            'at': at,
+            'row': {'lot_id': lot_id, 'location_id': location_id},
+        }
+    else:
+        row_balance = load_balance_for_row(lot_id=lot_id, location_id=location_id)
+        if row_balance is None:
+            return
+        event = {
+            'type': 'upsert',
+            'at': at,
+            'row': serialize_balance_row(row_balance),
+        }
+    transaction.on_commit(lambda e=event: publish_balance_delta(e))
 
 
 def _insert_entry(

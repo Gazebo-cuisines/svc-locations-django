@@ -2,13 +2,14 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
 from product.models import Product, Unit
+from product.query import active_products
 from recipe.models import (
     Recipe,
     RecipeComponent,
@@ -19,6 +20,7 @@ from recipe.utils import (
     RecipeValidationError,
     activate_version,
     assert_not_self_loop,
+    build_recipe_tree,
     sync_has_recipe,
 )
 
@@ -52,11 +54,49 @@ def _parse_date(value, field_name: str):
         raise ValueError(f'Invalid date for {field_name}. Use YYYY-MM-DD.')
 
 
+def _active_or_latest_version(recipe: Recipe):
+    versions = list(recipe.versions.all())
+    for version in versions:
+        if version.status == RecipeVersionStatus.ACTIVE:
+            return version
+    return max(versions, key=lambda v: v.version_number) if versions else None
+
+
+def _version_ingredients(version: RecipeVersion | None) -> list[dict]:
+    if version is None:
+        return []
+    components = sorted(version.components.all(), key=lambda c: c.line_no)
+    return [component_dict(c) for c in components]
+
+
 def recipe_list_dict(recipe: Recipe) -> dict:
+    version = _active_or_latest_version(recipe)
+    ingredients = _version_ingredients(version)
+    product = recipe.product
     return {
         'id': recipe.id,
         'product_id': recipe.product_id,
         'name': recipe.name,
+        'ingredient_count': len(ingredients),
+        'ingredients': ingredients,
+        'from_location_id': product.source_container_id,
+        'from_location_name': (
+            product.source_container.name if product.source_container_id else None
+        ),
+        'to_location_id': product.destination_container_id,
+        'to_location_name': (
+            product.destination_container.name
+            if product.destination_container_id
+            else None
+        ),
+        'location_id': version.location_id if version else None,
+        'location_name': (
+            version.location.name
+            if version and version.location_id
+            else None
+        ),
+        'version_number': version.version_number if version else None,
+        'batch_quantity': _dec(version.batch_quantity) if version else None,
     }
 
 
@@ -84,6 +124,7 @@ def recipe_version_list_dict(version: RecipeVersion) -> dict:
         'batch_quantity': _dec(version.batch_quantity),
         'batch_unit_id': version.batch_unit_id,
         'location_id': version.location_id,
+        'location_name': version.location.name if version.location_id else None,
         'effective_from': (
             version.effective_from.isoformat() if version.effective_from else None
         ),
@@ -131,11 +172,34 @@ def component_dict(component: RecipeComponent) -> dict:
     }
 
 
+@require_GET
+def recipe_product_tree_api(request, product_id: int):
+    if not active_products().filter(pk=product_id).exists():
+        return api_error('Product not found.', status_code=404)
+    try:
+        tree = build_recipe_tree(product_id)
+    except Product.DoesNotExist:
+        return api_error('Product not found.', status_code=404)
+    return api_success('Recipe dependency tree fetched successfully.', tree)
+
+
 @require_http_methods(['GET', 'POST'])
 @csrf_exempt
 def recipe_collection_api(request):
     if request.method == 'GET':
-        recipes = Recipe.objects.all().order_by('id')
+        recipes = (
+            Recipe.objects.filter(product__is_active=True)
+            .select_related(
+                'product__source_container',
+                'product__destination_container',
+            )
+            .prefetch_related(
+                'versions__location',
+                'versions__components__component_product',
+                'versions__components__unit',
+            )
+            .order_by('id')
+        )
         return api_success(
             'Recipe list fetched successfully.',
             [recipe_list_dict(r) for r in recipes],
@@ -152,7 +216,7 @@ def recipe_create_api(request):
     if product_id in (None, ''):
         return api_error('Missing required fields: product_id', status_code=400)
 
-    if not Product.objects.filter(pk=product_id).exists():
+    if not active_products().filter(pk=product_id).exists():
         return api_error(f'product_id={product_id} not found.', status_code=400)
 
     if Recipe.objects.filter(product_id=product_id).exists():
@@ -177,13 +241,64 @@ def recipe_create_api(request):
     )
 
 
-@require_GET
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@csrf_exempt
 def recipe_detail_api(request, pk: int):
     try:
-        recipe = Recipe.objects.prefetch_related('versions').get(pk=pk)
+        recipe = Recipe.objects.filter(product__is_active=True).select_related(
+            'product__source_container',
+            'product__destination_container',
+        ).prefetch_related(
+            'versions__location',
+            'versions__components__component_product',
+            'versions__components__unit',
+        ).get(pk=pk)
     except Recipe.DoesNotExist:
         return api_error('Recipe not found.', status_code=404)
-    return api_success('Recipe fetched successfully.', recipe_detail_dict(recipe))
+
+    if request.method == 'GET':
+        return api_success('Recipe fetched successfully.', recipe_detail_dict(recipe))
+    if request.method == 'DELETE':
+        return recipe_delete_api(recipe)
+    return recipe_update_api(request, recipe)
+
+
+def recipe_update_api(request, recipe: Recipe):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    if 'name' in body:
+        recipe.name = body['name']
+    if 'remarks' in body:
+        recipe.remarks = body['remarks']
+
+    try:
+        recipe.save()
+    except IntegrityError as exc:
+        return api_error(f'Could not update recipe: {exc}', status_code=400)
+
+    recipe = Recipe.objects.filter(product__is_active=True).select_related(
+        'product__source_container',
+        'product__destination_container',
+    ).prefetch_related(
+        'versions__location',
+        'versions__components__component_product',
+        'versions__components__unit',
+    ).get(pk=recipe.pk)
+    return api_success('Recipe updated successfully.', recipe_detail_dict(recipe))
+
+
+def recipe_delete_api(recipe: Recipe):
+    product_id = recipe.product_id
+    # versions FK is PROTECT; components CASCADE from versions
+    with transaction.atomic():
+        version_ids = list(recipe.versions.values_list('pk', flat=True))
+        RecipeComponent.objects.filter(recipe_version_id__in=version_ids).delete()
+        recipe.versions.all().delete()
+        recipe.delete()
+    sync_has_recipe(product_id)
+    return api_success('Recipe deleted successfully.', data=None)
 
 
 @require_http_methods(['POST'])
@@ -396,7 +511,7 @@ def recipe_component_collection_api(request, pk: int):
         )
 
     component_product_id = body['component_product_id']
-    if not Product.objects.filter(pk=component_product_id).exists():
+    if not active_products().filter(pk=component_product_id).exists():
         return api_error(
             f'component_product_id={component_product_id} not found.',
             status_code=400,
@@ -470,7 +585,7 @@ def recipe_component_detail_api(request, pk: int):
     try:
         if 'component_product_id' in body:
             component_product_id = body['component_product_id']
-            if not Product.objects.filter(pk=component_product_id).exists():
+            if not active_products().filter(pk=component_product_id).exists():
                 return api_error(
                     f'component_product_id={component_product_id} not found.',
                     status_code=400,

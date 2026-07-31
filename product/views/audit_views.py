@@ -1,12 +1,13 @@
 from django.views.decorators.http import require_GET
 
 from locations.utils.api_response import api_error, api_success
+from product.query import active_products
 from product.models import Product, ProductAudit
 
 
 @require_GET
 def product_timeline_api(request, pk: int):
-    if not Product.objects.filter(pk=pk).exists():
+    if not active_products().filter(pk=pk).exists():
         return api_error('Product not found.', status_code=404)
 
     row = ProductAudit.objects.filter(product_id=pk).first()

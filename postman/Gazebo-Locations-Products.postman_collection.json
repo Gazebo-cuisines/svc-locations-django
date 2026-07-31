@@ -22,6 +22,7 @@
   "item": [
     {
       "name": "Product Lookups",
+      "description": "Lookup tables for product classification.\n\n**Categories** (`product_category`) are a nested tree (`parent` / `children`) used by stock and plan. Other lookups (`class`, `range`, `unit`) remain flat `{id, name}` lists.",
       "item": [
         {
           "name": "List classes",
@@ -45,9 +46,38 @@
             "url": {
               "raw": "{{base_url}}/product/category/",
               "host": ["{{base_url}}"],
-              "path": ["product", "category", ""]
+              "path": ["product", "category", ""],
+              "query": [
+                {
+                  "key": "parent_id",
+                  "value": "",
+                  "description": "Optional. Omit for full tree from roots. Set to a category id for that parent's children (still nested). Use `0` or `null` for roots only.",
+                  "disabled": true
+                }
+              ]
             },
-            "description": "GET product category lookup list."
+            "description": "### List categories\n\n`GET /product/category/`\n\nReturns the product category tree from `product_category` (legacy `tblcategories`). Each node includes classification flags, path, auto-code fields, and a nested `children[]` array — used by stock and plan UIs to pick a category without flattening the hierarchy.\n\nExample: root **Cased Items** (`127`) contains child **Catering Bulk** (`129`) under `children`.\n\n#### Query parameters\n\n| Param | Required | Notes |\n|-------|----------|-------|\n| `parent_id` | No | Omit → full forest from roots. Integer id → that parent's direct children (each still nested). `0` or `null` → roots only. Invalid non-integer → 400. |\n\n#### Request body\n\n**None**.\n\n#### Response body\n\nMessage: `Product categories fetched successfully.`\n\n`data` is an array of category nodes:\n\n| Field | Meaning |\n|-------|--------|\n| `id` | Category PK (legacy id) |\n| `name` | Display name |\n| `parent_id` | Parent category id, or `null` for roots |\n| `is_default` | Default category flag |\n| `is_container` | Legacy container marker |\n| `purchase_unit_id` | Default purchase unit FK |\n| `multiplier` | Qty multiplier (string or `null`) |\n| `path` | Denormalized path text |\n| `path_nodes` | Denormalized id path |\n| `code_generator` / `code_generator_path` | Auto-code templates |\n| `last_increment_auto_code` | Last auto-code sequence |\n| `item_flag` | Item type flag (SmallInt; default `-1`) |\n| `is_range` / `is_resource` / `is_container_flag` / `is_other` | Type flags |\n| `is_locked` / `is_locked_assigned` / `is_locked_path` | Lock flags |\n| `remarks` | Notes |\n| `children` | Nested child category nodes (same shape) |\n\n#### Status codes\n\n| Code | When |\n|------|------|\n| 200 | Tree returned |\n| 400 | `parent_id` present but not an integer |"
+          },
+          "response": []
+        },
+        {
+          "name": "List categories by parent",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/product/category/?parent_id=127",
+              "host": ["{{base_url}}"],
+              "path": ["product", "category", ""],
+              "query": [
+                {
+                  "key": "parent_id",
+                  "value": "127",
+                  "description": "Parent category id. Returns that parent's children with nested `children[]`."
+                }
+              ]
+            },
+            "description": "### List categories by parent\n\n`GET /product/category/?parent_id=:id`\n\nSame payload shape as **List categories**, scoped to one parent's children. Use when a UI drills into a node (e.g. open **Cased Items** → load its children only).\n\n#### Query parameters\n\n| Param | Required | Notes |\n|-------|----------|-------|\n| `parent_id` | Yes (for this request) | Integer category id. `0` / `null` → roots. |\n\n#### Request body\n\n**None**.\n\n#### Response body\n\nSame nested node shape as **List categories**. Message: `Product categories fetched successfully.` Empty array if the parent has no children or the id is unknown.\n\n#### Status codes\n\n| Code | When |\n|------|------|\n| 200 | Children returned (may be empty) |\n| 400 | `parent_id` not an integer |"
           },
           "response": []
         },
@@ -500,6 +530,59 @@
               ]
             },
             "description": "Cross list. Optional filters: supplier_id, product_id."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Stock Ledger",
+      "description": "Stock overview balances and live SSE deltas.\n\n**Table:** `stock_balance` (projected from `stock_entry`).\n\n**Overview list:** `GET /stock/balances/` snapshot + `GET /stock/balances/stream/` upsert/remove deltas.\n\n**Detail:** entry / mass-balance / ATP stay on normal REST — not streamed.\n\n**Vars:** `{{base_url}}`",
+      "item": [
+        {
+          "name": "List balances",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stock/balances/",
+              "host": ["{{base_url}}"],
+              "path": ["stock", "balances", ""],
+              "query": [
+                {
+                  "key": "lot_id",
+                  "value": "",
+                  "description": "Optional. Filter to one lot.",
+                  "disabled": true
+                },
+                {
+                  "key": "location_id",
+                  "value": "",
+                  "description": "Optional. Filter to one location.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "### List balances\n\n`GET /stock/balances/`\n\nReturns projected on-hand rows for the stock overview grid (first load / SSE fallback). Cap 500 rows. Use with `GET /stock/balances/stream/` for live deltas — do not poll this as the primary live path.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Name | Required | Description |\n| --- | --- | --- |\n| `lot_id` | optional | Filter to one lot |\n| `location_id` | optional | Filter to one location |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message: \"Balances fetched.\", data: [ row... ] }`\n\nEach row includes `lot_id`, `location_id`, `location_name`, product fields, `quantity`, `quantity_base`, `last_entry_id`, `updated_at`, lot dates/trace.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+          },
+          "response": []
+        },
+        {
+          "name": "Stream balances (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/stock/balances/stream/",
+              "host": ["{{base_url}}"],
+              "path": ["stock", "balances", "stream", ""]
+            },
+            "description": "### Stream balances (SSE)\n\n`GET /stock/balances/stream/`\n\nServer-Sent Events stream of **per-row** balance deltas for the stock overview list only. FE: initial `GET /stock/balances/` then apply `upsert` / `remove` via AG Grid `applyTransaction`. Does **not** push the full list. Detail pages keep using REST.\n\nEmitted after receipt / issue / transfer / disposal / count-adjustment / reversal (after DB commit, coalesced ~150ms). Heartbeat comment `: ping` about every 20s.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`Content-Type: text/event-stream`\n\nEach event:\n\n```json\n{\n  \"type\": \"upsert\" | \"remove\",\n  \"at\": \"2026-07-31T09:00:00+00:00\",\n  \"row\": { /* upsert: same fields as GET /stock/balances/ row; remove: lot_id + location_id */ }\n}\n```\n\n`remove` when projected quantity is `0`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Stream open (long-lived) |"
           },
           "response": []
         }
