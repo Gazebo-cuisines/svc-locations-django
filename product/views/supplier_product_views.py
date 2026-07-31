@@ -8,6 +8,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 from locations.models import Location, LocationRole
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
+from product.query import active_products
 from product.models import Product, ProductSupplier, PurchaseShapeFormat, Unit
 
 
@@ -76,7 +77,7 @@ def supplier_products_list_api(request):
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
 
-    qs = _base_qs()
+    qs = _base_qs().filter(product__is_active=True)
     if supplier_id is not None:
         qs = qs.filter(supplier_id=supplier_id)
     if product_id is not None:
@@ -208,7 +209,7 @@ def _clear_other_defaults(product_id: int, keep_id: int | None = None):
 @require_http_methods(['GET', 'POST'])
 @csrf_exempt
 def product_suppliers_api(request, pk: int):
-    if not Product.objects.filter(pk=pk).exists():
+    if not active_products().filter(pk=pk).exists():
         return api_error('Product not found.', status_code=404)
 
     if request.method == 'GET':

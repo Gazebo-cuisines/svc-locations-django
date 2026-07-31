@@ -2,13 +2,14 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
 from product.models import Product, Unit
+from product.query import active_products
 from recipe.models import (
     Recipe,
     RecipeComponent,
@@ -173,7 +174,7 @@ def component_dict(component: RecipeComponent) -> dict:
 
 @require_GET
 def recipe_product_tree_api(request, product_id: int):
-    if not Product.objects.filter(pk=product_id).exists():
+    if not active_products().filter(pk=product_id).exists():
         return api_error('Product not found.', status_code=404)
     try:
         tree = build_recipe_tree(product_id)
@@ -187,7 +188,7 @@ def recipe_product_tree_api(request, product_id: int):
 def recipe_collection_api(request):
     if request.method == 'GET':
         recipes = (
-            Recipe.objects.all()
+            Recipe.objects.filter(product__is_active=True)
             .select_related(
                 'product__source_container',
                 'product__destination_container',
@@ -215,7 +216,7 @@ def recipe_create_api(request):
     if product_id in (None, ''):
         return api_error('Missing required fields: product_id', status_code=400)
 
-    if not Product.objects.filter(pk=product_id).exists():
+    if not active_products().filter(pk=product_id).exists():
         return api_error(f'product_id={product_id} not found.', status_code=400)
 
     if Recipe.objects.filter(product_id=product_id).exists():
@@ -240,10 +241,11 @@ def recipe_create_api(request):
     )
 
 
-@require_GET
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@csrf_exempt
 def recipe_detail_api(request, pk: int):
     try:
-        recipe = Recipe.objects.select_related(
+        recipe = Recipe.objects.filter(product__is_active=True).select_related(
             'product__source_container',
             'product__destination_container',
         ).prefetch_related(
@@ -253,7 +255,50 @@ def recipe_detail_api(request, pk: int):
         ).get(pk=pk)
     except Recipe.DoesNotExist:
         return api_error('Recipe not found.', status_code=404)
-    return api_success('Recipe fetched successfully.', recipe_detail_dict(recipe))
+
+    if request.method == 'GET':
+        return api_success('Recipe fetched successfully.', recipe_detail_dict(recipe))
+    if request.method == 'DELETE':
+        return recipe_delete_api(recipe)
+    return recipe_update_api(request, recipe)
+
+
+def recipe_update_api(request, recipe: Recipe):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    if 'name' in body:
+        recipe.name = body['name']
+    if 'remarks' in body:
+        recipe.remarks = body['remarks']
+
+    try:
+        recipe.save()
+    except IntegrityError as exc:
+        return api_error(f'Could not update recipe: {exc}', status_code=400)
+
+    recipe = Recipe.objects.filter(product__is_active=True).select_related(
+        'product__source_container',
+        'product__destination_container',
+    ).prefetch_related(
+        'versions__location',
+        'versions__components__component_product',
+        'versions__components__unit',
+    ).get(pk=recipe.pk)
+    return api_success('Recipe updated successfully.', recipe_detail_dict(recipe))
+
+
+def recipe_delete_api(recipe: Recipe):
+    product_id = recipe.product_id
+    # versions FK is PROTECT; components CASCADE from versions
+    with transaction.atomic():
+        version_ids = list(recipe.versions.values_list('pk', flat=True))
+        RecipeComponent.objects.filter(recipe_version_id__in=version_ids).delete()
+        recipe.versions.all().delete()
+        recipe.delete()
+    sync_has_recipe(product_id)
+    return api_success('Recipe deleted successfully.', data=None)
 
 
 @require_http_methods(['POST'])
@@ -466,7 +511,7 @@ def recipe_component_collection_api(request, pk: int):
         )
 
     component_product_id = body['component_product_id']
-    if not Product.objects.filter(pk=component_product_id).exists():
+    if not active_products().filter(pk=component_product_id).exists():
         return api_error(
             f'component_product_id={component_product_id} not found.',
             status_code=400,
@@ -540,7 +585,7 @@ def recipe_component_detail_api(request, pk: int):
     try:
         if 'component_product_id' in body:
             component_product_id = body['component_product_id']
-            if not Product.objects.filter(pk=component_product_id).exists():
+            if not active_products().filter(pk=component_product_id).exists():
                 return api_error(
                     f'component_product_id={component_product_id} not found.',
                     status_code=400,

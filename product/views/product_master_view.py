@@ -16,6 +16,7 @@ from product.models import (
     SubRange,
     Unit,
 )
+from product.query import active_products
 
 
 def product_list_dict(product: Product) -> dict:
@@ -119,7 +120,7 @@ def _apply_purchase_details(product: Product, purchase: dict):
 @csrf_exempt
 def product_collection_api(request):
     if request.method == 'GET':
-        products = Product.objects.filter(is_active=True)
+        products = active_products()
         return api_success(
             'Product list fetched successfully.',
             [product_list_dict(p) for p in products],
@@ -131,7 +132,10 @@ def product_collection_api(request):
 @csrf_exempt
 def product_detail_api(request, pk: int):
     try:
-        product = Product.objects.get(pk=pk)
+        if request.method == 'GET':
+            product = active_products().get(pk=pk)
+        else:
+            product = Product.objects.get(pk=pk)
     except Product.DoesNotExist:
         return api_error('Product not found.', status_code=404)
 

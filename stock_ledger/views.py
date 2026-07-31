@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from product.models import Product, PurchaseShapeFormat, Unit
+from product.query import active_products
 from recipe.models import RecipeVersion
 from stock_ledger.models import (
     StockBalance,
@@ -142,9 +143,12 @@ def reservation_dict(row: StockReservation) -> dict:
 
 def _require_lot(lot_id) -> StockLot:
     try:
-        return StockLot.objects.get(pk=lot_id)
+        lot = StockLot.objects.select_related('product').get(pk=lot_id)
     except StockLot.DoesNotExist as exc:
         raise StockValidationError(f'lot_id={lot_id} not found') from exc
+    if not lot.product.is_active:
+        raise StockValidationError(f'lot_id={lot_id} product is inactive')
+    return lot
 
 
 def _common_write_kwargs(body: dict) -> dict:
@@ -164,7 +168,7 @@ def _common_write_kwargs(body: dict) -> dict:
 @require_http_methods(['GET', 'POST'])
 def lots_collection_api(request):
     if request.method == 'GET':
-        qs = StockLot.objects.all().order_by('-id')
+        qs = StockLot.objects.filter(product__is_active=True).order_by('-id')
         product_id = request.GET.get('product_id')
         if product_id not in (None, ''):
             try:
@@ -189,7 +193,7 @@ def lots_collection_api(request):
         )
 
     product_id = body['product_id']
-    if not Product.objects.filter(pk=product_id).exists():
+    if not active_products().filter(pk=product_id).exists():
         return api_error(f'product_id={product_id} not found.', status_code=404)
 
     recipe_version_id = body.get('recipe_version_id')
@@ -291,7 +295,7 @@ def unit_conversions_api(request):
 
     product_id = body.get('product_id')
     if product_id not in (None, ''):
-        if not Product.objects.filter(pk=product_id).exists():
+        if not active_products().filter(pk=product_id).exists():
             return api_error(f'product_id={product_id} not found.', status_code=404)
     else:
         product_id = None
@@ -476,7 +480,9 @@ def entry_detail_api(request, pk: int):
 @csrf_exempt
 @require_GET
 def balance_list_api(request):
-    qs = StockBalance.objects.select_related(*BALANCE_SELECT_RELATED).order_by(
+    qs = StockBalance.objects.filter(lot__product__is_active=True).select_related(
+        *BALANCE_SELECT_RELATED
+    ).order_by(
         'lot_id', 'location_id'
     )
     lot_id = request.GET.get('lot_id')

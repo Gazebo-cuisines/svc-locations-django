@@ -8,6 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from product.models import Product, ProductCosting
+from product.query import active_products
 
 from stock_ledger.models import StockBalance, StockEntry, StockEntryType, StockGenealogy, StockLot, StockPeriod, StockPeriodStatus
 from stock_ledger.stream import publish_balance_delta
@@ -33,6 +34,8 @@ def resolve_open_period(effective_at):
 
 
 def _mass_fields(*, product_id: int, unit_id: int, quantity: Decimal):
+    if not active_products().filter(pk=product_id).exists():
+        raise StockValidationError(f'product_id={product_id} is inactive or missing')
     try:
         factor = resolve_to_kg(unit_id=unit_id, product_id=product_id)
     except StockValidationError:
