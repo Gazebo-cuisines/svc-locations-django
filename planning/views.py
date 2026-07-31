@@ -13,19 +13,22 @@ from django.views.decorators.http import require_GET, require_http_methods
 from locations.utils.api_response import api_error, api_success
 from planning.errors import PlanningError, PlanningStateError
 from planning.models import (
+    DemandProfile,
     Plan,
     PlanAllocation,
     PlanEvent,
     PlanLine,
     PlanLineSource,
     PlanRequirement,
+    PlanResourceSlot,
     PlanRun,
     PlanRunStatus,
     PlanStatus,
     PlanSupply,
     PlanSupplyKind,
+    Resource,
 )
-from planning.services import allocate, explode, lifecycle
+from planning.services import allocate, explode, forecast, lifecycle, schedule
 
 
 def _dec(value):
@@ -94,6 +97,12 @@ def _error_from_exc(exc):
         return api_error('Allocation not found.', status_code=404)
     if isinstance(exc, PlanSupply.DoesNotExist):
         return api_error('Supply not found.', status_code=404)
+    if isinstance(exc, Resource.DoesNotExist):
+        return api_error('Resource not found.', status_code=404)
+    if isinstance(exc, PlanResourceSlot.DoesNotExist):
+        return api_error('Resource slot not found.', status_code=404)
+    if isinstance(exc, DemandProfile.DoesNotExist):
+        return api_error('Demand profile not found.', status_code=404)
     raise exc
 
 
@@ -678,3 +687,371 @@ def supply_detail_api(request, supply_id: int):
     except (ValueError, TypeError) as exc:
         return api_error(str(exc))
     return api_success('Supply updated.', supply_dict(row))
+
+
+# --- Resources / board (Chunk 9) ---
+
+
+def resource_dict(row: Resource) -> dict:
+    return {
+        'id': row.id,
+        'code': row.code,
+        'name': row.name,
+        'is_active': row.is_active,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def slot_dict(row: PlanResourceSlot) -> dict:
+    req = row.requirement
+    return {
+        'id': row.id,
+        'resource_id': row.resource_id,
+        'slot_date': row.slot_date.isoformat(),
+        'requirement_id': row.requirement_id,
+        'position': row.position,
+        'job_start': row.job_start.isoformat() if row.job_start else None,
+        'job_finish': row.job_finish.isoformat() if row.job_finish else None,
+        'product_id': req.product_id if req else None,
+        'gross_required': _dec(req.gross_required) if req else None,
+        'level': req.level if req else None,
+        'plan_id': req.run.plan_id if req and req.run_id else None,
+    }
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def resources_collection_api(request):
+    if request.method == 'GET':
+        qs = Resource.objects.all().order_by('code')
+        active = request.GET.get('is_active')
+        if active is not None:
+            qs = qs.filter(is_active=active.lower() in ('1', 'true', 'yes'))
+        items = [resource_dict(r) for r in qs]
+        return api_success('Resources listed.', {'items': items})
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        row = schedule.create_resource(
+            code=str(body.get('code') or ''),
+            name=str(body.get('name') or ''),
+            is_active=bool(body['is_active']) if 'is_active' in body else True,
+        )
+    except (PlanningError, PlanningStateError) as exc:
+        return _error_from_exc(exc)
+    return api_success('Resource created.', resource_dict(row), status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+def resource_detail_api(request, resource_id: int):
+    row = get_object_or_404(Resource, pk=resource_id)
+    if request.method == 'GET':
+        return api_success('Resource fetched.', resource_dict(row))
+    if request.method == 'DELETE':
+        if row.slots.exists():
+            return api_error('Resource has slots; unschedule first.', status_code=409)
+        row.delete()
+        return api_success('Resource deleted.', {'id': resource_id})
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        row = schedule.update_resource(
+            resource_id,
+            code=body.get('code') if 'code' in body else None,
+            name=body.get('name') if 'name' in body else None,
+            is_active=body.get('is_active') if 'is_active' in body else None,
+        )
+    except (PlanningError, PlanningStateError, Resource.DoesNotExist) as exc:
+        return _error_from_exc(exc)
+    return api_success('Resource updated.', resource_dict(row))
+
+
+@csrf_exempt
+@require_GET
+def board_api(request):
+    try:
+        slot_date = _parse_date(request.GET.get('slot_date'), 'slot_date')
+        resource_id = None
+        if request.GET.get('resource_id'):
+            resource_id = int(request.GET['resource_id'])
+    except (ValueError, TypeError) as exc:
+        return api_error(str(exc))
+
+    board = schedule.board_for_date(slot_date, resource_id=resource_id)
+    columns = []
+    for resource in board['resources']:
+        slots = board['slots_by_resource'].get(resource.id, [])
+        columns.append({
+            'resource': resource_dict(resource),
+            'slots': [slot_dict(s) for s in slots],
+        })
+    return api_success(
+        'Board loaded.',
+        {
+            'slot_date': slot_date.isoformat(),
+            'columns': columns,
+        },
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def board_sequence_api(request):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        plan_id = int(body['plan_id'])
+        slots = schedule.sequence_plan(plan_id)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, TypeError, PlanningError, PlanningStateError, Plan.DoesNotExist) as exc:
+        return _error_from_exc(exc)
+    return api_success(
+        'Plan sequenced onto resources.',
+        {'items': [slot_dict(s) for s in slots], 'count': len(slots)},
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def board_reorder_api(request):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        slots = schedule.reorder_resource_day(
+            resource_id=int(body['resource_id']),
+            slot_date=_parse_date(body.get('slot_date'), 'slot_date'),
+            requirement_ids=[int(x) for x in body['requirement_ids']],
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, TypeError, PlanningError, PlanningStateError, Resource.DoesNotExist) as exc:
+        return _error_from_exc(exc)
+    return api_success(
+        'Board reordered.',
+        {'items': [slot_dict(s) for s in slots]},
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def board_assign_api(request):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        position = body.get('position')
+        slot = schedule.assign_requirement(
+            requirement_id=int(body['requirement_id']),
+            resource_id=int(body['resource_id']),
+            slot_date=_parse_date(body.get('slot_date'), 'slot_date'),
+            position=int(position) if position is not None else None,
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (
+        ValueError,
+        TypeError,
+        PlanningError,
+        PlanningStateError,
+        PlanRequirement.DoesNotExist,
+        Resource.DoesNotExist,
+    ) as exc:
+        return _error_from_exc(exc)
+    return api_success('Requirement assigned.', slot_dict(slot), status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def board_unschedule_api(request):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        requirement_id = int(body['requirement_id'])
+        schedule.unschedule_requirement(requirement_id)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, TypeError, PlanningError, PlanningStateError) as exc:
+        return _error_from_exc(exc)
+    return api_success('Requirement unscheduled.', {'requirement_id': requirement_id})
+
+
+# --- Forecast / shortage (Chunk 10) ---
+
+
+def demand_profile_dict(row: DemandProfile) -> dict:
+    return {
+        'id': row.id,
+        'product_id': row.product_id,
+        'weekday': row.weekday,
+        'mean_quantity': _dec(row.mean_quantity),
+        'sample_count': row.sample_count,
+        'computed_at': row.computed_at.isoformat() if row.computed_at else None,
+    }
+
+
+def _dec_row_dates(row: dict) -> dict:
+    out = dict(row)
+    if isinstance(out.get('date'), date):
+        out['date'] = out['date'].isoformat()
+    for key in ('demand', 'available', 'on_hand', 'shortage', 'required'):
+        if key in out and out[key] is not None and not isinstance(out[key], str):
+            out[key] = _dec(out[key])
+    return out
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def demand_profiles_collection_api(request):
+    if request.method == 'GET':
+        product_id = None
+        if request.GET.get('product_id'):
+            try:
+                product_id = int(request.GET['product_id'])
+            except (TypeError, ValueError):
+                return api_error('product_id must be an integer.')
+        items = [
+            demand_profile_dict(r)
+            for r in forecast.list_demand_profiles(product_id=product_id)
+        ]
+        return api_success('Demand profiles listed.', {'items': items})
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        row = forecast.upsert_demand_profile(
+            product_id=int(body['product_id']),
+            weekday=int(body['weekday']),
+            mean_quantity=_parse_decimal(body['mean_quantity'], 'mean_quantity'),
+            sample_count=int(body.get('sample_count', 1)),
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, TypeError, PlanningError) as exc:
+        return _error_from_exc(exc)
+    return api_success('Demand profile saved.', demand_profile_dict(row), status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+def demand_profile_detail_api(request, profile_id: int):
+    row = get_object_or_404(DemandProfile, pk=profile_id)
+    if request.method == 'GET':
+        return api_success('Demand profile fetched.', demand_profile_dict(row))
+    if request.method == 'DELETE':
+        forecast.delete_demand_profile(profile_id)
+        return api_success('Demand profile deleted.', {'id': profile_id})
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        row = forecast.upsert_demand_profile(
+            product_id=int(body.get('product_id', row.product_id)),
+            weekday=int(body.get('weekday', row.weekday)),
+            mean_quantity=_parse_decimal(
+                body['mean_quantity'] if 'mean_quantity' in body else row.mean_quantity,
+                'mean_quantity',
+            ),
+            sample_count=int(body.get('sample_count', row.sample_count)),
+        )
+    except (ValueError, TypeError, PlanningError) as exc:
+        return _error_from_exc(exc)
+    return api_success('Demand profile updated.', demand_profile_dict(row))
+
+
+@csrf_exempt
+@require_GET
+def forecast_horizon_api(request):
+    try:
+        start = _parse_date(
+            request.GET.get('start_date') or timezone.localdate().isoformat(),
+            'start_date',
+        )
+        days = int(request.GET.get('days', 5))
+        product_id = None
+        if request.GET.get('product_id'):
+            product_id = int(request.GET['product_id'])
+        rows = forecast.project_horizon(
+            start_date=start,
+            days=days,
+            product_id=product_id,
+        )
+    except (ValueError, TypeError, PlanningError) as exc:
+        return _error_from_exc(exc)
+    return api_success(
+        'Forecast horizon.',
+        {
+            'start_date': start.isoformat(),
+            'days': days,
+            'items': [_dec_row_dates(r) for r in rows],
+        },
+    )
+
+
+@csrf_exempt
+@require_GET
+def forecast_shortage_api(request):
+    try:
+        start = _parse_date(
+            request.GET.get('start_date') or timezone.localdate().isoformat(),
+            'start_date',
+        )
+        days = int(request.GET.get('days', 5))
+        product_id = None
+        if request.GET.get('product_id'):
+            product_id = int(request.GET['product_id'])
+        rows = forecast.shortage_report(
+            start_date=start,
+            days=days,
+            product_id=product_id,
+        )
+    except (ValueError, TypeError, PlanningError) as exc:
+        return _error_from_exc(exc)
+    return api_success(
+        'Shortage report.',
+        {
+            'start_date': start.isoformat(),
+            'days': days,
+            'items': [_dec_row_dates(r) for r in rows],
+        },
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def forecast_age_api(request):
+    body = _parse_json_body(request) or {}
+    try:
+        as_of = None
+        if body.get('as_of'):
+            as_of = _parse_date(body.get('as_of'), 'as_of')
+        results = forecast.age_open_plans(
+            as_of=as_of,
+            actor_user_id=body.get('actor_user_id'),
+        )
+    except (ValueError, TypeError, PlanningError, PlanningStateError) as exc:
+        return _error_from_exc(exc)
+    return api_success(
+        'Aged plans rolled over.',
+        {
+            'items': [
+                {
+                    'source_plan_id': r['source_plan_id'],
+                    'target_plan_id': r['target_plan_id'],
+                    'target_plan_date': r['target_plan_date'].isoformat(),
+                }
+                for r in results
+            ],
+            'count': len(results),
+        },
+    )

@@ -39,4 +39,28 @@ urlpatterns = [
     ),
     path('supply/', views.supply_collection_api, name='planning-supply'),
     path('supply/<int:supply_id>/', views.supply_detail_api, name='planning-supply-detail'),
+    path('resources/', views.resources_collection_api, name='planning-resources'),
+    path(
+        'resources/<int:resource_id>/',
+        views.resource_detail_api,
+        name='planning-resource-detail',
+    ),
+    path('board/', views.board_api, name='planning-board'),
+    path('board/sequence/', views.board_sequence_api, name='planning-board-sequence'),
+    path('board/reorder/', views.board_reorder_api, name='planning-board-reorder'),
+    path('board/assign/', views.board_assign_api, name='planning-board-assign'),
+    path('board/unschedule/', views.board_unschedule_api, name='planning-board-unschedule'),
+    path(
+        'demand-profiles/',
+        views.demand_profiles_collection_api,
+        name='planning-demand-profiles',
+    ),
+    path(
+        'demand-profiles/<int:profile_id>/',
+        views.demand_profile_detail_api,
+        name='planning-demand-profile-detail',
+    ),
+    path('forecast/horizon/', views.forecast_horizon_api, name='planning-forecast-horizon'),
+    path('forecast/shortage/', views.forecast_shortage_api, name='planning-forecast-shortage'),
+    path('forecast/age/', views.forecast_age_api, name='planning-forecast-age'),
 ]

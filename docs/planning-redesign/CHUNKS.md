@@ -52,8 +52,8 @@ flowchart LR
 | **5** | Django schema | Code | [chunk-05-django-schema/NOTES.md](chunk-05-django-schema/NOTES.md) + `planning/` app | **DONE** (on `Plan`) |
 | **6** | Django MRP services | Code | [chunk-06-services/NOTES.md](chunk-06-services/NOTES.md) | **DONE** (on `Plan`) |
 | **7** | Django HTTP APIs | Code | [chunk-07-http-api/NOTES.md](chunk-07-http-api/NOTES.md) + `/planning/` | **DONE** (on `Plan`) |
-| **8** | React Planning UI | Code | `gazeboo-cloud-web/src/features/planning/` | **NEXT — awaiting approve** |
-| **9** | Resource board | Later | Infinite-capacity sequencing | After MVP |
-| **10** | Forecast / shortage | Later | Demand profiles + shortage | After MVP |
+| **8** | React Planning UI | Code | [chunk-08-react-ui/NOTES.md](chunk-08-react-ui/NOTES.md) + `gazeboo-cloud-web/src/features/planning/` | **DONE** (local — commit/push `Plan` when ready) |
+| **9** | Resource board | Code | [chunk-09-resource-board/NOTES.md](chunk-09-resource-board/NOTES.md) | **DONE** (local — commit/push `Plan` when ready) |
+| **10** | Forecast / shortage | Code | [chunk-10-forecast/NOTES.md](chunk-10-forecast/NOTES.md) | **DONE** (local — commit/push `Plan` when ready) |
 
 Chunks 1–4 = design only (`docs/planning-redesign/`). Chunks 5–8 = code in the matching app repo on `Plan`.
