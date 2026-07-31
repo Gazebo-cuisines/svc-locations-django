@@ -48,8 +48,8 @@ flowchart LR
 | **1** | Legacy map + requirements | Design doc | [chunk-01-requirements/PLANNING_REQUIREMENTS.md](chunk-01-requirements/PLANNING_REQUIREMENTS.md) | **DONE** (on `Plan`) |
 | **2** | Database ERD | Design doc | [chunk-02-erd/PLANNING_ERD.md](chunk-02-erd/PLANNING_ERD.md) | **DONE** (on `Plan`) |
 | **3** | API contracts | Design doc | [chunk-03-api/PLANNING_API.md](chunk-03-api/PLANNING_API.md) | **DONE** (on `Plan`) |
-| **4** | Frontend UI spec | Design doc | `chunk-04-ui/PLANNING_UI.md` | **NEXT — awaiting approve** |
-| **5** | Django schema | Code | `svc-locations-django/planning/` models | After design sign-off |
+| **4** | Frontend UI spec | Design doc | [chunk-04-ui/PLANNING_UI.md](chunk-04-ui/PLANNING_UI.md) | **DONE** (on `Plan`) |
+| **5** | Django schema | Code | `svc-locations-django/planning/` models | **NEXT — awaiting approve** |
 | **6** | Django MRP services | Code | explode / netting / FEFO / lifecycle | Blocked on Chunk 5 |
 | **7** | Django HTTP APIs | Code | `/planning/…` | Blocked on Chunk 6 |
 | **8** | React Planning UI | Code | `gazeboo-cloud-web/src/features/planning/` | Blocked on Chunk 7 |
