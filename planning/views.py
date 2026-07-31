@@ -12,6 +12,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from planning.errors import PlanningError, PlanningStateError
+from product.models import Product
 from planning.models import (
     DemandProfile,
     Plan,
@@ -78,12 +79,21 @@ def _optional_bool(value):
     return bool(value)
 
 
+def _parse_int(value, field_name: str) -> int:
+    if value is None or value == '':
+        raise ValueError(f'{field_name} is required')
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{field_name} must be an integer') from exc
+
+
 def _error_from_exc(exc):
     if isinstance(exc, PlanningStateError):
         return api_error(str(exc), status_code=409)
     if isinstance(exc, PlanningError):
         return api_error(str(exc), status_code=422)
-    if isinstance(exc, ValueError):
+    if isinstance(exc, (ValueError, TypeError)):
         return api_error(str(exc), status_code=400)
     if isinstance(exc, Plan.DoesNotExist):
         return api_error('Plan not found.', status_code=404)
@@ -416,11 +426,20 @@ def plan_lines_api(request, plan_id: int):
         source = body.get('source', PlanLineSource.MANUAL)
         if source not in PlanLineSource.values:
             raise ValueError('source must be manual, order, or forecast')
+        product_id = _parse_int(body.get('product_id'), 'product_id')
+        raw_unit = body.get('unit_id')
+        if raw_unit in (None, ''):
+            product = Product.objects.filter(pk=product_id).first()
+            if product is None or product.unit_id is None:
+                raise ValueError('unit_id is required')
+            unit_id = product.unit_id
+        else:
+            unit_id = _parse_int(raw_unit, 'unit_id')
         line = PlanLine.objects.create(
             plan=plan,
-            product_id=int(body['product_id']),
+            product_id=product_id,
             quantity=_parse_decimal(body['quantity'], 'quantity'),
-            unit_id=int(body['unit_id']),
+            unit_id=unit_id,
             source=source,
             override_consider_stock=_optional_bool(body.get('override_consider_stock')),
             override_full_batches=_optional_bool(body.get('override_full_batches')),
