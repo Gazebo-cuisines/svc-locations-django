@@ -28,6 +28,11 @@ urlpatterns = [
         name='planning-plan-run-requirements',
     ),
     path(
+        'plans/<int:plan_id>/runs/<int:run_id>/picking-list/',
+        views.plan_run_picking_list_api,
+        name='planning-plan-run-picking-list',
+    ),
+    path(
         'requirements/<int:requirement_id>/allocations/',
         views.requirement_allocations_api,
         name='planning-requirement-allocations',

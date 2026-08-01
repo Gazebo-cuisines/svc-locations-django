@@ -28,7 +28,7 @@ from planning.models import (
     PlanSupplyKind,
     Resource,
 )
-from planning.services import allocate, explode, forecast, lifecycle, schedule
+from planning.services import allocate, explode, forecast, lifecycle, picking, schedule
 
 
 def _dec(value):
@@ -544,6 +544,17 @@ def plan_run_requirements_api(request, plan_id: int, run_id: int):
         for r in run.requirements.order_by('level', 'batch_number', 'id')
     ]
     return api_success('Requirements listed.', {'items': items})
+
+
+@csrf_exempt
+@require_GET
+def plan_run_picking_list_api(request, plan_id: int, run_id: int):
+    run = get_object_or_404(PlanRun, pk=run_id, plan_id=plan_id)
+    from_location = request.GET.get('from_location')
+    if from_location is not None:
+        from_location = from_location.strip() or None
+    data = picking.build_picking_list(run, from_location=from_location)
+    return api_success('Picking list fetched successfully.', data)
 
 
 # --- Allocations ---
