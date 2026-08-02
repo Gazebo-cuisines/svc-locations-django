@@ -16,13 +16,14 @@ def build_picking_list(
     run: PlanRun,
     *,
     from_location: str | None = None,
+    to_location: str | None = None,
 ) -> dict:
     """
     Aggregate open requirements by product + from/to + unit for issue sheets.
 
     Default excludes closed rows (already covered by stock).
-    Optional from_location (name) limits to one issuing department.
-    Response exposes names only (no ids).
+    Optional from_location / to_location (names) scope outbound / inbound.
+    Lines include names and ids for portal handoff.
     """
     qs = (
         run.requirements.filter(closed=False)
@@ -36,6 +37,8 @@ def build_picking_list(
     )
     if from_location is not None:
         qs = qs.filter(source_location__name=from_location)
+    if to_location is not None:
+        qs = qs.filter(destination_location__name=to_location)
 
     buckets: dict[tuple, dict] = {}
     for req in qs:
@@ -48,22 +51,27 @@ def build_picking_list(
         )
         if key not in buckets:
             buckets[key] = {
+                'product_id': req.product_id,
                 'product': req.product.name,
                 'gross_quantity': Decimal('0'),
                 'net_quantity': Decimal('0'),
                 'unit': req.product.unit.name if req.product.unit_id else None,
+                'from_location_id': req.source_location_id,
                 'from_location': (
                     req.source_location.name if req.source_location_id else None
                 ),
+                'to_location_id': req.destination_location_id,
                 'to_location': (
                     req.destination_location.name
                     if req.destination_location_id
                     else None
                 ),
+                'requirement_ids': [],
             }
         bucket = buckets[key]
         bucket['gross_quantity'] += req.gross_required or Decimal('0')
         bucket['net_quantity'] += req.net_required or Decimal('0')
+        bucket['requirement_ids'].append(req.id)
 
     lines = []
     for bucket in buckets.values():
@@ -110,6 +118,7 @@ def build_picking_list(
 
     return {
         'from_location': from_location,
+        'to_location': to_location,
         'lines': lines,
         'by_department': by_department,
     }

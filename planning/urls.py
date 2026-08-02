@@ -8,6 +8,7 @@ urlpatterns = [
     path('plans/<int:plan_id>/', views.plan_detail_api, name='planning-plan-detail'),
     
     path('plans/<int:plan_id>/lock/', views.plan_lock_api, name='planning-plan-lock'),
+    path('plans/<int:plan_id>/publish/', views.plan_publish_api, name='planning-plan-publish'),
     path('plans/<int:plan_id>/close/', views.plan_close_api, name='planning-plan-close'),
     path('plans/<int:plan_id>/reopen/', views.plan_reopen_api, name='planning-plan-reopen'),
     path('plans/<int:plan_id>/commit/', views.plan_commit_api, name='planning-plan-commit'),
@@ -22,7 +23,10 @@ urlpatterns = [
     # Plan run endpoints
     path('plans/<int:plan_id>/runs/<int:run_id>/', views.plan_run_detail_api, name='planning-plan-run-detail'),
     path('plans/<int:plan_id>/runs/<int:run_id>/requirements/', views.plan_run_requirements_api, name='planning-plan-run-requirements'),
-    path( 'plans/<int:plan_id>/runs/<int:run_id>/picking-list/', views.plan_run_picking_list_api, name='planning-plan-run-picking-list'),
+    path('plans/<int:plan_id>/runs/<int:run_id>/picking-list/', views.plan_run_picking_list_api, name='planning-plan-run-picking-list'),
+    
+    # Department portal
+    path('portal/today/', views.portal_today_api, name='planning-portal-today'),
     
     # Requirement allocation endpoints
     path('requirements/<int:requirement_id>/allocations/', views.requirement_allocations_api, name='planning-requirement-allocations'),
