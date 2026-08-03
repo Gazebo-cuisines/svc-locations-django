@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
                 ('plan_line', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='production_runs', to='planning.planline')),
                 ('product', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='production_runs', to='product.product')),
                 ('recipe_version', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='production_runs', to='recipe.recipeversion')),
-                ('resource', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='production_runs', to='planning.resource')),
+                ('resource_id', models.IntegerField(blank=True, null=True)),
             ],
             options={
                 'db_table': 'prod_reg_run',
@@ -104,7 +104,7 @@ class Migration(migrations.Migration):
                 ('shift', models.CharField(blank=True, max_length=32, null=True)),
                 ('remarks', models.CharField(blank=True, max_length=255, null=True)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('resource', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='production_downtimes', to='planning.resource')),
+                ('resource_id', models.IntegerField(blank=True, null=True)),
                 ('station', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='downtimes', to='production_register.productionstation')),
             ],
             options={

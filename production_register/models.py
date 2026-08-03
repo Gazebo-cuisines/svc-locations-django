@@ -87,13 +87,7 @@ class ProductionRun(models.Model):
         on_delete=models.PROTECT,
         related_name='production_runs_to',
     )
-    resource = models.ForeignKey(
-        'planning.Resource',
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name='production_runs',
-    )
+    resource_id = models.IntegerField(null=True, blank=True)
     shift = models.CharField(max_length=32, null=True, blank=True)
     start_at = models.DateTimeField(null=True, blank=True)
     end_at = models.DateTimeField(null=True, blank=True)
@@ -207,13 +201,7 @@ class ProductionDowntime(models.Model):
     )
     start_at = models.DateTimeField()
     end_at = models.DateTimeField(null=True, blank=True)
-    resource = models.ForeignKey(
-        'planning.Resource',
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name='production_downtimes',
-    )
+    resource_id = models.IntegerField(null=True, blank=True)
     shift = models.CharField(max_length=32, null=True, blank=True)
     remarks = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
