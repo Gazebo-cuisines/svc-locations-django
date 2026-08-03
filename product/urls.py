@@ -23,6 +23,7 @@ from product.views.lookups_views import (
     product_sub_range_list_api,
     product_unit_detail_api,
     product_unit_list_api,
+    product_list_fromcontainer_api
 )
 from product.views.nutrition_views import product_nutrition_api
 from product.views.packaging_views import product_packaging_api
@@ -85,4 +86,8 @@ urlpatterns = [
         name='product-supplier-detail',
     ),
     path('<int:pk>/timeline/', product_timeline_api, name='product-timeline'),
+
+    # departement product urls
+    path('list/fromcontainer/<int:container_id>/', product_list_fromcontainer_api, name='product-list-fromcontainer'),
+
 ]

@@ -19,6 +19,8 @@ from product.models import (
     SubRange,
     Unit,
 )
+from product.query import active_products
+from product.views.product_master_view import product_list_dict
 
 
 def _rows(queryset):
@@ -538,3 +540,13 @@ def product_allergen_code_list_api(request):
         for code in AllergenCode
     ]
     return api_success('Allergen codes fetched successfully.', rows)
+
+
+@require_GET
+def product_list_fromcontainer_api(request, container_id: int):
+    """Products whose source container (from) is this location/department."""
+    rows = [
+        product_list_dict(p)
+        for p in active_products(source_container_id=container_id).order_by('name')
+    ]
+    return api_success('Products fetched successfully.', rows)

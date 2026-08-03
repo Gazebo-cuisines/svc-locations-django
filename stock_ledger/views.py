@@ -130,6 +130,11 @@ def entry_dict(entry: StockEntry) -> dict:
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'recorded_at': entry.recorded_at.isoformat() if entry.recorded_at else None,
         'reverses_entry_id': entry.reverses_entry_id,
+        'po_number': entry.po_number,
+        'source_document_type': entry.source_document_type,
+        'source_document_id': entry.source_document_id,
+        'source_document_line': entry.source_document_line,
+        'remarks': entry.remarks,
         'entry_hash': entry.entry_hash,
         'prev_hash': entry.prev_hash,
     }
@@ -442,7 +447,16 @@ def _common_write_kwargs(body: dict) -> dict:
         'source_document_type': body.get('source_document_type'),
         'source_document_id': body.get('source_document_id'),
         'source_document_line': body.get('source_document_line'),
+        'po_number': body.get('po_number'),
     }
+    po_number = body.get('po_number')
+    if po_number not in (None, ''):
+        po_number = str(po_number).strip()
+        kwargs['po_number'] = po_number
+        if kwargs.get('source_document_type') in (None, ''):
+            kwargs['source_document_type'] = 'po'
+        if kwargs.get('source_document_id') in (None, '') and po_number.isdigit():
+            kwargs['source_document_id'] = int(po_number)
     return {k: v for k, v in kwargs.items() if v is not None}
 
 

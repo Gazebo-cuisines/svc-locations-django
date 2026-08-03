@@ -295,6 +295,7 @@ class StockEntry(models.Model):
     source_document_type = models.CharField(max_length=24, null=True, blank=True)
     source_document_id = models.BigIntegerField(null=True, blank=True)
     source_document_line = models.IntegerField(null=True, blank=True)
+    po_number = models.CharField(max_length=64, null=True, blank=True)
     unit_cost = models.DecimalField(
         max_digits=16, decimal_places=6, null=True, blank=True,
     )
@@ -391,6 +392,10 @@ class StockEntry(models.Model):
             models.Index(
                 fields=['source_document_type', 'source_document_id'],
                 name='idx_stock_entry_document',
+            ),
+            models.Index(
+                fields=['po_number'],
+                name='idx_stock_entry_po_number',
             ),
             models.Index(
                 fields=['transfer_group_id'],
