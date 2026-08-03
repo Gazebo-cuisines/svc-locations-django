@@ -21,7 +21,9 @@ from product.views.lookups_views import (
     product_purchase_format_list_api,
     product_range_list_api,
     product_sub_range_list_api,
+    product_unit_detail_api,
     product_unit_list_api,
+    product_list_fromcontainer_api
 )
 from product.views.nutrition_views import product_nutrition_api
 from product.views.packaging_views import product_packaging_api
@@ -38,12 +40,15 @@ from product.views.technical_views import product_technical_api
 from product.views.yield_views import product_yield_api
 
 urlpatterns = [
+
+    # lookup urls
     path('class/', product_class_list_api, name='product-class-list'),
     path('category/', product_category_list_api, name='product-category-list'),
     path('category/<int:pk>/', product_category_detail_api, name='product-category-detail'),
     path('range/', product_range_list_api, name='product-range-list'),
     path('sub-range/', product_sub_range_list_api, name='product-sub-range-list'),
     path('unit/', product_unit_list_api, name='product-unit-list'),
+    path('unit/<int:pk>/', product_unit_detail_api, name='product-unit-detail'),
     path('purchase-format/', product_purchase_format_list_api, name='product-purchase-format-list'),
     path(
         'purchase-format/<int:pk>/',
@@ -81,4 +86,8 @@ urlpatterns = [
         name='product-supplier-detail',
     ),
     path('<int:pk>/timeline/', product_timeline_api, name='product-timeline'),
+
+    # departement product urls
+    path('list/fromcontainer/<int:container_id>/', product_list_fromcontainer_api, name='product-list-fromcontainer'),
+
 ]

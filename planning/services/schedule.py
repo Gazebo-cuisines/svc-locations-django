@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from product.models import ProductProduction
+from locations.models import Location
 from planning.models import (
     Plan,
     PlanRequirement,
@@ -14,6 +15,7 @@ from planning.models import (
     PlanRunStatus,
     PlanStatus,
     Resource,
+    ResourceGroup,
 )
 from planning.services.exceptions import PlanningError, PlanningStateError
 
@@ -104,14 +106,42 @@ def _retime_slots(slots: list[PlanResourceSlot], productions: dict[int, ProductP
         cursor = finish
 
 
-def create_resource(*, code: str, name: str, is_active: bool = True) -> Resource:
+def create_resource(
+    *,
+    code: str,
+    name: str,
+    location_id: int,
+    group_id: int | None = None,
+    resource_id: int | None = None,
+    is_active: bool = True,
+) -> Resource:
     code = (code or '').strip()
     name = (name or '').strip()
     if not code or not name:
         raise PlanningError('code and name are required')
+    if location_id in (None, ''):
+        raise PlanningError('location_id is required')
+    if not Location.objects.filter(pk=location_id).exists():
+        raise PlanningError(f'location_id={location_id} not found')
+    if group_id is not None and not ResourceGroup.objects.filter(pk=group_id).exists():
+        raise PlanningError(f'group_id={group_id} not found')
     if Resource.objects.filter(code=code).exists():
         raise PlanningError(f'resource code already exists: {code}')
-    return Resource.objects.create(code=code, name=name, is_active=is_active)
+
+    if resource_id is None:
+        last = Resource.objects.order_by('-id').values_list('id', flat=True).first()
+        resource_id = (last or 0) + 1
+    elif Resource.objects.filter(pk=resource_id).exists():
+        raise PlanningError(f'resource id={resource_id} already exists')
+
+    return Resource.objects.create(
+        id=resource_id,
+        code=code,
+        name=name,
+        location_id=location_id,
+        group_id=group_id,
+        is_active=is_active,
+    )
 
 
 def update_resource(
@@ -119,6 +149,9 @@ def update_resource(
     *,
     code: str | None = None,
     name: str | None = None,
+    location_id: int | None = None,
+    group_id: int | None = None,
+    clear_group: bool = False,
     is_active: bool | None = None,
 ) -> Resource:
     resource = Resource.objects.get(pk=resource_id)
@@ -137,6 +170,19 @@ def update_resource(
             raise PlanningError('name cannot be empty')
         resource.name = name
         fields.append('name')
+    if location_id is not None:
+        if not Location.objects.filter(pk=location_id).exists():
+            raise PlanningError(f'location_id={location_id} not found')
+        resource.location_id = location_id
+        fields.append('location_id')
+    if clear_group:
+        resource.group_id = None
+        fields.append('group_id')
+    elif group_id is not None:
+        if not ResourceGroup.objects.filter(pk=group_id).exists():
+            raise PlanningError(f'group_id={group_id} not found')
+        resource.group_id = group_id
+        fields.append('group_id')
     if is_active is not None:
         resource.is_active = bool(is_active)
         fields.append('is_active')

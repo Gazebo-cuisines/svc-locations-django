@@ -1,0 +1,44 @@
+{
+  "info": {
+    "name": "Gazebo - Stock Downtime",
+    "description": "Record Downtime floor API (legacy parity).\n\n**Table:** `stock_entry` (`entry_type=downtime`) + `production_run` sidecar.\n\nQty is always 0; stock_balance is not updated.\n\n**Vars:** `{{base_url}}`, `{{idempotency_key}}`, `{{product_id}}`, `{{location_id}}`, `{{resource_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List downtime types",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/downtime/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "downtime", ""]
+        },
+        "description": "### List downtime types\n\n`GET /stock/downtime/`\n\nReturns active pseudo-products flagged `is_downtime=true` for the Record Downtime picker (BREAK, BREAKDOWN, CLEANING, …).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message: \"Downtime types fetched.\", data: [ { id, name, unit_id, unit_name }, ... ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+      }
+    },
+    {
+      "name": "Record downtime",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"idempotency_key\": \"{{idempotency_key}}\",\n  \"product_id\": {{product_id}},\n  \"location_id\": {{location_id}},\n  \"resource_id\": {{resource_id}},\n  \"base_date\": \"2026-08-03\",\n  \"shift_code\": \"AM\",\n  \"started_at\": \"2026-08-03T09:00:00\",\n  \"finished_at\": \"2026-08-03T09:15:00\",\n  \"staff_count\": 2,\n  \"remarks\": \"Die change\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/stock/downtime/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "downtime", ""]
+        },
+        "description": "### Record downtime\n\n`POST /stock/downtime/`\n\nWrites a zero-qty ledger row (`entry_type=downtime`) plus `production_run` timing sidecar. Does **not** project `stock_balance`. Product must have `is_downtime=true` (use GET for picker). Same floor fields as Production Data minus quantity.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `idempotency_key` | yes | Safe retries |\n| `product_id` | yes* | Downtime type (*or `lot_id`) |\n| `lot_id` | yes* | Existing lot (*or `product_id`) |\n| `location_id` | yes | Process department |\n| `resource_id` | yes | Line / resource |\n| `started_at` | yes | ISO-8601 start |\n| `finished_at` | yes | ISO-8601 end (must be after start) |\n| `base_date` | no | Defaults to today |\n| `shift_code` | no | e.g. AM/PM |\n| `staff_count` | no | Headcount |\n| `unit_id` | no | Defaults to product stock unit |\n| `remarks` | no | Free text |\n\n**Response body**\n\n`{ status, message: \"Downtime recorded.\", data: { entry, run } }` — `entry.quantity` is `\"0.000000\"`, `entry.entry_type` is `downtime`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Created (or idempotent replay) |\n| 400 | Validation (not downtime product, missing times, inactive resource, no open period) |"
+      }
+    }
+  ]
+}

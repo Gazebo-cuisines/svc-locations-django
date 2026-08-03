@@ -28,16 +28,44 @@ class PlanSupplyKind(models.TextChoices):
     MANUAL = 'manual', 'Manual'
 
 
-class Resource(models.Model):
-    """Production resource (line, oven, mixer). Used from Chunk 9."""
+class ResourceGroup(models.Model):
+    """Legacy tblresources.group — no master table; id matches legacy group int."""
 
+    id = models.IntegerField(primary_key=True)
+    name = models.CharField(max_length=64)
+
+    class Meta:
+        db_table = 'resource_group'
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.id}:{self.name}'
+
+
+class Resource(models.Model):
+    """Production resource (line, oven, mixer). PK matches legacy tblresources.id."""
+
+    id = models.IntegerField(primary_key=True)
     code = models.CharField(max_length=64, unique=True)
     name = models.CharField(max_length=255)
+    location = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.PROTECT,
+        related_name='resources',
+    )
+    group = models.ForeignKey(
+        ResourceGroup,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='resources',
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'resource'
+        ordering = ['code']
 
     def __str__(self):
         return f'resource:{self.id}:{self.code}'

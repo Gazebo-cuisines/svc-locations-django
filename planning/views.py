@@ -28,6 +28,7 @@ from planning.models import (
     PlanSupply,
     PlanSupplyKind,
     Resource,
+    ResourceGroup,
 )
 from planning.services import allocate, explode, forecast, lifecycle, picking, portal, schedule
 
@@ -770,13 +771,47 @@ def supply_detail_api(request, supply_id: int):
 
 
 def resource_dict(row: Resource) -> dict:
+    location = getattr(row, 'location', None)
+    group = getattr(row, 'group', None)
     return {
         'id': row.id,
         'code': row.code,
         'name': row.name,
+        'location_id': row.location_id,
+        'location_name': location.name if location is not None else None,
+        'group_id': row.group_id,
+        'group_name': group.name if group is not None else None,
         'is_active': row.is_active,
         'created_at': row.created_at.isoformat() if row.created_at else None,
     }
+
+
+def resource_group_dict(row: ResourceGroup) -> dict:
+    return {
+        'id': row.id,
+        'name': row.name,
+    }
+
+
+def _resources_grouped_by_location(rows: list[Resource]) -> list[dict]:
+    """Match Access Resources form: sections by container (location)."""
+    sections: dict[int, dict] = {}
+    order: list[int] = []
+    for row in rows:
+        loc_id = row.location_id
+        if loc_id not in sections:
+            location = getattr(row, 'location', None)
+            sections[loc_id] = {
+                'location_id': loc_id,
+                'location_name': location.name if location is not None else None,
+                'items': [],
+            }
+            order.append(loc_id)
+        sections[loc_id]['items'].append(resource_dict(row))
+    order.sort(
+        key=lambda lid: (sections[lid]['location_name'] or '').lower(),
+    )
+    return [sections[lid] for lid in order]
 
 
 def slot_dict(row: PlanResourceSlot) -> dict:
@@ -800,23 +835,63 @@ def slot_dict(row: PlanResourceSlot) -> dict:
 @require_http_methods(['GET', 'POST'])
 def resources_collection_api(request):
     if request.method == 'GET':
-        qs = Resource.objects.all().order_by('code')
+        qs = (
+            Resource.objects.select_related('location', 'group')
+            .all()
+            .order_by('location__name', 'name', 'id')
+        )
         active = request.GET.get('is_active')
         if active is not None:
             qs = qs.filter(is_active=active.lower() in ('1', 'true', 'yes'))
-        items = [resource_dict(r) for r in qs]
-        return api_success('Resources listed.', {'items': items})
+        location_id = request.GET.get('location_id')
+        if location_id not in (None, ''):
+            try:
+                qs = qs.filter(location_id=int(location_id))
+            except (TypeError, ValueError):
+                return api_error('location_id must be an integer.')
+        group_id = request.GET.get('group_id')
+        if group_id not in (None, ''):
+            try:
+                qs = qs.filter(group_id=int(group_id))
+            except (TypeError, ValueError):
+                return api_error('group_id must be an integer.')
+
+        rows = list(qs)
+        group_by = (request.GET.get('group_by') or '').strip().lower()
+        if group_by in ('location', 'container'):
+            return api_success(
+                'Resources listed by location.',
+                {'sections': _resources_grouped_by_location(rows)},
+            )
+        if group_by and group_by not in ('', 'none', 'flat'):
+            return api_error(
+                'group_by must be location, container, or omitted.',
+                status_code=400,
+            )
+        return api_success(
+            'Resources listed.',
+            {'items': [resource_dict(r) for r in rows]},
+        )
 
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        resource_id = body.get('id')
+        if resource_id is not None:
+            resource_id = int(resource_id)
+        group_id = body.get('group_id')
+        if group_id is not None:
+            group_id = int(group_id)
         row = schedule.create_resource(
             code=str(body.get('code') or ''),
             name=str(body.get('name') or ''),
+            location_id=int(body['location_id']) if body.get('location_id') is not None else None,
+            group_id=group_id,
+            resource_id=resource_id,
             is_active=bool(body['is_active']) if 'is_active' in body else True,
         )
-    except (PlanningError, PlanningStateError) as exc:
+    except (PlanningError, PlanningStateError, TypeError, ValueError) as exc:
         return _error_from_exc(exc)
     return api_success('Resource created.', resource_dict(row), status_code=201)
 
@@ -824,7 +899,10 @@ def resources_collection_api(request):
 @csrf_exempt
 @require_http_methods(['GET', 'PATCH', 'DELETE'])
 def resource_detail_api(request, resource_id: int):
-    row = get_object_or_404(Resource, pk=resource_id)
+    row = get_object_or_404(
+        Resource.objects.select_related('location', 'group'),
+        pk=resource_id,
+    )
     if request.method == 'GET':
         return api_success('Resource fetched.', resource_dict(row))
     if request.method == 'DELETE':
@@ -837,15 +915,31 @@ def resource_detail_api(request, resource_id: int):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        clear_group = 'group_id' in body and body.get('group_id') is None
+        group_id = None
+        if 'group_id' in body and body.get('group_id') is not None:
+            group_id = int(body['group_id'])
+        location_id = None
+        if 'location_id' in body:
+            location_id = int(body['location_id'])
         row = schedule.update_resource(
             resource_id,
             code=body.get('code') if 'code' in body else None,
             name=body.get('name') if 'name' in body else None,
+            location_id=location_id,
+            group_id=group_id,
+            clear_group=clear_group,
             is_active=body.get('is_active') if 'is_active' in body else None,
         )
-    except (PlanningError, PlanningStateError, Resource.DoesNotExist) as exc:
+    except (PlanningError, PlanningStateError, Resource.DoesNotExist, TypeError, ValueError) as exc:
         return _error_from_exc(exc)
     return api_success('Resource updated.', resource_dict(row))
+
+
+@require_GET
+def resource_groups_list_api(request):
+    items = [resource_group_dict(g) for g in ResourceGroup.objects.all().order_by('name')]
+    return api_success('Resource groups listed.', {'items': items})
 
 
 @csrf_exempt

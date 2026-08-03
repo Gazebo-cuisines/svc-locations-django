@@ -19,6 +19,8 @@ from product.models import (
     SubRange,
     Unit,
 )
+from product.query import active_products
+from product.views.product_master_view import product_list_dict
 
 
 def _rows(queryset):
@@ -320,9 +322,122 @@ def product_sub_range_list_api(request):
     return api_success('Product sub-ranges fetched successfully.', rows)
 
 
-@require_GET
+@require_http_methods(['GET', 'POST'])
+@csrf_exempt
 def product_unit_list_api(request):
-    return api_success('Product units fetched successfully.', _rows(Unit.objects.all()))
+    if request.method == 'GET':
+        return api_success('Product units fetched successfully.', _rows(Unit.objects.all()))
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    name = (body.get('name') or '').strip()
+    unit_id = body.get('id')
+    if unit_id in (None, '') or not name:
+        return api_error('Missing required fields: id, name', status_code=400)
+
+    if Unit.objects.filter(pk=unit_id).exists():
+        return api_error(f'Unit id={unit_id} already exists.', status_code=409)
+
+    try:
+        row = Unit.objects.create(id=unit_id, name=name)
+    except IntegrityError as exc:
+        return api_error(f'Could not create unit: {exc}', status_code=400)
+
+    return api_success(
+        'Product unit created successfully.',
+        {'id': row.id, 'name': row.name},
+        status_code=201,
+    )
+
+
+def _unit_in_use_by(unit: Unit) -> list:
+    """Where this unit is still referenced (PROTECT blockers)."""
+    usages = []
+    for p in unit.products.all()[:50]:
+        usages.append({
+            'type': 'product',
+            'field': 'unit_id',
+            'id': p.id,
+            'name': p.name,
+            'is_active': p.is_active,
+        })
+    for p in unit.purchased_products.all()[:50]:
+        usages.append({
+            'type': 'product',
+            'field': 'purchasing_unit_id',
+            'id': p.id,
+            'name': p.name,
+            'is_active': p.is_active,
+        })
+    for c in unit.purchase_unit_categories.all()[:50]:
+        usages.append({
+            'type': 'category',
+            'field': 'purchase_unit_id',
+            'id': c.id,
+            'name': c.name,
+        })
+    for s in unit.supplier_products_outer.select_related('product').all()[:50]:
+        usages.append({
+            'type': 'product_supplier',
+            'field': 'outer_unit_id',
+            'id': s.id,
+            'product_id': s.product_id,
+            'name': s.supplier_product_name,
+            'is_active': s.product.is_active if s.product_id else None,
+        })
+    for s in unit.supplier_products_inner.select_related('product').all()[:50]:
+        usages.append({
+            'type': 'product_supplier',
+            'field': 'inner_unit_id',
+            'id': s.id,
+            'product_id': s.product_id,
+            'name': s.supplier_product_name,
+            'is_active': s.product.is_active if s.product_id else None,
+        })
+    return usages
+
+
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@csrf_exempt
+def product_unit_detail_api(request, pk: int):
+    try:
+        row = Unit.objects.get(pk=pk)
+    except Unit.DoesNotExist:
+        return api_error('Product unit not found.', status_code=404)
+
+    if request.method == 'GET':
+        return api_success('Product unit fetched successfully.', {'id': row.id, 'name': row.name})
+
+    if request.method == 'DELETE':
+        try:
+            row.delete()
+        except ProtectedError:
+            return api_error(
+                'Product unit is in use and cannot be deleted.',
+                data={'in_use_by': _unit_in_use_by(row)},
+                status_code=409,
+            )
+        return api_success('Product unit deleted successfully.', data=None)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    if 'name' not in body:
+        return api_error('Missing required fields: name', status_code=400)
+
+    name = (body.get('name') or '').strip()
+    if not name:
+        return api_error('name cannot be empty.', status_code=400)
+
+    row.name = name
+    try:
+        row.save(update_fields=['name'])
+    except IntegrityError as exc:
+        return api_error(f'Could not update unit: {exc}', status_code=400)
+
+    return api_success('Product unit updated successfully.', {'id': row.id, 'name': row.name})
 
 
 @require_http_methods(['GET', 'POST'])
@@ -425,3 +540,13 @@ def product_allergen_code_list_api(request):
         for code in AllergenCode
     ]
     return api_success('Allergen codes fetched successfully.', rows)
+
+
+@require_GET
+def product_list_fromcontainer_api(request, container_id: int):
+    """Products whose source container (from) is this location/department."""
+    rows = [
+        product_list_dict(p)
+        for p in active_products(source_container_id=container_id).order_by('name')
+    ]
+    return api_success('Products fetched successfully.', rows)

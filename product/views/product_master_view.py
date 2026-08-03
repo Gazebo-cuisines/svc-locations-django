@@ -1,6 +1,8 @@
 import json
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError
+from django.db.models import Prefetch
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -17,9 +19,35 @@ from product.models import (
     Unit,
 )
 from product.query import active_products
+from recipe.models import RecipeVersion
+from recipe.utils import active_or_latest_version
+
+
+def _product_qs():
+    return Product.objects.select_related(
+        'category', 'unit', 'shelf_life', 'recipe',
+    ).prefetch_related(
+        Prefetch(
+            'recipe__versions',
+            queryset=RecipeVersion.objects.order_by('-version_number'),
+        ),
+    )
+
+
+def _live_recipe_version_id(product: Product) -> int | None:
+    try:
+        recipe = product.recipe
+    except ObjectDoesNotExist:
+        return None
+    version = active_or_latest_version(recipe)
+    return version.id if version is not None else None
 
 
 def product_list_dict(product: Product) -> dict:
+    try:
+        shelf_life_days = product.shelf_life.shelf_life_days
+    except ObjectDoesNotExist:
+        shelf_life_days = None
     return {
         'id': product.id,
         'name': product.name,
@@ -28,8 +56,14 @@ def product_list_dict(product: Product) -> dict:
         'is_active': product.is_active,
         'product_class_id': product.product_class_id,
         'category_id': product.category_id,
+        'category_path': product.category.path,
         'range_id': product.range_id,
         'unit_id': product.unit_id,
+        'unit_name': product.unit.name,
+        'source_container_id': product.source_container_id,
+        'destination_container_id': product.destination_container_id,
+        'shelf_life_days': shelf_life_days,
+        'recipe_version_id': _live_recipe_version_id(product),
     }
 
 
@@ -49,8 +83,6 @@ def product_detail_dict(product: Product) -> dict:
             'purchase_format': product.purchase_shape_format_id,
             'purchase_version': product.purchasing_version,
         },
-        'source_container_id': product.source_container_id,
-        'destination_container_id': product.destination_container_id,
         'created_at': product.created_at.isoformat() if product.created_at else None,
         'updated_at': product.updated_at.isoformat() if product.updated_at else None,
     })
@@ -116,11 +148,34 @@ def _apply_purchase_details(product: Product, purchase: dict):
         product.purchasing_version = purchase.get('purchase_version')
 
 
+def _parse_optional_int(raw, field_name: str):
+    if raw is None or raw == '':
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f'{field_name} must be an integer.')
+
+
 @require_http_methods(['GET', 'POST'])
 @csrf_exempt
 def product_collection_api(request):
     if request.method == 'GET':
-        products = active_products()
+        try:
+            source_id = _parse_optional_int(
+                request.GET.get('source_container_id'), 'source_container_id',
+            )
+            dest_id = _parse_optional_int(
+                request.GET.get('destination_container_id'),
+                'destination_container_id',
+            )
+        except ValueError as exc:
+            return api_error(str(exc), status_code=400)
+
+        products = active_products(
+            source_container_id=source_id,
+            destination_container_id=dest_id,
+        )
         return api_success(
             'Product list fetched successfully.',
             [product_list_dict(p) for p in products],
@@ -132,10 +187,8 @@ def product_collection_api(request):
 @csrf_exempt
 def product_detail_api(request, pk: int):
     try:
-        if request.method == 'GET':
-            product = active_products().get(pk=pk)
-        else:
-            product = Product.objects.get(pk=pk)
+        # GET by pk includes delisted rows so unit/lookup blockers remain openable.
+        product = _product_qs().get(pk=pk)
     except Product.DoesNotExist:
         return api_error('Product not found.', status_code=404)
 
