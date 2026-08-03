@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.db import transaction
+from django.utils import timezone
 
 from planning.adapters import stock as stock_adapter
 from planning.models import (
@@ -9,9 +10,32 @@ from planning.models import (
     PlanEvent,
     PlanLine,
     PlanRequirement,
+    PlanRunStatus,
     PlanStatus,
 )
 from planning.services.exceptions import PlanningStateError
+
+
+@transaction.atomic
+def publish_plan(plan_id: int, *, actor_user_id: int | None = None) -> Plan:
+    """Mark plan visible to department portal. Requires a complete run."""
+    plan = Plan.objects.select_for_update().get(pk=plan_id)
+    if plan.status == PlanStatus.CLOSED:
+        raise PlanningStateError('cannot publish a closed plan')
+    has_complete = plan.runs.filter(status=PlanRunStatus.COMPLETE).exists()
+    if not has_complete:
+        raise PlanningStateError('plan needs a complete run before publish')
+    if plan.published_at is not None:
+        return plan
+    plan.published_at = timezone.now()
+    plan.save(update_fields=['published_at', 'updated_at'])
+    PlanEvent.objects.create(
+        plan=plan,
+        event_type='published',
+        payload_json={},
+        actor_user_id=actor_user_id,
+    )
+    return plan
 
 
 @transaction.atomic
@@ -68,7 +92,8 @@ def reopen_plan(plan_id: int, *, actor_user_id: int | None = None) -> Plan:
     if plan.status != PlanStatus.CLOSED:
         raise PlanningStateError('only closed plans can be reopened')
     plan.status = PlanStatus.DRAFT
-    plan.save(update_fields=['status', 'updated_at'])
+    plan.published_at = None
+    plan.save(update_fields=['status', 'published_at', 'updated_at'])
     PlanEvent.objects.create(
         plan=plan,
         event_type='reopened',

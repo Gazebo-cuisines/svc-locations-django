@@ -56,6 +56,7 @@ class Plan(models.Model):
         default=PlanStatus.DRAFT,
     )
     remarks = models.TextField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

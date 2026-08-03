@@ -29,7 +29,7 @@ from planning.models import (
     PlanSupplyKind,
     Resource,
 )
-from planning.services import allocate, explode, forecast, lifecycle, schedule
+from planning.services import allocate, explode, forecast, lifecycle, picking, portal, schedule
 
 
 def _dec(value):
@@ -128,6 +128,9 @@ def plan_dict(plan: Plan, *, include_lines: bool = False) -> dict:
         'location_id': plan.location_id,
         'status': plan.status,
         'remarks': plan.remarks,
+        'published_at': (
+            plan.published_at.isoformat() if plan.published_at else None
+        ),
         'created_by_user_id': plan.created_by_user_id,
         'created_at': plan.created_at.isoformat() if plan.created_at else None,
         'updated_at': plan.updated_at.isoformat() if plan.updated_at else None,
@@ -353,6 +356,20 @@ def plan_lock_api(request, plan_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+def plan_publish_api(request, plan_id: int):
+    body = _parse_json_body(request) or {}
+    try:
+        plan = lifecycle.publish_plan(
+            plan_id,
+            actor_user_id=body.get('actor_user_id'),
+        )
+    except (PlanningError, PlanningStateError, Plan.DoesNotExist) as exc:
+        return _error_from_exc(exc)
+    return api_success('Plan published.', plan_dict(plan))
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
 def plan_close_api(request, plan_id: int):
     body = _parse_json_body(request) or {}
     try:
@@ -563,6 +580,47 @@ def plan_run_requirements_api(request, plan_id: int, run_id: int):
         for r in run.requirements.order_by('level', 'batch_number', 'id')
     ]
     return api_success('Requirements listed.', {'items': items})
+
+
+@csrf_exempt
+@require_GET
+def plan_run_picking_list_api(request, plan_id: int, run_id: int):
+    run = get_object_or_404(PlanRun, pk=run_id, plan_id=plan_id)
+    from_location = request.GET.get('from_location')
+    if from_location is not None:
+        from_location = from_location.strip() or None
+    to_location = request.GET.get('to_location')
+    if to_location is not None:
+        to_location = to_location.strip() or None
+    data = picking.build_picking_list(
+        run,
+        from_location=from_location,
+        to_location=to_location,
+    )
+    return api_success('Picking list fetched successfully.', data)
+
+
+@csrf_exempt
+@require_GET
+def portal_today_api(request):
+    location = request.GET.get('location')
+    mode = request.GET.get('mode') or 'outbound'
+    plan_date = None
+    raw_date = request.GET.get('plan_date')
+    if raw_date not in (None, ''):
+        try:
+            plan_date = _parse_date(raw_date, 'plan_date')
+        except ValueError as exc:
+            return api_error(str(exc), status_code=400)
+    try:
+        data = portal.portal_today(
+            location=location or '',
+            plan_date=plan_date,
+            mode=mode,
+        )
+    except PlanningError as exc:
+        return _error_from_exc(exc)
+    return api_success('Portal today fetched successfully.', data)
 
 
 # --- Allocations ---
