@@ -38,12 +38,6 @@ class ProductionStation(models.Model):
 
     class Meta:
         db_table = 'prod_reg_station'
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(code__in=StationCode.values),
-                name='chk_prod_reg_station_code',
-            ),
-        ]
 
     def __str__(self):
         return f'prod_reg_station:{self.id}:{self.code}'

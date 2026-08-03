@@ -11,6 +11,8 @@ Floor production MADE + CONSUME redesign for `svc-locations-django` on branch **
 | [chunk-03-api/PRODUCTION_REGISTER_API.md](chunk-03-api/PRODUCTION_REGISTER_API.md) | Chunk 3 — APPROVED |
 | [chunk-04-django-schema/NOTES.md](chunk-04-django-schema/NOTES.md) | Chunk 4 — APPROVED |
 | [chunk-05-http/NOTES.md](chunk-05-http/NOTES.md) | Chunk 5 — APPROVED |
-| [chunk-06-tests/NOTES.md](chunk-06-tests/NOTES.md) | Chunk 6 — tests |
+| [chunk-06-tests/NOTES.md](chunk-06-tests/NOTES.md) | Chunk 6 — APPROVED |
+| [chunk-07-ui/NOTES.md](chunk-07-ui/NOTES.md) | Chunk 7 — APPROVED |
+| [chunk-08-cutover/NOTES.md](chunk-08-cutover/NOTES.md) | Chunk 8 — APPROVED |
 
 **Sources (read-only):** `vb-access-legacy/`, `Legacy-mordern-effort-october-2025/`, existing apps `stock_ledger` / `recipe` / `locations` / `product` / `planning`.

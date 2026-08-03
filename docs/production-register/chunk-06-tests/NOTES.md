@@ -1,6 +1,6 @@
 # Chunk 6 — Contract tests
 
-**Status:** DONE (awaiting approve)  
+**Status:** APPROVED  
 **File:** `production_register/tests.py`
 
 ## Coverage
