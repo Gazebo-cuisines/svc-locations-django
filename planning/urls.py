@@ -37,6 +37,7 @@ urlpatterns = [
     path('supply/<int:supply_id>/', views.supply_detail_api, name='planning-supply-detail'),
     path('resources/', views.resources_collection_api, name='planning-resources'),
     path('resources/<int:resource_id>/', views.resource_detail_api, name='planning-resource-detail'),
+    path('resource-groups/', views.resource_groups_list_api, name='planning-resource-groups'),
    
     # Board Endpoints
     path('board/', views.board_api, name='planning-board'),

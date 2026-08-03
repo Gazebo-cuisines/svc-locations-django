@@ -55,6 +55,41 @@ class ProductApiTests(TestCase):
 
         return f'Bearer {_enc(header)}.{_enc(payload)}.sig'
 
+    def test_product_list_filters_by_containers(self):
+        Location.objects.create(id=3, name='Other Dest', visible=True)
+        self.client.post(
+            '/product/',
+            data=json.dumps({
+                'id': 201,
+                'name': 'Other Flow',
+                'product_class_id': 1,
+                'category_id': 1,
+                'range_id': 1,
+                'unit_id': 1,
+                'source_container_id': 1,
+                'destination_container_id': 3,
+            }),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+
+        all_resp = self.client.get('/product/')
+        self.assertEqual(all_resp.status_code, 200)
+        all_rows = all_resp.json()['data']
+        self.assertTrue(all(r.get('source_container_id') is not None for r in all_rows))
+        self.assertIn('shelf_life_days', all_rows[0])
+
+        pair_resp = self.client.get(
+            '/product/?source_container_id=1&destination_container_id=2',
+        )
+        self.assertEqual(pair_resp.status_code, 200)
+        pair_ids = {r['id'] for r in pair_resp.json()['data']}
+        self.assertIn(101, pair_ids)
+        self.assertNotIn(201, pair_ids)
+
+        bad = self.client.get('/product/?source_container_id=abc')
+        self.assertEqual(bad.status_code, 400)
+
     def test_product_create_update_delete_and_timeline(self):
         create_resp = self._seed_product(102, 'Product 102')
         self.assertEqual(create_resp.status_code, 201)

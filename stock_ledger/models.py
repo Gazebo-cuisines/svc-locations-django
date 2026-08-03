@@ -238,6 +238,7 @@ class StockEntryType(models.TextChoices):
     COUNT_ADJUSTMENT = 'count_adjustment', 'Count adjustment'
     DISPOSAL = 'disposal', 'Disposal'
     REVERSAL = 'reversal', 'Reversal'
+    DOWNTIME = 'downtime', 'Downtime'
 
 
 class StockEntry(models.Model):
@@ -331,12 +332,16 @@ class StockEntry(models.Model):
                         StockEntryType.COUNT_ADJUSTMENT,
                         StockEntryType.DISPOSAL,
                         StockEntryType.REVERSAL,
+                        StockEntryType.DOWNTIME,
                     ]
                 ),
                 name='chk_stock_entry_type',
             ),
             models.CheckConstraint(
-                check=~models.Q(quantity=0),
+                check=(
+                    ~models.Q(quantity=0)
+                    | models.Q(entry_type=StockEntryType.DOWNTIME)
+                ),
                 name='chk_stock_entry_qty_nonzero',
             ),
             models.CheckConstraint(
@@ -609,3 +614,40 @@ class StockChainAnchor(models.Model):
 
     def __str__(self):
         return f'stock_chain_anchor:{self.id}:entry:{self.head_entry_id}'
+
+
+class ProductionRun(models.Model):
+    """Floor production sidecar (resource / shift / timing / headcount)."""
+
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='production_run',
+    )
+    resource = models.ForeignKey(
+        'planning.Resource',
+        on_delete=models.PROTECT,
+        related_name='production_runs',
+    )
+    shift_code = models.CharField(max_length=32, null=True, blank=True)
+    staff_count = models.PositiveIntegerField(null=True, blank=True)
+    base_date = models.DateField()
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'production_run'
+        indexes = [
+            models.Index(
+                fields=['resource', 'base_date'],
+                name='idx_prod_run_resource_day',
+            ),
+            models.Index(
+                fields=['base_date'],
+                name='idx_prod_run_base_date',
+            ),
+        ]
+
+    def __str__(self):
+        return f'production_run:{self.id}:entry:{self.stock_entry_id}'

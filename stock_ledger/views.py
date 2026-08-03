@@ -2,7 +2,6 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db import IntegrityError
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -14,8 +13,10 @@ from product.models import Product, PurchaseShapeFormat, Unit
 from product.query import active_products
 from recipe.models import RecipeVersion
 from stock_ledger.models import (
+    ProductionRun,
     StockBalance,
     StockEntry,
+    StockEntryType,
     StockLot,
     StockLotOrigin,
     StockReservation,
@@ -70,9 +71,18 @@ def _parse_date(value, field_name: str):
         raise ValueError(f'Invalid date for {field_name}. Use YYYY-MM-DD.') from exc
 
 
-def julian_trace_number(day: date) -> str:
-    """YY + day-of-year, e.g. 2026-05-05 → 26125."""
-    return f'{day.year % 100:02d}{day.timetuple().tm_yday:03d}'
+def _format_display_date(value) -> str | None:
+    """YYYY-MM-DD / date → '03 Aug 2026' for UI lists."""
+    if value in (None, ''):
+        return None
+    if isinstance(value, date):
+        d = value
+    else:
+        try:
+            d = date.fromisoformat(str(value)[:10])
+        except ValueError:
+            return str(value)
+    return d.strftime('%d %b %Y')
 
 
 def lot_dict(lot: StockLot) -> dict:
@@ -125,6 +135,248 @@ def entry_dict(entry: StockEntry) -> dict:
     }
 
 
+def production_run_dict(run: ProductionRun) -> dict:
+    return {
+        'id': run.id,
+        'stock_entry_id': run.stock_entry_id,
+        'resource_id': run.resource_id,
+        'shift_code': run.shift_code,
+        'staff_count': run.staff_count,
+        'base_date': run.base_date.isoformat() if run.base_date else None,
+        'started_at': run.started_at.isoformat() if run.started_at else None,
+        'finished_at': run.finished_at.isoformat() if run.finished_at else None,
+        'created_at': run.created_at.isoformat() if run.created_at else None,
+    }
+
+
+def production_list_row(run: ProductionRun) -> dict:
+    entry = run.stock_entry
+    lot = entry.lot
+    product = lot.product
+    return {
+        'entry_id': entry.id,
+        'run_id': run.id,
+        'base_date': _format_display_date(run.base_date),
+        'base_date_iso': run.base_date.isoformat() if run.base_date else None,
+        'from_location_id': entry.counterparty_location_id,
+        'from_location_name': (
+            entry.counterparty_location.name
+            if entry.counterparty_location_id
+            else None
+        ),
+        'to_location_id': entry.location_id,
+        'to_location_name': entry.location.name if entry.location_id else None,
+        'product_id': product.id,
+        'product_name': product.name,
+        'recipe_code': product.recipe_code,
+        'quantity': _dec(entry.quantity),
+        'unit_id': entry.unit_id,
+        'unit_name': entry.unit.name if entry.unit_id else None,
+        'resource_id': run.resource_id,
+        'resource_name': run.resource.name if run.resource_id else None,
+        'shift_code': run.shift_code,
+        'staff_count': run.staff_count,
+        'started_at': run.started_at.isoformat() if run.started_at else None,
+        'finished_at': run.finished_at.isoformat() if run.finished_at else None,
+        'use_by': _format_display_date(lot.use_by),
+        'use_by_iso': lot.use_by.isoformat() if lot.use_by else None,
+        'trace_number': lot.trace_number,
+        'recipe_version_id': lot.recipe_version_id,
+    }
+
+
+def _optional_int_param(raw, field_name: str):
+    if raw in (None, ''):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{field_name} must be an integer.') from exc
+
+
+def _list_production_runs(request):
+    """Calendar/grid list: from→to locations + date / date range."""
+    try:
+        from_id = _optional_int_param(
+            request.GET.get('from_location_id')
+            or request.GET.get('source_container_id')
+            or request.GET.get('counterparty_location_id'),
+            'from_location_id',
+        )
+        to_id = _optional_int_param(
+            request.GET.get('to_location_id')
+            or request.GET.get('destination_container_id')
+            or request.GET.get('location_id'),
+            'to_location_id',
+        )
+        day = _parse_date(request.GET.get('date'), 'date')
+        date_from = _parse_date(request.GET.get('date_from'), 'date_from')
+        date_to = _parse_date(request.GET.get('date_to'), 'date_to')
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+
+    qs = (
+        ProductionRun.objects.filter(
+            stock_entry__entry_type=StockEntryType.PRODUCTION_OUTPUT,
+            stock_entry__reversed_by__isnull=True,
+        )
+        .select_related(
+            'resource',
+            'stock_entry__location',
+            'stock_entry__counterparty_location',
+            'stock_entry__unit',
+            'stock_entry__lot__product',
+        )
+        .order_by('base_date', 'started_at', 'id')
+    )
+    if from_id is not None:
+        qs = qs.filter(stock_entry__counterparty_location_id=from_id)
+    if to_id is not None:
+        qs = qs.filter(stock_entry__location_id=to_id)
+    if day is not None:
+        qs = qs.filter(base_date=day)
+    else:
+        if date_from is not None:
+            qs = qs.filter(base_date__gte=date_from)
+        if date_to is not None:
+            qs = qs.filter(base_date__lte=date_to)
+
+    return api_success(
+        'Production entries fetched.',
+        [production_list_row(run) for run in qs[:500]],
+    )
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def production_api(request):
+    """Floor production: GET list (calendar/dept) or POST stock-in + run sidecar."""
+    if request.method == 'GET':
+        return _list_production_runs(request)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        entry, run = _write_production(body)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, StockValidationError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success(
+        'Production posted.',
+        {'entry': entry_dict(entry), 'run': production_run_dict(run)},
+        status_code=201,
+    )
+
+
+def _write_production(body: dict, *, replace_entry_id: int | None = None):
+    if body.get('origin') in (None, ''):
+        body = {**body, 'origin': StockLotOrigin.PRODUCTION}
+    lot = _resolve_lot(body)
+    location_id = body.get('location_id')
+    if location_id in (None, ''):
+        location_id = lot.product.destination_container_id
+    if location_id in (None, ''):
+        raise StockValidationError(
+            'location_id required (or set product.destination_container)'
+        )
+    resource_id = body.get('resource_id')
+    if resource_id in (None, ''):
+        raise StockValidationError('resource_id is required')
+
+    base_date = _parse_date(body.get('base_date'), 'base_date')
+    if base_date is None:
+        production_date = _parse_date(body.get('production_date'), 'production_date')
+        base_date = production_date or timezone.localdate()
+
+    staff_count = body.get('staff_count')
+    if staff_count not in (None, ''):
+        staff_count = int(staff_count)
+        if staff_count < 0:
+            raise StockValidationError('staff_count must be >= 0')
+    else:
+        staff_count = None
+
+    unit_id = body.get('unit_id')
+    kwargs = dict(
+        idempotency_key=body['idempotency_key'],
+        lot=lot,
+        location_id=int(location_id),
+        quantity=_parse_decimal(body['quantity'], 'quantity'),
+        resource_id=int(resource_id),
+        base_date=base_date,
+        unit_id=int(unit_id) if unit_id not in (None, '') else None,
+        counterparty_location_id=(
+            int(body['counterparty_location_id'])
+            if body.get('counterparty_location_id') not in (None, '')
+            else None
+        ),
+        shift_code=(
+            str(body['shift_code'])
+            if body.get('shift_code') not in (None, '')
+            else None
+        ),
+        staff_count=staff_count,
+        started_at=(
+            _parse_effective_at(body.get('started_at'))
+            if body.get('started_at') not in (None, '')
+            else None
+        ),
+        finished_at=(
+            _parse_effective_at(body.get('finished_at'))
+            if body.get('finished_at') not in (None, '')
+            else None
+        ),
+        effective_at=_parse_effective_at(body.get('effective_at')),
+        **_common_write_kwargs(body),
+    )
+    if replace_entry_id is not None:
+        return services.production_replace(entry_id=replace_entry_id, **kwargs)
+    return services.production_output(**kwargs)
+
+
+@csrf_exempt
+@require_http_methods(['PUT', 'DELETE'])
+def production_detail_api(request, entry_id: int):
+    """PUT = reverse+recreate (edit). DELETE = reverse only."""
+    if request.method == 'DELETE':
+        body = _parse_json_body(request) or {}
+        try:
+            entry = services.production_void(
+                entry_id=entry_id,
+                idempotency_key=(
+                    body.get('idempotency_key')
+                    or f'reverse-production:{entry_id}'
+                ),
+                effective_at=_parse_effective_at(body.get('effective_at')),
+                actor_user_id=body.get('actor_user_id'),
+                **_common_write_kwargs(body),
+            )
+        except (ValueError, StockValidationError, TypeError) as exc:
+            return api_error(str(exc))
+        return api_success('Production reversed.', entry_dict(entry), status_code=201)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        entry, run = _write_production(body, replace_entry_id=entry_id)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, StockValidationError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success(
+        'Production updated.',
+        {
+            'entry': entry_dict(entry),
+            'run': production_run_dict(run),
+            'replaced_entry_id': entry_id,
+        },
+        status_code=201,
+    )
+
+
 def reservation_dict(row: StockReservation) -> dict:
     return {
         'id': row.id,
@@ -149,6 +401,36 @@ def _require_lot(lot_id) -> StockLot:
     if not lot.product.is_active:
         raise StockValidationError(f'lot_id={lot_id} product is inactive')
     return lot
+
+
+def _resolve_lot(body: dict) -> StockLot:
+    """lot_id OR product_id + soft attrs (use_by / trace / …)."""
+    lot_id = body.get('lot_id')
+    if lot_id not in (None, ''):
+        return _require_lot(lot_id)
+
+    product_id = body.get('product_id')
+    if product_id in (None, ''):
+        raise StockValidationError('lot_id or product_id is required')
+
+    lot = services.resolve_lot(
+        product_id=int(product_id),
+        trace_number=body.get('trace_number') or None,
+        use_by=_parse_date(body.get('use_by'), 'use_by'),
+        production_date=_parse_date(body.get('production_date'), 'production_date'),
+        recipe_version_id=body.get('recipe_version_id') or None,
+        shape_format_id=body.get('shape_format_id') or None,
+        origin=body.get('origin') or StockLotOrigin.PURCHASE,
+        supplier_lot_code=body.get('supplier_lot_code') or None,
+    )
+    return StockLot.objects.select_related('product').get(pk=lot.pk)
+
+
+def _optional_unit_id(body: dict) -> int | None:
+    raw = body.get('unit_id')
+    if raw in (None, ''):
+        return None
+    return int(raw)
 
 
 def _common_write_kwargs(body: dict) -> dict:
@@ -221,29 +503,23 @@ def lots_collection_api(request):
         use_by = _parse_date(body.get('use_by'), 'use_by')
         trace_date = _parse_date(body.get('trace_date'), 'trace_date')
         trace_number = body.get('trace_number')
-        if trace_number in (None, ''):
-            # Julian: YY + day-of-year from stock-in / production date.
-            day = trace_date or production_date or timezone.localdate()
-            trace_number = julian_trace_number(day)
-            if production_date is None:
-                production_date = day
-        else:
-            trace_number = str(trace_number)
+        if trace_number in (None, '') and production_date is None and trace_date is not None:
+            production_date = trace_date
 
-        lot = StockLot.objects.create(
+        lot = services.resolve_lot(
             product_id=product_id,
-            trace_number=trace_number,
-            origin=origin,
-            supplier_lot_code=body.get('supplier_lot_code') or None,
+            trace_number=trace_number or None,
+            use_by=use_by,
+            production_date=production_date,
             recipe_version_id=recipe_version_id or None,
             shape_format_id=shape_format_id or None,
-            production_date=production_date,
-            use_by=use_by,
+            origin=origin,
+            supplier_lot_code=body.get('supplier_lot_code') or None,
         )
     except ValueError as exc:
         return api_error(str(exc))
-    except IntegrityError:
-        return api_error('Lot with this identity already exists.', status_code=409)
+    except StockValidationError as exc:
+        return api_error(str(exc))
 
     return api_success('Lot created.', lot_dict(lot), status_code=201)
 
@@ -319,6 +595,142 @@ def unit_conversions_api(request):
 
 
 @csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def downtime_api(request):
+    """Record downtime time-row (qty 0, no stock). GET lists downtime product types."""
+    if request.method == 'GET':
+        rows = [
+            {
+                'id': p.id,
+                'name': p.name,
+                'unit_id': p.unit_id,
+                'unit_name': p.unit.name if p.unit_id else None,
+            }
+            for p in (
+                active_products()
+                .filter(is_downtime=True)
+                .select_related('unit')
+                .order_by('name')
+            )
+        ]
+        return api_success('Downtime types fetched.', rows)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        if body.get('origin') in (None, ''):
+            body = {**body, 'origin': StockLotOrigin.PRODUCTION}
+        lot = _resolve_lot(body)
+        location_id = body.get('location_id')
+        if location_id in (None, ''):
+            raise StockValidationError('location_id is required')
+        resource_id = body.get('resource_id')
+        if resource_id in (None, ''):
+            raise StockValidationError('resource_id is required')
+
+        base_date = _parse_date(body.get('base_date'), 'base_date')
+        if base_date is None:
+            base_date = timezone.localdate()
+
+        started_at = (
+            _parse_effective_at(body.get('started_at'))
+            if body.get('started_at') not in (None, '')
+            else None
+        )
+        finished_at = (
+            _parse_effective_at(body.get('finished_at'))
+            if body.get('finished_at') not in (None, '')
+            else None
+        )
+        if started_at is None or finished_at is None:
+            raise StockValidationError('started_at and finished_at are required')
+
+        staff_count = body.get('staff_count')
+        if staff_count not in (None, ''):
+            staff_count = int(staff_count)
+            if staff_count < 0:
+                raise StockValidationError('staff_count must be >= 0')
+        else:
+            staff_count = None
+
+        unit_id = body.get('unit_id')
+        entry, run = services.record_downtime(
+            idempotency_key=body['idempotency_key'],
+            lot=lot,
+            location_id=int(location_id),
+            resource_id=int(resource_id),
+            base_date=base_date,
+            unit_id=int(unit_id) if unit_id not in (None, '') else None,
+            counterparty_location_id=(
+                int(body['counterparty_location_id'])
+                if body.get('counterparty_location_id') not in (None, '')
+                else None
+            ),
+            shift_code=(
+                str(body['shift_code'])
+                if body.get('shift_code') not in (None, '')
+                else None
+            ),
+            staff_count=staff_count,
+            started_at=started_at,
+            finished_at=finished_at,
+            effective_at=_parse_effective_at(body.get('effective_at')),
+            **_common_write_kwargs(body),
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, StockValidationError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success(
+        'Downtime recorded.',
+        {'entry': entry_dict(entry), 'run': production_run_dict(run)},
+        status_code=201,
+    )
+
+
+@csrf_exempt
+@require_GET
+def production_requirements_api(request, entry_id: int):
+    """Recipe explode + optional on-hand piles for floor allocate."""
+    location_id = request.GET.get('location_id')
+    try:
+        loc = int(location_id) if location_id not in (None, '') else None
+        data = services.production_requirements(
+            output_entry_id=entry_id,
+            location_id=loc,
+        )
+    except (ValueError, StockValidationError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success('Production requirements fetched.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def production_consume_api(request, entry_id: int):
+    """Floor allocate: stock-out a component pile against production output."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        entry = services.production_consume(
+            idempotency_key=body['idempotency_key'],
+            output_entry_id=entry_id,
+            lot=_resolve_lot(body),
+            location_id=int(body['location_id']),
+            quantity=_parse_decimal(body['quantity'], 'quantity'),
+            unit_id=_optional_unit_id(body),
+            effective_at=_parse_effective_at(body.get('effective_at')),
+            **_common_write_kwargs(body),
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, StockValidationError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success('Production consume posted.', entry_dict(entry), status_code=201)
+
+
+@csrf_exempt
 @require_http_methods(['POST'])
 def receipt_api(request):
     body = _parse_json_body(request)
@@ -327,10 +739,10 @@ def receipt_api(request):
     try:
         entry = services.receipt(
             idempotency_key=body['idempotency_key'],
-            lot=_require_lot(body['lot_id']),
+            lot=_resolve_lot(body),
             location_id=int(body['location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
-            unit_id=int(body['unit_id']),
+            unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             unit_cost=(
                 _parse_decimal(body['unit_cost'], 'unit_cost')
@@ -355,10 +767,10 @@ def issue_api(request):
     try:
         entry = services.issue(
             idempotency_key=body['idempotency_key'],
-            lot=_require_lot(body['lot_id']),
+            lot=_resolve_lot(body),
             location_id=int(body['location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
-            unit_id=int(body['unit_id']),
+            unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             **_common_write_kwargs(body),
         )
@@ -378,11 +790,11 @@ def transfer_api(request):
     try:
         out_entry, in_entry = services.transfer(
             idempotency_key=body['idempotency_key'],
-            lot=_require_lot(body['lot_id']),
+            lot=_resolve_lot(body),
             from_location_id=int(body['from_location_id']),
             to_location_id=int(body['to_location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
-            unit_id=int(body['unit_id']),
+            unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             **_common_write_kwargs(body),
         )
@@ -406,10 +818,10 @@ def disposal_api(request):
     try:
         entry = services.disposal(
             idempotency_key=body['idempotency_key'],
-            lot=_require_lot(body['lot_id']),
+            lot=_resolve_lot(body),
             location_id=int(body['location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
-            unit_id=int(body['unit_id']),
+            unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             **_common_write_kwargs(body),
         )
@@ -427,12 +839,23 @@ def count_adjustment_api(request):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        counted = body.get('counted_quantity')
+        delta = body.get('quantity_delta')
         entry = services.count_adjustment(
             idempotency_key=body['idempotency_key'],
-            lot=_require_lot(body['lot_id']),
+            lot=_resolve_lot(body),
             location_id=int(body['location_id']),
-            quantity_delta=_parse_decimal(body['quantity_delta'], 'quantity_delta'),
-            unit_id=int(body['unit_id']),
+            counted_quantity=(
+                _parse_decimal(counted, 'counted_quantity')
+                if counted not in (None, '')
+                else None
+            ),
+            quantity_delta=(
+                _parse_decimal(delta, 'quantity_delta')
+                if delta not in (None, '')
+                else None
+            ),
+            unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             **_common_write_kwargs(body),
         )
@@ -487,10 +910,25 @@ def balance_list_api(request):
     )
     lot_id = request.GET.get('lot_id')
     location_id = request.GET.get('location_id')
+    product_id = request.GET.get('product_id')
+    trace_number = request.GET.get('trace_number')
+    use_by = request.GET.get('use_by')
     if lot_id:
         qs = qs.filter(lot_id=lot_id)
     if location_id:
         qs = qs.filter(location_id=location_id)
+    if product_id not in (None, ''):
+        try:
+            qs = qs.filter(lot__product_id=int(product_id))
+        except (TypeError, ValueError):
+            return api_error('product_id must be an integer.')
+    if trace_number not in (None, ''):
+        qs = qs.filter(lot__trace_number=trace_number)
+    if use_by not in (None, ''):
+        try:
+            qs = qs.filter(lot__use_by=_parse_date(use_by, 'use_by'))
+        except ValueError as exc:
+            return api_error(str(exc))
 
     data = [serialize_balance_row(b) for b in qs[:500]]
     return api_success('Balances fetched.', data)
@@ -575,7 +1013,7 @@ def reservation_create_api(request):
         return api_error('Invalid JSON body.')
     try:
         row = reservations.reserve(
-            lot=_require_lot(body['lot_id']),
+            lot=_resolve_lot(body),
             location_id=int(body['location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=int(body['unit_id']),
