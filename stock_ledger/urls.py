@@ -37,6 +37,7 @@ urlpatterns = [
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
     path('entries/<int:pk>/', views.entry_detail_api, name='stock-entry-detail'),
+    path('audit/timeline/', views.audit_timeline_api, name='stock-audit-timeline'),
     path('balances/', views.balance_list_api, name='stock-balances'),
     path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),
     # --- parked (non-MVP) ---
