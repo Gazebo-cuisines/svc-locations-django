@@ -1,0 +1,91 @@
+{
+  "info": {
+    "name": "Gazebo - Stock Warehouse Remaining",
+    "description": "Production warehouse remaining stock, unit-wise (storage locations).\n\n**Endpoint:** `GET /stock/warehouse/remaining/`\n\nAggregates `stock_balance` (qty > 0, active products) for locations with role `storage`.\n\n**Vars:** `{{base_url}}` (e.g. `http://127.0.0.1:8000`), `{{location_id}}` (e.g. `8` = Unit 2, `2` = Unit 11)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "location_id",
+      "value": "8"
+    }
+  ],
+  "item": [
+    {
+      "name": "Warehouse remaining — all storage units",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/warehouse/remaining/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "warehouse", "remaining", ""]
+        },
+        "description": "### Warehouse remaining (all units)\n\n`GET /stock/warehouse/remaining/`\n\nReturns remaining stock for **all storage** locations (e.g. Unit 2, Unit 11), products aggregated per location.\n\n**Query parameters**\n\nNone.\n\n**Response body**\n\n```json\n{\n  \"status\": \"success\",\n  \"message\": \"Warehouse remaining stock fetched.\",\n  \"data\": [\n    {\n      \"location_id\": 8,\n      \"location_name\": \"Unit 2\",\n      \"products\": [\n        {\n          \"product_id\": 910122,\n          \"product_name\": \"SALT\",\n          \"unit_id\": 2,\n          \"unit_name\": \"grams\",\n          \"remaining_qty\": \"75000.000000\",\n          \"lot_count\": 3\n        }\n      ]\n    }\n  ]\n}\n```\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+      }
+    },
+    {
+      "name": "Warehouse remaining — one unit (Unit 2)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/warehouse/remaining/?location_id={{location_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "warehouse", "remaining", ""],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "description": "Storage location id (8 = Unit 2, 2 = Unit 11)"
+            }
+          ]
+        },
+        "description": "### Warehouse remaining (one unit)\n\n`GET /stock/warehouse/remaining/?location_id={{location_id}}`\n\nFilter to one storage warehouse.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes (for this request) | Storage location PK |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | `location_id` not an integer |\n| 404 | Location not found or not role=storage |"
+      }
+    },
+    {
+      "name": "Warehouse remaining — Unit 11",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/warehouse/remaining/?location_id=2",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "warehouse", "remaining", ""],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "2",
+              "description": "Unit 11"
+            }
+          ]
+        },
+        "description": "Same as one-unit filter with `location_id=2` (Unit 11)."
+      }
+    },
+    {
+      "name": "Balances (lot-level) — compare",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/balances/?location_id={{location_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "balances", ""],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}"
+            }
+          ]
+        },
+        "description": "Lot-level balances for the same unit (not aggregated). Useful to compare with warehouse remaining totals."
+      }
+    }
+  ]
+}

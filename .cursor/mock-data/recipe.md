@@ -79,3 +79,32 @@ Sums to 1.0. Total 215,606.
 SUGAR · CUMIN SEED · CHILLI POWDER · ONION WHITE DICED 10MM (FROZEN) · PEAS (FROZEN) · LEMON JUICE · Water · SAMOSA PASTRY - LARGE CUT · Tray - Grab & Go - Square Tray · Film - K peel 7G - 25mu - f240mm · Box - Grab and Go x 6 Tubs - 280x148x134
 
 Want this as a Word/Excel doc for uploading into Notazone?
+
+---
+
+## Gazebo supplier map + goods-in + production E2E
+
+Prerequisite: samosa demo products/locations/recipes already seeded.
+
+```bash
+python manage.py seed_demo_recipe_samosa
+python manage.py seed_samosa_supplier_stock
+python manage.py seed_samosa_supplier_stock --production-e2e
+```
+
+Flags: `--map-only`, `--goods-in-only`, `--skip-map`, `--packs 10`, `--production-e2e`.
+
+### Data rules
+
+- Supplier: existing location with role `supplier` and name containing `Gazebo` (not created).
+- Products: `910101`–`910115` only (includes tray / film / sleeve / box).
+- Shape: `1 Box × 10 Kg` for mass (`g`); `1 Box × 10 Each` for packaging/pastry; Liter pack if product unit is Liter.
+- Units: lookup only — no new `product_unit` rows.
+- Goods-in: 10 packs at location `910200`; stock qty = packs × multiplier (g products: ×1000 from Kg).
+- Production E2E: one unit per stage `910001`→`910006` (transfer components → consume → output). Needs an active `planning.Resource`.
+
+### Verify
+
+- `GET /product/910101/suppliers/` — default Gazebo mapping, shape label
+- `GET /stock/balances/?location_id=910200` — RM + packaging on hand
+- `GET /stock/production/` — output entries for intermediates/FG
