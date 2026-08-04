@@ -66,10 +66,10 @@ jobs:
             git reset --hard "origin/$BRANCH"
             git clean -fdq || true
 
-            if systemctl list-unit-files | grep -q "gunicorn.service"; then
-              sudo systemctl restart gunicorn
+            if systemctl list-unit-files | grep -q "gunicorn-locations.service"; then
+              sudo systemctl restart gunicorn-locations.service
               sleep 2
-              sudo systemctl is-active --quiet gunicorn || (sudo systemctl status gunicorn --no-pager && exit 1)
+              sudo systemctl is-active --quiet gunicorn-locations.service || (sudo systemctl status gunicorn-locations.service --no-pager && exit 1)
             fi
 
             if systemctl list-unit-files | grep -q "nginx.service"; then
