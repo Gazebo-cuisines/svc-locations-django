@@ -1,7 +1,9 @@
+import base64
 import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from django.db import models
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -137,6 +139,43 @@ def entry_dict(entry: StockEntry) -> dict:
         'remarks': entry.remarks,
         'entry_hash': entry.entry_hash,
         'prev_hash': entry.prev_hash,
+    }
+
+
+def audit_event_dict(entry: StockEntry) -> dict:
+    lot = entry.lot
+    product = lot.product
+    return {
+        'entry_id': entry.id,
+        'at': entry.recorded_at.isoformat() if entry.recorded_at else None,
+        'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
+        'action': entry.entry_type,
+        'quantity': _dec(entry.quantity),
+        'unit_id': entry.unit_id,
+        'unit_name': entry.unit.name if entry.unit_id else None,
+        'product_id': product.id,
+        'product_name': product.name,
+        'lot_id': lot.id,
+        'trace_number': lot.trace_number,
+        'use_by': lot.use_by.isoformat() if lot.use_by else None,
+        'location_id': entry.location_id,
+        'location_name': entry.location.name if entry.location_id else None,
+        'counterparty_location_id': entry.counterparty_location_id,
+        'counterparty_location_name': (
+            entry.counterparty_location.name
+            if entry.counterparty_location_id
+            else None
+        ),
+        'source_document_type': entry.source_document_type,
+        'source_document_id': entry.source_document_id,
+        'source_document_line': entry.source_document_line,
+        'po_number': entry.po_number,
+        'remarks': entry.remarks,
+        'reverses_entry_id': entry.reverses_entry_id,
+        'actor_user_id': entry.actor_user_id,
+        'lan_username': entry.lan_username,
+        'source_workstation': entry.source_workstation,
+        'source_workstation_ip': entry.source_workstation_ip,
     }
 
 
@@ -334,7 +373,7 @@ def _write_production(body: dict, *, replace_entry_id: int | None = None):
             else None
         ),
         effective_at=_parse_effective_at(body.get('effective_at')),
-        **_common_write_kwargs(body),
+        **_common_write_kwargs(request, body),
     )
     if replace_entry_id is not None:
         return services.production_replace(entry_id=replace_entry_id, **kwargs)
@@ -356,7 +395,7 @@ def production_detail_api(request, entry_id: int):
                 ),
                 effective_at=_parse_effective_at(body.get('effective_at')),
                 actor_user_id=body.get('actor_user_id'),
-                **_common_write_kwargs(body),
+                **_common_write_kwargs(request, body),
             )
         except (ValueError, StockValidationError, TypeError) as exc:
             return api_error(str(exc))
@@ -438,11 +477,49 @@ def _optional_unit_id(body: dict) -> int | None:
     return int(raw)
 
 
-def _common_write_kwargs(body: dict) -> dict:
+def _decode_bearer_claims(request) -> dict:
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return {}
+    token = auth_header.split(' ', 1)[1].strip()
+    parts = token.split('.')
+    if len(parts) < 2:
+        return {}
+    payload = parts[1]
+    padding = '=' * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload + padding).decode('utf-8')
+        claims = json.loads(decoded)
+        return claims if isinstance(claims, dict) else {}
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _common_write_kwargs(request, body: dict) -> dict:
+    claims = _decode_bearer_claims(request)
+    lan_username = body.get('lan_username') or claims.get('sub')
+    source_workstation = (
+        body.get('source_workstation') or request.META.get('HTTP_USER_AGENT')
+    )
+    source_workstation_ip = (
+        body.get('source_workstation_ip') or request.META.get('REMOTE_ADDR')
+    )
+
+    if lan_username is not None:
+        lan_username = str(lan_username)[:64]
+    if source_workstation is not None:
+        source_workstation = str(source_workstation)[:64]
+    if source_workstation_ip is not None:
+        source_workstation_ip = str(source_workstation_ip)[:45]
+
     kwargs = {
         'override_reason': body.get('override_reason'),
         'authorised_by_user_id': body.get('authorised_by_user_id'),
         'actor_user_id': body.get('actor_user_id'),
+        # Cognito-first: store stable subject in lan_username when explicit value is absent.
+        'lan_username': lan_username,
+        'source_workstation': source_workstation,
+        'source_workstation_ip': source_workstation_ip,
         'remarks': body.get('remarks'),
         'source_document_type': body.get('source_document_type'),
         'source_document_id': body.get('source_document_id'),
@@ -690,7 +767,7 @@ def downtime_api(request):
             started_at=started_at,
             finished_at=finished_at,
             effective_at=_parse_effective_at(body.get('effective_at')),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -735,7 +812,7 @@ def production_consume_api(request, entry_id: int):
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -763,7 +840,7 @@ def receipt_api(request):
                 if body.get('unit_cost') not in (None, '')
                 else None
             ),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -786,7 +863,7 @@ def issue_api(request):
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -810,7 +887,7 @@ def transfer_api(request):
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -837,7 +914,7 @@ def disposal_api(request):
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -871,7 +948,7 @@ def count_adjustment_api(request):
             ),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -893,7 +970,7 @@ def reversal_api(request):
             entry=source,
             effective_at=_parse_effective_at(body.get('effective_at')),
             actor_user_id=body.get('actor_user_id'),
-            **_common_write_kwargs(body),
+            **_common_write_kwargs(request, body),
         )
     except StockEntry.DoesNotExist:
         return api_error('entry_id not found.', status_code=404)
@@ -912,6 +989,62 @@ def entry_detail_api(request, pk: int):
     except StockEntry.DoesNotExist:
         return api_error('Entry not found.', status_code=404)
     return api_success('Entry fetched.', entry_dict(entry))
+
+
+@csrf_exempt
+@require_GET
+def audit_timeline_api(request):
+    """Stock audit timeline: who/what/when from immutable stock_entry rows."""
+    qs = (
+        StockEntry.objects.select_related(
+            'unit',
+            'location',
+            'counterparty_location',
+            'lot__product',
+        )
+        .order_by('-recorded_at', '-id')
+    )
+    try:
+        product_id = request.GET.get('product_id')
+        location_id = request.GET.get('location_id')
+        lot_id = request.GET.get('lot_id')
+        entry_type = request.GET.get('entry_type')
+        source_document_type = request.GET.get('source_document_type')
+        source_document_id = request.GET.get('source_document_id')
+        actor_user_id = request.GET.get('actor_user_id')
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+        limit = request.GET.get('limit')
+
+        if product_id not in (None, ''):
+            qs = qs.filter(lot__product_id=int(product_id))
+        if location_id not in (None, ''):
+            lid = int(location_id)
+            qs = qs.filter(
+                models.Q(location_id=lid) | models.Q(counterparty_location_id=lid)
+            )
+        if lot_id not in (None, ''):
+            qs = qs.filter(lot_id=int(lot_id))
+        if entry_type not in (None, ''):
+            qs = qs.filter(entry_type=entry_type)
+        if source_document_type not in (None, ''):
+            qs = qs.filter(source_document_type=source_document_type)
+        if source_document_id not in (None, ''):
+            qs = qs.filter(source_document_id=int(source_document_id))
+        if actor_user_id not in (None, ''):
+            qs = qs.filter(actor_user_id=int(actor_user_id))
+        if date_from not in (None, ''):
+            qs = qs.filter(recorded_at__date__gte=_parse_date(date_from, 'date_from'))
+        if date_to not in (None, ''):
+            qs = qs.filter(recorded_at__date__lte=_parse_date(date_to, 'date_to'))
+
+        row_limit = int(limit) if limit not in (None, '') else 200
+        row_limit = max(1, min(row_limit, 1000))
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    rows = [audit_event_dict(entry) for entry in qs[:row_limit]]
+    return api_success('Stock audit timeline fetched.', rows)
 
 
 @csrf_exempt
