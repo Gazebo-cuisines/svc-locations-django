@@ -302,7 +302,7 @@ def production_api(request):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
-        entry, run = _write_production(body)
+        entry, run = _write_production(request, body)
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
@@ -314,7 +314,7 @@ def production_api(request):
     )
 
 
-def _write_production(body: dict, *, replace_entry_id: int | None = None):
+def _write_production(request, body: dict, *, replace_entry_id: int | None = None):
     if body.get('origin') in (None, ''):
         body = {**body, 'origin': StockLotOrigin.PRODUCTION}
     lot = _resolve_lot(body)
@@ -405,7 +405,7 @@ def production_detail_api(request, entry_id: int):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
-        entry, run = _write_production(body, replace_entry_id=entry_id)
+        entry, run = _write_production(request, body, replace_entry_id=entry_id)
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
