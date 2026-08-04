@@ -71,6 +71,37 @@ def resolve_lot(
             f'Invalid origin. Use one of: {", ".join(StockLotOrigin.values)}'
         )
 
+    if recipe_version_id not in (None, ''):
+        recipe_version_id = int(recipe_version_id)
+        belongs = RecipeVersion.objects.filter(
+            pk=recipe_version_id,
+            recipe__product_id=product_id,
+        ).exists()
+        if not belongs:
+            raise StockValidationError(
+                f'recipe_version_id={recipe_version_id} '
+                f'does not belong to product_id={product_id}'
+            )
+    elif origin == StockLotOrigin.PRODUCTION:
+        # Stamp active recipe at MADE time — BOM is frozen on the lot.
+        active = (
+            RecipeVersion.objects
+            .filter(
+                recipe__product_id=product_id,
+                status=RecipeVersionStatus.ACTIVE,
+            )
+            .order_by('-version_number')
+            .values_list('id', flat=True)
+            .first()
+        )
+        if active is None:
+            raise StockValidationError(
+                f'No active recipe version for product_id={product_id}'
+            )
+        recipe_version_id = active
+    else:
+        recipe_version_id = None
+
     if trace_number in (None, ''):
         day = production_date or timezone.localdate()
         trace_number = julian_trace_number(day)
@@ -843,21 +874,24 @@ def _require_production_output(entry_id: int) -> StockEntry:
 
 
 def _resolve_recipe_version(output: StockEntry) -> RecipeVersion:
-    if output.lot.recipe_version_id:
-        return output.lot.recipe_version
-    version = (
-        RecipeVersion.objects
-        .filter(
-            recipe__product_id=output.lot.product_id,
-            status=RecipeVersionStatus.ACTIVE,
+    """BOM is frozen on the lot at MADE — never swap to a different version later."""
+    lot = output.lot
+    if not lot.recipe_version_id:
+        raise StockValidationError(
+            f'lot_id={lot.id} has no recipe_version '
+            f'(product_id={lot.product_id}); reverse and remake to stamp BOM'
         )
-        .prefetch_related('components__component_product__yield_data')
-        .order_by('-version_number')
+    version = lot.recipe_version
+    recipe_product_id = (
+        RecipeVersion.objects
+        .filter(pk=version.id)
+        .values_list('recipe__product_id', flat=True)
         .first()
     )
-    if version is None:
+    if recipe_product_id != lot.product_id:
         raise StockValidationError(
-            f'No active recipe version for product_id={output.lot.product_id}'
+            f'lot_id={lot.id} recipe_version_id={version.id} belongs to '
+            f'product_id={recipe_product_id}, not product_id={lot.product_id}'
         )
     return version
 

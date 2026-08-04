@@ -144,6 +144,26 @@ class StockLot(models.Model):
     use_by = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        # Recipe version is identity for MADE stock — do not change after entries exist.
+        if self.pk is not None:
+            prev = (
+                StockLot.objects
+                .filter(pk=self.pk)
+                .values_list('recipe_version_id', flat=True)
+                .first()
+            )
+            if (
+                prev is not None
+                and prev != self.recipe_version_id
+                and self.entries.exists()
+            ):
+                raise ValueError(
+                    f'Cannot change recipe_version on lot_id={self.pk} '
+                    f'after stock entries exist (was {prev}, tried {self.recipe_version_id})'
+                )
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = 'stock_lot'
         constraints = [
