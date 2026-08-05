@@ -30,7 +30,16 @@ from planning.models import (
     Resource,
     ResourceGroup,
 )
-from planning.services import allocate, explode, forecast, lifecycle, picking, portal, schedule
+from planning.services import (
+    allocate,
+    explode,
+    forecast,
+    lifecycle,
+    picking,
+    portal,
+    progress,
+    schedule,
+)
 
 
 def _dec(value):
@@ -622,6 +631,20 @@ def portal_today_api(request):
     except PlanningError as exc:
         return _error_from_exc(exc)
     return api_success('Portal today fetched successfully.', data)
+
+
+@csrf_exempt
+@require_GET
+def plan_progress_api(request, plan_id: int):
+    location = request.GET.get('location')
+    try:
+        data = progress.build_plan_progress(
+            plan_id,
+            location=location,
+        )
+    except PlanningError as exc:
+        return _error_from_exc(exc)
+    return api_success('Plan progress fetched successfully.', data)
 
 
 # --- Allocations ---

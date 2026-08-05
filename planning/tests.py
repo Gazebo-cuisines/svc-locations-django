@@ -5,9 +5,23 @@ from django.test import TestCase
 from django.utils import timezone
 
 from locations.models import Location
-from planning.models import Plan, PlanEvent, PlanRequirement, PlanRun, PlanRunStatus
+from planning.models import (
+    Plan,
+    PlanEvent,
+    PlanRequirement,
+    PlanRun,
+    PlanRunStatus,
+    Resource,
+)
 from product.models import Category, Product, ProductClass, Range, Unit
-
+from stock_ledger.models import (
+    ProductionRun,
+    StockEntry,
+    StockEntryType,
+    StockLot,
+    StockLotOrigin,
+    StockPeriod,
+)
 
 class PickingListApiTests(TestCase):
     def setUp(self):
@@ -295,4 +309,120 @@ class PortalTodayApiTests(TestCase):
 
     def test_portal_today_location_required(self):
         resp = self.client.get('/planning/portal/today/')
+        self.assertEqual(resp.status_code, 422)
+
+
+class PlanProgressApiTests(TestCase):
+    def setUp(self):
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        self.unit = Unit.objects.create(id=1, name='Each')
+        self.spice = Location.objects.create(id=15, name='Spice Room', visible=True)
+        self.mixers = Location.objects.create(id=16, name='Mixers', visible=True)
+        self.spice_mix = Product.objects.create(
+            name='Vegetable Samosa - 003 - Spice',
+            recipe_code='SP1',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=self.spice.id,
+            destination_container_id=self.mixers.id,
+        )
+        self.plan = Plan.objects.create(
+            plan_date=date(2026, 8, 5),
+            location=self.mixers,
+        )
+        self.run = PlanRun.objects.create(
+            plan=self.plan,
+            run_number=1,
+            status=PlanRunStatus.COMPLETE,
+            driver_version='test-1.0',
+            started_at=timezone.now(),
+            completed_at=timezone.now(),
+        )
+        PlanRequirement.objects.create(
+            run=self.run,
+            level=1,
+            batch_number=1,
+            product=self.spice_mix,
+            net_required=Decimal('10'),
+            gross_required=Decimal('10'),
+            yield_factor=Decimal('1'),
+            process_loss=Decimal('1'),
+            source_location=self.spice,
+            destination_location=self.mixers,
+        )
+        self.resource = Resource.objects.create(
+            id=1,
+            code='SPICE1',
+            name='Spice line',
+            location=self.spice,
+        )
+        period = StockPeriod.objects.create(
+            period_start=date(2026, 8, 1),
+            period_end=date(2026, 8, 31),
+        )
+        lot = StockLot.objects.create(
+            product=self.spice_mix,
+            trace_number='T1',
+            origin=StockLotOrigin.PRODUCTION,
+            production_date=date(2026, 8, 5),
+        )
+        now = timezone.now()
+        for i, qty in enumerate((Decimal('5'), Decimal('5')), start=1):
+            entry = StockEntry.objects.create(
+                idempotency_key=f'prog-test-{i}',
+                entry_type=StockEntryType.PRODUCTION_OUTPUT,
+                lot=lot,
+                location=self.mixers,
+                counterparty_location=self.spice,
+                quantity=qty,
+                unit=self.unit,
+                period=period,
+                effective_at=now,
+                recorded_at=now,
+                entry_hash=f'hash-prog-{i}',
+            )
+            ProductionRun.objects.create(
+                stock_entry=entry,
+                resource=self.resource,
+                base_date=date(2026, 8, 5),
+                finished_at=now,
+            )
+
+    def test_progress_planned_vs_made(self):
+        resp = self.client.get(f'/planning/plans/{self.plan.id}/progress/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['plan_id'], self.plan.id)
+        self.assertEqual(data['run_id'], self.run.id)
+        self.assertEqual(len(data['lines']), 1)
+        line = data['lines'][0]
+        self.assertEqual(line['product_id'], self.spice_mix.id)
+        self.assertEqual(line['from_location'], 'Spice Room')
+        self.assertEqual(line['planned'], '10.000000')
+        self.assertEqual(line['done'], '10.000000')
+        self.assertEqual(line['status'], 'complete')
+        self.assertEqual(line['pct'], '100.00')
+        self.assertIsNotNone(line['last_made_at'])
+        dept = data['by_department'][0]
+        self.assertEqual(dept['complete_count'], 1)
+
+    def test_progress_location_filter(self):
+        resp = self.client.get(
+            f'/planning/plans/{self.plan.id}/progress/?location=Spice%20Room',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['location'], 'Spice Room')
+        self.assertEqual(len(data['lines']), 1)
+
+    def test_progress_requires_complete_run(self):
+        bare = Plan.objects.create(
+            plan_date=date(2026, 8, 6),
+            location=self.mixers,
+        )
+        resp = self.client.get(f'/planning/plans/{bare.id}/progress/')
         self.assertEqual(resp.status_code, 422)

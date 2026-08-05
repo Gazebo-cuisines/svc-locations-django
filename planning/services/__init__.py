@@ -5,6 +5,7 @@ from planning.services import (
     lifecycle,
     picking,
     portal,
+    progress,
     schedule,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     'lifecycle',
     'picking',
     'portal',
+    'progress',
     'schedule',
 ]
