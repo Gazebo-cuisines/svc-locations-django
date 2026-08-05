@@ -54,6 +54,7 @@ class LotSpec:
     use_by: Optional[date]
     production_date: Optional[date]
     atp: Decimal
+    trace_number: Optional[str] = None
 
 
 @dataclass(frozen=True)

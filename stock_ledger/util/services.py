@@ -170,7 +170,7 @@ def _existing(idempotency_key: str) -> StockEntry | None:
     return StockEntry.objects.filter(idempotency_key=idempotency_key).first()
 
 
-def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> StockBalance:
+def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> StockBalance | None:
     balance = (
         StockBalance.objects
         .select_for_update()
@@ -190,6 +190,14 @@ def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> Stoc
                 'stock_balance: negative without authorised override'
             )
         neg_auth_id = entry.id
+
+    if new_qty == 0:
+        if balance is None:
+            return None
+        balance.quantity = Decimal('0')
+        _schedule_balance_stream(balance)
+        balance.delete()
+        return None
 
     if balance is None:
         balance = StockBalance.objects.create(

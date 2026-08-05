@@ -48,6 +48,7 @@ def lots_for_product(product_id: int, location_ids: list[int]) -> list[LotSpec]:
                 use_by=lot.use_by,
                 production_date=lot.production_date,
                 atp=atp,
+                trace_number=lot.trace_number,
             )
         )
     return result
