@@ -1,6 +1,7 @@
 from django.urls import path
 
 from planning import views
+from planning import views_chain_net
 
 urlpatterns = [
     # Planning endpoints
@@ -12,7 +13,13 @@ urlpatterns = [
     path('plans/<int:plan_id>/close/', views.plan_close_api, name='planning-plan-close'),
     path('plans/<int:plan_id>/reopen/', views.plan_reopen_api, name='planning-plan-reopen'),
     path('plans/<int:plan_id>/commit/', views.plan_commit_api, name='planning-plan-commit'),
+    path('plans/<int:plan_id>/progress/', views.plan_progress_api, name='planning-plan-progress'),
     path('plans/<int:plan_id>/events/', views.plan_events_api, name='planning-plan-events'),
+    path(
+        'plans/<int:plan_id>/chain-net/',
+        views_chain_net.plan_chain_net_api,
+        name='planning-plan-chain-net',
+    ),
     
     
     # Plan line endpoints

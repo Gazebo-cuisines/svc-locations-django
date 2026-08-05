@@ -38,6 +38,15 @@ Implements all MVP routes from [PLANNING_API.md](../chunk-03-api/PLANNING_API.md
 - Returns published, non-closed plans for that date where the department appears on open requirements, each with latest complete run + scoped picking `lines` (with ids).
 - Empty `items` if nothing published for that dept/day.
 
+## Plan progress (planned vs MADE)
+
+`GET /planning/plans/<plan_id>/progress/?location=`
+
+- Latest **complete** run required (else 409-style planning error).
+- `location` (optional): department name or id — filter `from_location`.
+- Each line: `planned` = sum open `net_required` for product + from dept; `done` = sum `PRODUCTION_OUTPUT` qty on production register where `counterparty_location` = from dept and `base_date` = plan date; `pct`, `status` (`open` / `partial` / `complete`), `last_made_at`, `requirement_ids`.
+- `by_department[]`: line/complete/partial/open counts.
+
 ## Apply
 
 ```bash
