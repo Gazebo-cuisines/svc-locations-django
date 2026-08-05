@@ -1060,6 +1060,11 @@ def balance_list_api(request):
     product_id = request.GET.get('product_id')
     trace_number = request.GET.get('trace_number')
     use_by = request.GET.get('use_by')
+    include_zero = str(request.GET.get('include_zero', '')).lower() in (
+        '1', 'true', 'yes',
+    )
+    if not include_zero:
+        qs = qs.filter(quantity__gt=0)
     if lot_id:
         qs = qs.filter(lot_id=lot_id)
     if location_id:
