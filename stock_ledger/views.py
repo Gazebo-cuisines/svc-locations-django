@@ -10,6 +10,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
+from locations.models import Location, LocationRole
 from locations.utils.api_response import api_error, api_success
 from product.models import Product, PurchaseShapeFormat, Unit
 from product.query import active_products
@@ -1084,6 +1085,78 @@ def balance_list_api(request):
 
     data = [serialize_balance_row(b) for b in qs[:500]]
     return api_success('Balances fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+def warehouse_remaining_api(request):
+    """
+    Remaining stock for production warehouse (storage locations), unit-wise.
+    Optional ?location_id= to filter one unit (e.g. Unit 2 / Unit 11).
+    Aggregates lots → remaining_qty per product per location.
+    """
+    qs = (
+        StockBalance.objects
+        .filter(
+            quantity__gt=0,
+            lot__product__is_active=True,
+            location__roles__role=LocationRole.STORAGE,
+        )
+        .distinct()
+    )
+    location_id = request.GET.get('location_id')
+    if location_id not in (None, ''):
+        try:
+            loc_id = int(location_id)
+        except (TypeError, ValueError):
+            return api_error('location_id must be an integer.')
+        if not Location.objects.filter(
+            pk=loc_id, roles__role=LocationRole.STORAGE,
+        ).exists():
+            return api_error(
+                f'location_id={loc_id} is not a storage warehouse.',
+                status_code=404,
+            )
+        qs = qs.filter(location_id=loc_id)
+
+    rows = (
+        qs.values(
+            'location_id',
+            'location__name',
+            'lot__product_id',
+            'lot__product__name',
+            'lot__product__unit_id',
+            'lot__product__unit__name',
+        )
+        .annotate(
+            remaining_qty=models.Sum('quantity'),
+            lot_count=models.Count('lot_id', distinct=True),
+        )
+        .order_by('location__name', 'lot__product__name')
+    )
+
+    by_location: dict[int, dict] = {}
+    for row in rows:
+        loc_id = row['location_id']
+        bucket = by_location.get(loc_id)
+        if bucket is None:
+            bucket = {
+                'location_id': loc_id,
+                'location_name': row['location__name'],
+                'products': [],
+            }
+            by_location[loc_id] = bucket
+        bucket['products'].append({
+            'product_id': row['lot__product_id'],
+            'product_name': row['lot__product__name'],
+            'unit_id': row['lot__product__unit_id'],
+            'unit_name': row['lot__product__unit__name'],
+            'remaining_qty': _dec(row['remaining_qty']),
+            'lot_count': row['lot_count'],
+        })
+
+    data = list(by_location.values())
+    return api_success('Warehouse remaining stock fetched.', data)
 
 
 @csrf_exempt
