@@ -25,18 +25,13 @@ def _stage_location_ids(
     *,
     source_id: int | None,
     destination_id: int | None,
-    is_top_fg: bool,
 ) -> list[int]:
-    """FG: dest ∪ source. Children/WIP/raw: source only."""
-    if is_top_fg:
-        ids: list[int] = []
-        for loc_id in (destination_id, source_id):
-            if loc_id is not None and loc_id not in ids:
-                ids.append(loc_id)
-        return ids
-    if source_id is None:
-        return []
-    return [source_id]
+    """Stage ATP: destination ∪ source (finished WIP sits at dest after make)."""
+    ids: list[int] = []
+    for loc_id in (destination_id, source_id):
+        if loc_id is not None and loc_id not in ids:
+            ids.append(loc_id)
+    return ids
 
 
 def _location_names(location_ids: list[int]) -> dict[int, str]:
@@ -201,7 +196,6 @@ def net_node(
     location_ids = _stage_location_ids(
         source_id=product.source_location_id,
         destination_id=product.destination_location_id,
-        is_top_fg=is_top_fg,
     )
     stock, stock_lots, stock_by_location = _stock_lots_payload(
         product.id,
@@ -356,7 +350,6 @@ def net_fg_line(line: PlanLine, demand_inputs: dict | None = None) -> dict:
     location_ids = _stage_location_ids(
         source_id=product.source_location_id,
         destination_id=product.destination_location_id,
-        is_top_fg=True,
     )
     dispatch_stock, stock_lots, stock_by_location = _stock_lots_payload(
         product.id,
@@ -504,6 +497,8 @@ def build_tab_views(items: list[dict]) -> tuple[list[dict], list[dict]]:
                     'min_batch': node.get('min_batch'),
                     'to_make': node['to_make'],
                     'explanation': node.get('explanation'),
+                    'stock_lots': list(node.get('stock_lots') or []),
+                    'stock_by_location': list(node.get('stock_by_location') or []),
                 })
                 continue
             if demand <= 0 and to_make <= 0:

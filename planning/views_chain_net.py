@@ -80,8 +80,10 @@ def plan_chain_net_api(request, plan_id: int):
     #### Response body
 
     Success payload includes `plan_id`, `plan_date`, `items[]` (full tree with
-    `demand_breakdown` on FG roots), `product_lines[]` (recipe/process tab),
-    and `ingredients[]` (materials tab: quantity/stock/balance/cost/supplier).
+    `demand_breakdown` on FG roots), `product_lines[]` (recipe/process tab;
+    includes `unit_name`, `stock_lots`, `stock_by_location`), and
+    `ingredients[]` (materials tab: quantity/stock/balance/cost/supplier/
+    `stock_lots`).
 
     #### Status codes
 

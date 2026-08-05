@@ -177,6 +177,31 @@ class ChainNetPlanTests(TestCase):
         self.assertEqual(raw['product_id'], self.raw.id)
         self.assertEqual(Decimal(raw['demand']), Decimal('100'))
 
+    def test_process_stock_at_destination(self):
+        """Finished process WIP sits at destination, not source."""
+        lot = StockLot.objects.create(
+            product=self.spice_sku,
+            trace_number='SPICE-DEST',
+            origin=StockLotOrigin.PRODUCTION,
+            production_date=date(2026, 8, 4),
+        )
+        stock_services.receipt(
+            idempotency_key=f'chain-net-spice-{uuid4()}',
+            lot=lot,
+            location_id=self.sleeving.id,
+            quantity=Decimal('15'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+
+        result = chain_net_plan(self.plan.id)
+        spice = result['items'][0]['children'][0]
+        self.assertEqual(Decimal(spice['stock']), Decimal('15'))
+        self.assertEqual(Decimal(spice['demand']), Decimal('40'))
+        self.assertEqual(Decimal(spice['shortfall']), Decimal('25'))
+        self.assertEqual(Decimal(spice['to_make']), Decimal('25'))
+        self.assertEqual(spice['stock_lots'][0]['location_id'], self.sleeving.id)
+
     def test_chain_net_api(self):
         resp = self.client.post(
             f'/planning/plans/{self.plan.id}/chain-net/',
@@ -188,3 +213,6 @@ class ChainNetPlanTests(TestCase):
         self.assertEqual(payload['plan_id'], self.plan.id)
         self.assertEqual(len(payload['items']), 1)
         self.assertEqual(payload['items'][0]['to_make'], '40.000000')
+        self.assertTrue(payload['product_lines'])
+        self.assertIn('stock_lots', payload['product_lines'][0])
+        self.assertIn('unit_name', payload['product_lines'][0])
