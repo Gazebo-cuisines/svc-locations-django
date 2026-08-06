@@ -549,7 +549,13 @@ def _decode_bearer_claims(request) -> dict:
 
 def _common_write_kwargs(request, body: dict) -> dict:
     claims = _decode_bearer_claims(request)
-    lan_username = body.get('lan_username') or claims.get('sub')
+    # Person-facing label (match product audit). Never fall back to Cognito sub.
+    lan_username = body.get('lan_username') or (
+        claims.get('name')
+        or claims.get('email')
+        or claims.get('cognito:username')
+        or claims.get('username')
+    )
     source_workstation = (
         body.get('source_workstation') or request.META.get('HTTP_USER_AGENT')
     )
@@ -568,7 +574,6 @@ def _common_write_kwargs(request, body: dict) -> dict:
         'override_reason': body.get('override_reason'),
         'authorised_by_user_id': body.get('authorised_by_user_id'),
         'actor_user_id': body.get('actor_user_id'),
-        # Cognito-first: store stable subject in lan_username when explicit value is absent.
         'lan_username': lan_username,
         'source_workstation': source_workstation,
         'source_workstation_ip': source_workstation_ip,
