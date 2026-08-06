@@ -1,0 +1,15 @@
+URL after goto: http://localhost:5173/production/warehouse
+Login form detected
+input 0: type=text name=email ph=null id=email
+input 1: type=password name=password ph=null id=password
+CONSOLE_ERR: Failed to load resource: the server responded with a status of 404 (Not Found)
+URL warehouse: http://localhost:5173/production/warehouse
+BODY_SNIP: Menu | Gazebo Fine Foods Limited | Warehouse |  | Select a warehouse site to continue. |  | Unit 2 — Raw Material Warehouse | Raw material warehouse | Unit 11 — Package Material Warehouse | Package material warehouse | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+CLICKABLES: ["Menu","Gazebo Fine Foods Limited","Unit 2 — Raw Material WarehouseRaw material warehouse","Unit 11 — Package Material WarehousePackage material warehouse"]
+GO_BODY: Menu | Gazebo Fine Foods Limited | Warehouse |  | Select a warehouse site to continue. |  | Unit 2 — Raw Material Warehouse | Raw material warehouse | Unit 11 — Package Material Warehouse | Package material warehouse | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+NO_SCAN_INPUT
+all_input 0 type=search ph=Search name=null
+select count=0
+dept mentions: 0
+CONFIRM_BTNS: []
+FEATURE_FLAGS: {"multiScanCart":false,"toDepartment":false,"manualFifo":false,"locationBalanceHint":true,"unitMovesHint":false,"partialQty":false}

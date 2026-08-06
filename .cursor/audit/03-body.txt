@@ -1,0 +1,12 @@
+Menu
+Gazebo Fine Foods Limited
+Warehouse
+
+Select a warehouse site to continue.
+
+Unit 2 — Raw Material Warehouse
+Raw material warehouse
+Unit 11 — Package Material Warehouse
+Package material warehouse
+Powered by Gazebo Tech
+Need help? Use the help link in the bottom right.
