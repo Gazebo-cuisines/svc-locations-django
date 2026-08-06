@@ -125,6 +125,12 @@ class PurchaseShapeFormat(models.Model):
         return f'{self.id}:{self.name}'
 
 
+class ProductLabelMode(models.TextChoices):
+    PRODUCT = 'product', 'Reusable product label, FIFO picked on scan'
+    BATCH = 'batch', 'One label per batch'
+    PER_UNIT = 'per_unit', 'One label per physical unit'
+
+
 class Product(models.Model):
     """Core product identity + classification."""
 
@@ -136,6 +142,11 @@ class Product(models.Model):
     gff_code = models.CharField(max_length=32, null=True, blank=True)
     secondary_gff_recipe = models.CharField(max_length=32, null=True, blank=True)
     external_barcode = models.CharField(max_length=16, null=True, blank=True)
+    label_mode = models.CharField(
+        max_length=16,
+        choices=ProductLabelMode.choices,
+        default=ProductLabelMode.PRODUCT,
+    )
     is_active = models.BooleanField(default=True)
     is_downtime = models.BooleanField(default=False)
     purchasing_version = models.IntegerField(null=True, blank=True)

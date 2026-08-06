@@ -27,8 +27,9 @@ from stock_ledger.models import (
     StockUnitConversion,
 )
 from stock_ledger.stream import iter_sse, subscribe
-from stock_ledger.util import reservations, services, stock_units
+from stock_ledger.util import reservations, scan, services, stock_units
 from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     receipt_meta_by_lot_ids,
@@ -1203,6 +1204,12 @@ def balance_list_api(request):
         except ValueError as exc:
             return api_error(str(exc))
 
+    order = str(request.GET.get('order', '')).lower()
+    if order == 'fifo':
+        qs = qs.order_by(*FIFO_ORDER)
+    elif order not in ('', 'default'):
+        return api_error('Invalid order. Use fifo or default.')
+
     rows = list(qs[:500])
     receipt_meta = receipt_meta_by_lot_ids({b.lot_id for b in rows})
     data = [
@@ -1411,6 +1418,102 @@ def reservation_consume_api(request, pk: int):
     except StockValidationError as exc:
         return api_error(str(exc))
     return api_success('Reservation consumed.', reservation_dict(row))
+
+
+def _fifo_batch_rows(*, product_id: int, location_id: int | None) -> list[dict]:
+    rows = list(fifo_balances(product_id=product_id, location_id=location_id)[:200])
+    receipt_meta = receipt_meta_by_lot_ids({b.lot_id for b in rows})
+    today = timezone.localdate()
+    batches = []
+    for rank, balance in enumerate(rows):
+        lot = balance.lot
+        row = serialize_balance_row(
+            balance, receipt_meta=receipt_meta.get(balance.lot_id),
+        )
+        row['supplier_lot_code'] = lot.supplier_lot_code
+        row['origin'] = lot.origin
+        row['days_left'] = (lot.use_by - today).days if lot.use_by else None
+        row['fifo_rank'] = rank
+        batches.append(row)
+    return batches
+
+
+@csrf_exempt
+@require_GET
+def scan_resolve_api(request):
+    """Scan or type a product code, get its stock detail with FIFO batches."""
+    code = request.GET.get('code')
+    location_id = request.GET.get('location_id')
+    try:
+        loc_id = int(location_id) if location_id not in (None, '') else None
+    except (TypeError, ValueError):
+        return api_error('location_id must be an integer.')
+
+    try:
+        match = scan.resolve_scan(code)
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+
+    product = match['product']
+    batches = _fifo_batch_rows(product_id=product.id, location_id=loc_id)
+    total = sum(Decimal(row['quantity']) for row in batches) if batches else Decimal('0')
+
+    return api_success('Scan resolved.', {
+        'scanned_code': (code or '').strip(),
+        'match_type': match['match_type'],
+        'selected_lot_id': match['lot'].id if match['lot'] is not None else None,
+        'location_id': loc_id,
+        'product': {
+            'product_id': product.id,
+            'product_code': stock_units.product_code(product),
+            'name': product.name,
+            'recipe_code': product.recipe_code,
+            'unit_id': product.unit_id,
+            'unit_name': product.unit.name if product.unit_id else None,
+            'product_class_id': product.product_class_id,
+            'range_id': product.range_id,
+            'label_mode': product.label_mode,
+            'is_active': product.is_active,
+        },
+        'total_quantity': str(total),
+        'batch_count': len(batches),
+        'batches': batches,
+    })
+
+
+@csrf_exempt
+@require_GET
+def product_label_api(request, product_id: int):
+    """Reusable product label: product id barcode + name / use by / trace text."""
+    product = (
+        Product.objects
+        .select_related('unit')
+        .filter(pk=product_id)
+        .first()
+    )
+    if product is None:
+        return api_error(f'product_id={product_id} not found.', status_code=404)
+
+    lot = None
+    lot_id = request.GET.get('lot_id')
+    if lot_id not in (None, ''):
+        try:
+            lot = StockLot.objects.filter(
+                pk=int(lot_id), product_id=product_id,
+            ).first()
+        except (TypeError, ValueError):
+            return api_error('lot_id must be an integer.')
+        if lot is None:
+            return api_error(
+                f'lot_id={lot_id} not found for this product.',
+                status_code=404,
+            )
+
+    return api_success(
+        'Product label ready.',
+        stock_units.build_product_label(product=product, lot=lot),
+    )
 
 
 @csrf_exempt

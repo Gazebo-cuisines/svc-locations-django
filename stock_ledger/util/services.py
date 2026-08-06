@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 from decimal import Decimal
 from typing import Iterable
@@ -325,7 +326,11 @@ def _insert_entry(
                 source_workstation=source_workstation,
                 source_workstation_ip=source_workstation_ip,
                 remarks=remarks,
-                entry_hash='pending',
+                # Overwritten by the stock_entry_bi trigger. Derived from the
+                # idempotency key so the unique column never collides.
+                entry_hash=hashlib.sha256(
+                    idempotency_key.encode('utf-8'),
+                ).hexdigest(),
             )
             if project_balance:
                 _project_balance(entry=entry, override_reason=override_reason)
