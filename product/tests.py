@@ -4,6 +4,7 @@ import json
 from django.test import TestCase
 
 from locations.models import Location
+from planning.models import Resource
 from product.models import Category, ProductClass, Range, Unit
 
 
@@ -11,12 +12,12 @@ class ProductApiTests(TestCase):
     def setUp(self):
         self._seed_lookups()
         self._seed_locations()
-        self._seed_product(101, 'Product 101')
         self.auth_header = self._build_auth_header(
             sub='abc-user-sub',
             name='Utsav Gohel',
             email='utsav@example.com',
         )
+        self.product_id = self._create_product('Product 101')
 
     def _seed_lookups(self):
         ProductClass.objects.create(id=1, name='Finished')
@@ -28,22 +29,28 @@ class ProductApiTests(TestCase):
         Location.objects.create(id=1, name='Source', visible=True)
         Location.objects.create(id=2, name='Destination', visible=True)
 
-    def _seed_product(self, product_id: int, name: str):
+    def _seed_product(self, name: str, **overrides):
+        payload = {
+            'name': name,
+            'product_class_id': 1,
+            'category_id': 1,
+            'range_id': 1,
+            'unit_id': 1,
+            'source_container_id': 1,
+            'destination_container_id': 2,
+        }
+        payload.update(overrides)
         return self.client.post(
             '/product/',
-            data=json.dumps({
-                'id': product_id,
-                'name': name,
-                'product_class_id': 1,
-                'category_id': 1,
-                'range_id': 1,
-                'unit_id': 1,
-                'source_container_id': 1,
-                'destination_container_id': 2,
-            }),
+            data=json.dumps(payload),
             content_type='application/json',
             HTTP_AUTHORIZATION=self.auth_header,
         )
+
+    def _create_product(self, name: str, **overrides) -> int:
+        resp = self._seed_product(name, **overrides)
+        assert resp.status_code == 201, resp.content
+        return resp.json()['data']['ref']
 
     def _build_auth_header(self, *, sub: str, name: str, email: str) -> str:
         header = {'alg': 'none', 'typ': 'JWT'}
@@ -57,21 +64,7 @@ class ProductApiTests(TestCase):
 
     def test_product_list_filters_by_containers(self):
         Location.objects.create(id=3, name='Other Dest', visible=True)
-        self.client.post(
-            '/product/',
-            data=json.dumps({
-                'id': 201,
-                'name': 'Other Flow',
-                'product_class_id': 1,
-                'category_id': 1,
-                'range_id': 1,
-                'unit_id': 1,
-                'source_container_id': 1,
-                'destination_container_id': 3,
-            }),
-            content_type='application/json',
-            HTTP_AUTHORIZATION=self.auth_header,
-        )
+        other_id = self._create_product('Other Flow', destination_container_id=3)
 
         all_resp = self.client.get('/product/')
         self.assertEqual(all_resp.status_code, 200)
@@ -84,18 +77,19 @@ class ProductApiTests(TestCase):
         )
         self.assertEqual(pair_resp.status_code, 200)
         pair_ids = {r['id'] for r in pair_resp.json()['data']}
-        self.assertIn(101, pair_ids)
-        self.assertNotIn(201, pair_ids)
+        self.assertIn(self.product_id, pair_ids)
+        self.assertNotIn(other_id, pair_ids)
 
         bad = self.client.get('/product/?source_container_id=abc')
         self.assertEqual(bad.status_code, 400)
 
     def test_product_create_update_delete_and_timeline(self):
-        create_resp = self._seed_product(102, 'Product 102')
+        create_resp = self._seed_product('Product 102')
         self.assertEqual(create_resp.status_code, 201)
+        product_id = create_resp.json()['data']['ref']
 
         update_resp = self.client.patch(
-            '/product/102/',
+            f'/product/{product_id}/',
             data=json.dumps({'name': 'Product 102 Updated'}),
             content_type='application/json',
             HTTP_AUTHORIZATION=self.auth_header,
@@ -103,12 +97,12 @@ class ProductApiTests(TestCase):
         self.assertEqual(update_resp.status_code, 200)
 
         delete_resp = self.client.delete(
-            '/product/102/',
+            f'/product/{product_id}/',
             HTTP_AUTHORIZATION=self.auth_header,
         )
         self.assertEqual(delete_resp.status_code, 200)
 
-        timeline_resp = self.client.get('/product/102/timeline/')
+        timeline_resp = self.client.get(f'/product/{product_id}/timeline/')
         self.assertEqual(timeline_resp.status_code, 200)
         events = timeline_resp.json()['data']
         self.assertEqual(len(events), 3)
@@ -118,13 +112,17 @@ class ProductApiTests(TestCase):
         self.assertEqual(events[1]['actor_name'], 'Utsav Gohel')
 
     def test_ops_satellite_endpoints_create_rows(self):
+        tray_id = self._create_product('Tray 8x4')
+        Resource.objects.create(id=3, code='LINE3', name='Line 3', location_id=1)
+
+        base = f'/product/{self.product_id}'
         cases = [
-            ('/product/101/costing/', {'unit_cost': '1.23', 'unit_price': '2.50'}),
-            ('/product/101/shelf-life/', {'shelf_life_days': 5, 'force_use_by': True}),
-            ('/product/101/stock-policy/', {'reorder_level': '10.0'}),
-            ('/product/101/packaging/', {'pack_weight': '0.25', 'tray_id': 101}),
-            ('/product/101/production/', {'avg_minutes': '25.0', 'default_resource_id': 3}),
-            ('/product/101/yield/', {'yield_factor': '0.95', 'yield_factor_auto': '0.94'}),
+            (f'{base}/costing/', {'unit_cost': '1.23', 'unit_price': '2.50'}),
+            (f'{base}/shelf-life/', {'shelf_life_days': 5, 'force_use_by': True}),
+            (f'{base}/stock-policy/', {'reorder_level': '10.0'}),
+            (f'{base}/packaging/', {'pack_weight': '0.25', 'tray_id': tray_id}),
+            (f'{base}/production/', {'avg_minutes': '25.0', 'default_resource_id': 3}),
+            (f'{base}/yield/', {'yield_factor': '0.95', 'yield_factor_auto': '0.94'}),
         ]
         for path, payload in cases:
             resp = self.client.put(
@@ -133,14 +131,39 @@ class ProductApiTests(TestCase):
                 content_type='application/json',
                 HTTP_AUTHORIZATION=self.auth_header,
             )
-            self.assertIn(resp.status_code, (200, 201))
+            self.assertIn(resp.status_code, (200, 201), msg=path)
 
             get_resp = self.client.get(path)
-            self.assertEqual(get_resp.status_code, 200)
+            self.assertEqual(get_resp.status_code, 200, msg=path)
+
+    def test_label_mode_round_trips_and_rejects_unknown_value(self):
+        detail = self.client.get(f'/product/{self.product_id}/').json()['data']
+        self.assertEqual(detail['label_mode'], 'product')
+
+        resp = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'label_mode': 'per_unit'}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['data']['label_mode'], 'per_unit')
+
+        bad = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'label_mode': 'per-unit'}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(bad.status_code, 400)
+
+        batch_id = self._create_product('Batch Labelled', label_mode='batch')
+        batch_detail = self.client.get(f'/product/{batch_id}/').json()['data']
+        self.assertEqual(batch_detail['label_mode'], 'batch')
 
     def test_invalid_payload_returns_400(self):
         resp = self.client.put(
-            '/product/101/costing/',
+            f'/product/{self.product_id}/costing/',
             data=json.dumps({'unit_cost': 'bad-decimal'}),
             content_type='application/json',
             HTTP_AUTHORIZATION=self.auth_header,

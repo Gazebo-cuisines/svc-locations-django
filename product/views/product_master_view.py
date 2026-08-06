@@ -13,6 +13,7 @@ from product.models import (
     Category,
     Product,
     ProductClass,
+    ProductLabelMode,
     PurchaseShapeFormat,
     Range,
     SubRange,
@@ -74,6 +75,7 @@ def product_detail_dict(product: Product) -> dict:
         'gff_code': product.gff_code,
         'secondary_gff_recipe': product.secondary_gff_recipe,
         'external_barcode': product.external_barcode,
+        'label_mode': product.label_mode,
         'is_downtime': product.is_downtime,
         'ingredient_count': product.ingredient_count,
         'remarks': product.remarks,
@@ -94,6 +96,14 @@ def _parse_json_body(request):
         return json.loads(request.body.decode('utf-8') or '{}')
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _label_mode_error(value) -> str | None:
+    if value in ProductLabelMode.values:
+        return None
+    return (
+        f'Invalid label_mode. Use one of: {", ".join(ProductLabelMode.values)}.'
+    )
 
 
 def _purchase_details_from_body(body: dict) -> dict | None:
@@ -242,6 +252,11 @@ def product_update_api(request, product: Product):
             return api_error(f'{field}={value} not found.', status_code=400)
         setattr(product, field, value)
 
+    if 'label_mode' in body:
+        error = _label_mode_error(body['label_mode'])
+        if error is not None:
+            return api_error(error, status_code=400)
+
     for field in (
         'name',
         'alternate_name',
@@ -250,6 +265,7 @@ def product_update_api(request, product: Product):
         'gff_code',
         'secondary_gff_recipe',
         'external_barcode',
+        'label_mode',
         'is_active',
         'is_downtime',
         'ingredient_count',
@@ -328,6 +344,11 @@ def product_create_api(request):
         if not Location.objects.filter(pk=body[field]).exists():
             return api_error(f'{field}={body[field]} not found.', status_code=400)
 
+    label_mode = body.get('label_mode', ProductLabelMode.PRODUCT)
+    label_mode_error = _label_mode_error(label_mode)
+    if label_mode_error is not None:
+        return api_error(label_mode_error, status_code=400)
+
     purchase = _purchase_details_from_body(body) or {}
     try:
         product = Product(
@@ -338,6 +359,7 @@ def product_create_api(request):
             gff_code=body.get('gff_code'),
             secondary_gff_recipe=body.get('secondary_gff_recipe'),
             external_barcode=body.get('external_barcode'),
+            label_mode=label_mode,
             is_active=body.get('is_active', True),
             is_downtime=body.get('is_downtime', False),
             ingredient_count=body.get('ingredient_count'),

@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from product.models import ProductLabelMode
 from stock_ledger.models import (
     StockEntry,
     StockEntryType,
@@ -112,6 +113,68 @@ def build_gs1_payload(unit: StockUnit) -> dict:
     }
 
 
+def product_code(product) -> str:
+    """The only identifier a product label carries."""
+    return f'P{product.id}'
+
+
+def build_product_label(*, product, lot=None) -> dict:
+    """
+    Reusable product label. Barcode holds our product id and nothing else, so a
+    damaged label can still be typed in by hand. Batch text comes from the lot.
+    """
+    code = product_code(product)
+    return {
+        'bcid': 'datamatrix',
+        'payload_string': code,
+        'product_code': code,
+        'human_readable': {
+            'product_id': product.id,
+            'product_code': code,
+            'product_name': product.name,
+            'recipe_code': product.recipe_code,
+            'unit_name': product.unit.name if product.unit_id else None,
+            'label_mode': product.label_mode,
+            'lot_id': lot.id if lot is not None else None,
+            'trace_number': lot.trace_number if lot is not None else None,
+            'use_by': (
+                lot.use_by.isoformat() if lot is not None and lot.use_by else None
+            ),
+            'production_date': (
+                lot.production_date.isoformat()
+                if lot is not None and lot.production_date
+                else None
+            ),
+        },
+    }
+
+
+def _check_label_mode(
+    *,
+    product,
+    unit_count: int,
+    quantity_per_unit: Decimal,
+    entry_qty: Decimal,
+) -> None:
+    """Staff cannot sticker 50 frozen bags or 350 trays, so the product decides."""
+    if product.label_mode == ProductLabelMode.PRODUCT:
+        raise StockValidationError(
+            f'{product.name} uses a reusable product label. Print it from '
+            f'/stock/products/{product.id}/label/ instead of batch labels.'
+        )
+    if product.label_mode == ProductLabelMode.BATCH:
+        if unit_count != 1:
+            raise StockValidationError(
+                f'{product.name} takes one label per batch, so unit_count must '
+                f'be 1 (got {unit_count}).'
+            )
+        if quantity_per_unit != entry_qty:
+            raise StockValidationError(
+                f'{product.name} takes one label for the whole batch, so '
+                f'quantity_per_unit must be {entry_qty} (got {quantity_per_unit}).'
+            )
+
+
 def create_units_for_entry(
     *,
     source_entry: StockEntry,
@@ -134,6 +197,12 @@ def create_units_for_entry(
 
     entry_qty = abs(source_entry.quantity)
     new_total = quantity_per_unit * unit_count
+    _check_label_mode(
+        product=source_entry.lot.product,
+        unit_count=unit_count,
+        quantity_per_unit=quantity_per_unit,
+        entry_qty=entry_qty,
+    )
 
     with transaction.atomic():
         already = (

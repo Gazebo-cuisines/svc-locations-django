@@ -1,6 +1,6 @@
 """StockUnit layer: print / scan / consume / void / reprint."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -8,7 +8,15 @@ from django.test import Client, TestCase
 from django.utils import timezone
 
 from locations.models import Location, LocationRole, LocationRoleAssignment
-from product.models import Category, Product, ProductClass, ProductSupplier, Range, Unit
+from product.models import (
+    Category,
+    Product,
+    ProductClass,
+    ProductLabelMode,
+    ProductSupplier,
+    Range,
+    Unit,
+)
 from stock_ledger.models import (
     StockBalance,
     StockEntry,
@@ -24,6 +32,7 @@ from stock_ledger.models import (
 )
 from stock_ledger.util import services, stock_units
 from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util.scan import parse_gs1
 
 
 class StockUnitTests(TestCase):
@@ -42,6 +51,7 @@ class StockUnitTests(TestCase):
             range_id=91,
             unit=self.unit,
             external_barcode='12345678901234',
+            label_mode=ProductLabelMode.PER_UNIT,
             source_container=self.wh,
             destination_container=self.kitchen,
         )
@@ -373,3 +383,259 @@ class StockUnitTests(TestCase):
         detail = lookup.json().get('data') or lookup.json()
         self.assertEqual(detail['location']['id'], self.kitchen.id)
         self.assertEqual(detail['quantity_remaining'], '20.000000')
+
+
+class ProductBarcodeTests(TestCase):
+    """One reusable product label, FIFO batch picking, label_mode guards."""
+
+    def setUp(self):
+        ProductClass.objects.create(id=93, name='BC Class')
+        Category.objects.create(id=93, name='BC Cat')
+        Range.objects.create(id=93, name='BC Range')
+        self.unit = Unit.objects.create(id=93, name='Kg')
+        self.wh = Location.objects.create(id=93, name='BC Unit 2', visible=True)
+        self.kitchen = Location.objects.create(id=94, name='BC High Risk', visible=True)
+        self.supplier = Location.objects.create(
+            id=95, name='BC Chicken Supplier', visible=True,
+        )
+        LocationRoleAssignment.objects.create(
+            location=self.supplier, role=LocationRole.SUPPLIER,
+        )
+        StockPeriod.objects.get_or_create(
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 12, 31),
+            defaults={'status': StockPeriodStatus.OPEN},
+        )
+        self.today = timezone.localdate()
+        self.product = self._product(ProductLabelMode.PRODUCT)
+
+    def _product(self, label_mode):
+        return Product.objects.create(
+            name=f'BC Chicken {uuid4().hex[:8]}',
+            recipe_code=f'BC{uuid4().hex[:6]}',
+            product_class_id=93,
+            category_id=93,
+            range_id=93,
+            unit=self.unit,
+            label_mode=label_mode,
+            source_container=self.wh,
+            destination_container=self.kitchen,
+        )
+
+    def _lot(self, *, product=None, use_by=None):
+        return StockLot.objects.create(
+            product=product or self.product,
+            trace_number=f'BC{uuid4().hex[:8]}',
+            origin=StockLotOrigin.PURCHASE,
+            use_by=use_by,
+        )
+
+    def _receipt(self, lot, quantity, *, location=None, po_number='PO-BC-1'):
+        return services.receipt(
+            idempotency_key=f'bc-receipt-{uuid4()}',
+            lot=lot,
+            location_id=(location or self.wh).id,
+            quantity=Decimal(quantity),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+            po_number=po_number,
+        )
+
+    def test_label_carries_product_id_only_and_batch_text(self):
+        plain = self.client.get(f'/stock/products/{self.product.id}/label/')
+        self.assertEqual(plain.status_code, 200, plain.content)
+        data = plain.json()['data']
+        self.assertEqual(data['bcid'], 'datamatrix')
+        self.assertEqual(data['payload_string'], f'P{self.product.id}')
+        self.assertIsNone(data['human_readable']['use_by'])
+        self.assertIsNone(data['human_readable']['trace_number'])
+
+        lot = self._lot(use_by=date(2026, 8, 20))
+        with_lot = self.client.get(
+            f'/stock/products/{self.product.id}/label/?lot_id={lot.id}',
+        )
+        self.assertEqual(with_lot.status_code, 200, with_lot.content)
+        labelled = with_lot.json()['data']
+        # Barcode is constant per product; only the printed text is batch specific.
+        self.assertEqual(labelled['payload_string'], f'P{self.product.id}')
+        text = labelled['human_readable']
+        self.assertEqual(text['product_id'], self.product.id)
+        self.assertEqual(text['product_name'], self.product.name)
+        self.assertEqual(text['use_by'], '2026-08-20')
+        self.assertEqual(text['trace_number'], lot.trace_number)
+        self.assertEqual(text['unit_name'], 'Kg')
+
+    def test_label_rejects_lot_from_another_product(self):
+        other = self._product(ProductLabelMode.PRODUCT)
+        foreign_lot = self._lot(product=other, use_by=date(2026, 8, 20))
+        resp = self.client.get(
+            f'/stock/products/{self.product.id}/label/?lot_id={foreign_lot.id}',
+        )
+        self.assertEqual(resp.status_code, 404, resp.content)
+
+    def test_parse_gs1_reads_serial_from_legacy_label(self):
+        ais = parse_gs1('(01)05012345678901(10)26218(17)260820(21)ABC123')
+        self.assertEqual(ais['01'], '05012345678901')
+        self.assertEqual(ais['10'], '26218')
+        self.assertEqual(ais['17'], '260820')
+        self.assertEqual(ais['21'], 'ABC123')
+        self.assertEqual(parse_gs1(f'P{self.product.id}'), {})
+
+    def test_scan_accepts_product_code_bare_id_and_rejects_unknown(self):
+        self._receipt(self._lot(use_by=date(2026, 9, 1)), '100')
+
+        for code in (f'P{self.product.id}', str(self.product.id)):
+            resp = self.client.get(f'/stock/scan/?code={code}')
+            self.assertEqual(resp.status_code, 200, resp.content)
+            data = resp.json()['data']
+            self.assertEqual(data['match_type'], 'product')
+            self.assertEqual(data['product']['product_id'], self.product.id)
+            self.assertIsNone(data['selected_lot_id'])
+
+        self.assertEqual(self.client.get('/stock/scan/?code=P99999999').status_code, 404)
+        self.assertEqual(self.client.get('/stock/scan/?code=NOPE').status_code, 404)
+        self.assertEqual(self.client.get('/stock/scan/?code=').status_code, 400)
+
+    def test_scan_returns_fifo_batches_with_supplier_and_days_left(self):
+        soon = self._lot(use_by=self.today + timedelta(days=3))
+        later = self._lot(use_by=self.today + timedelta(days=30))
+        undated = self._lot(use_by=None)
+        self._receipt(later, '20')
+        self._receipt(undated, '30')
+        self._receipt(soon, '10')
+
+        resp = self.client.get(
+            f'/stock/scan/?code=P{self.product.id}&location_id={self.wh.id}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['batch_count'], 3)
+        self.assertEqual(data['total_quantity'], '60.000000')
+
+        # Oldest use_by first, undated last, regardless of receipt order.
+        self.assertEqual(
+            [row['lot_id'] for row in data['batches']],
+            [soon.id, later.id, undated.id],
+        )
+        self.assertEqual([row['fifo_rank'] for row in data['batches']], [0, 1, 2])
+
+        first = data['batches'][0]
+        self.assertEqual(first['days_left'], 3)
+        self.assertEqual(first['supplier_id'], self.supplier.id)
+        self.assertEqual(first['supplier_name'], self.supplier.name)
+        self.assertEqual(first['po_number'], 'PO-BC-1')
+        self.assertEqual(first['trace_number'], soon.trace_number)
+        self.assertEqual(first['origin'], StockLotOrigin.PURCHASE)
+        self.assertIsNone(data['batches'][2]['days_left'])
+
+    def test_scan_location_filter_narrows_to_one_department(self):
+        here = self._lot(use_by=self.today + timedelta(days=5))
+        there = self._lot(use_by=self.today + timedelta(days=6))
+        self._receipt(here, '10')
+        self._receipt(there, '10', location=self.kitchen)
+
+        resp = self.client.get(
+            f'/stock/scan/?code=P{self.product.id}&location_id={self.kitchen.id}',
+        )
+        data = resp.json()['data']
+        self.assertEqual([row['lot_id'] for row in data['batches']], [there.id])
+
+        both = self.client.get(f'/stock/scan/?code=P{self.product.id}').json()['data']
+        self.assertEqual(both['batch_count'], 2)
+
+    def test_scan_serial_preselects_its_batch(self):
+        per_unit = self._product(ProductLabelMode.PER_UNIT)
+        lot = self._lot(product=per_unit, use_by=date(2026, 9, 1))
+        entry = self._receipt(lot, '40')
+        bag = stock_units.create_units_for_entry(
+            source_entry=entry,
+            unit_count=2,
+            quantity_per_unit=Decimal('20'),
+            idempotency_key_prefix=f'bc-print-{uuid4()}',
+        )[0]
+
+        resp = self.client.get(f'/stock/scan/?code={bag.unit_serial}')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['match_type'], 'unit_serial')
+        self.assertEqual(data['selected_lot_id'], lot.id)
+        self.assertEqual(data['product']['product_id'], per_unit.id)
+
+    def test_balances_order_fifo(self):
+        soon = self._lot(use_by=self.today + timedelta(days=2))
+        later = self._lot(use_by=self.today + timedelta(days=40))
+        self._receipt(later, '5')
+        self._receipt(soon, '5')
+
+        resp = self.client.get(
+            f'/stock/balances/?product_id={self.product.id}&order=fifo',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(
+            [row['lot_id'] for row in resp.json()['data']],
+            [soon.id, later.id],
+        )
+
+        bad = self.client.get(f'/stock/balances/?product_id={self.product.id}&order=zzz')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_product_mode_refuses_batch_labels(self):
+        entry = self._receipt(self._lot(use_by=date(2026, 9, 1)), '500')
+        with self.assertRaises(StockValidationError) as ctx:
+            stock_units.create_units_for_entry(
+                source_entry=entry,
+                unit_count=50,
+                quantity_per_unit=Decimal('10'),
+                idempotency_key_prefix=f'bc-bad-{uuid4()}',
+            )
+        self.assertIn('reusable product label', str(ctx.exception))
+        self.assertEqual(StockUnit.objects.filter(created_by_entry=entry).count(), 0)
+
+    def test_batch_mode_prints_one_label_for_the_whole_pallet(self):
+        batch_product = self._product(ProductLabelMode.BATCH)
+        lot = self._lot(product=batch_product, use_by=date(2026, 9, 1))
+        entry = self._receipt(lot, '500')
+
+        with self.assertRaises(StockValidationError):
+            stock_units.create_units_for_entry(
+                source_entry=entry,
+                unit_count=2,
+                quantity_per_unit=Decimal('250'),
+                idempotency_key_prefix=f'bc-batch-two-{uuid4()}',
+            )
+        with self.assertRaises(StockValidationError):
+            stock_units.create_units_for_entry(
+                source_entry=entry,
+                unit_count=1,
+                quantity_per_unit=Decimal('10'),
+                idempotency_key_prefix=f'bc-batch-part-{uuid4()}',
+            )
+
+        units = stock_units.create_units_for_entry(
+            source_entry=entry,
+            unit_count=1,
+            quantity_per_unit=Decimal('500'),
+            idempotency_key_prefix=f'bc-batch-ok-{uuid4()}',
+        )
+        self.assertEqual(len(units), 1)
+        self.assertEqual(units[0].quantity_initial, Decimal('500'))
+
+    def test_receipt_api_rejects_bulk_stickers_for_product_mode(self):
+        lot = self._lot(use_by=date(2026, 9, 1))
+        resp = self.client.post(
+            '/stock/receipt/',
+            data={
+                'idempotency_key': f'bc-api-receipt-{uuid4()}',
+                'lot_id': lot.id,
+                'location_id': self.wh.id,
+                'quantity': '500',
+                'unit_id': self.unit.id,
+                'supplier_id': self.supplier.id,
+                'print_unit_count': 50,
+                'print_quantity_per_unit': '10',
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn('reusable product label', resp.json()['message'])

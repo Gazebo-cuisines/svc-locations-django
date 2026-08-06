@@ -36,6 +36,12 @@ urlpatterns = [
     path('disposal/', views.disposal_api, name='stock-disposal'),
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
+    path('scan/', views.scan_resolve_api, name='stock-scan'),
+    path(
+        'products/<int:product_id>/label/',
+        views.product_label_api,
+        name='stock-product-label',
+    ),
     path('stock-units/print/', views.stock_units_print_api, name='stock-units-print'),
     path(
         'stock-units/<str:unit_serial>/consume/',
