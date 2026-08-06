@@ -51,8 +51,8 @@ def _sync_features(location: Location, legacy_row: dict) -> None:
 @transaction.atomic
 def create_location(
     *,
-    location_id: int,
     name: str,
+    location_id: int | None = None,
     external_code: str | None = None,
     visible: bool = True,
     static: bool = False,
@@ -67,7 +67,16 @@ def create_location(
     zone_parent_id: int | None = None,
     subordinate_parent_id: int | None = None,
 ) -> Location:
-    if Location.objects.filter(id=location_id).exists():
+    if location_id is None:
+        # ponytail: IntegerField PK (legacy); next free id. Race rare at our volume.
+        last = (
+            Location.objects.select_for_update()
+            .order_by('-id')
+            .values_list('id', flat=True)
+            .first()
+        )
+        location_id = 1 if last is None else int(last) + 1
+    elif Location.objects.filter(id=location_id).exists():
         raise ValidationError(f'Location id {location_id} already exists.')
 
     location = Location.objects.create(

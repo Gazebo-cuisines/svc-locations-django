@@ -12,7 +12,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.models import Location, LocationRole
 from locations.utils.api_response import api_error, api_success
-from product.models import Product, PurchaseShapeFormat, Unit
+from product.models import Product, ProductSupplier, PurchaseShapeFormat, Unit
 from product.query import active_products
 from recipe.models import RecipeVersion
 from stock_ledger.models import (
@@ -23,12 +23,17 @@ from stock_ledger.models import (
     StockLot,
     StockLotOrigin,
     StockReservation,
+    StockUnit,
     StockUnitConversion,
 )
 from stock_ledger.stream import iter_sse, subscribe
-from stock_ledger.util import reservations, services
+from stock_ledger.util import reservations, services, stock_units
 from stock_ledger.util.conversions import StockValidationError
-from stock_ledger.util.serialize import BALANCE_SELECT_RELATED, serialize_balance_row
+from stock_ledger.util.serialize import (
+    BALANCE_SELECT_RELATED,
+    receipt_meta_by_lot_ids,
+    serialize_balance_row,
+)
 from stock_ledger.util.trace import (
     mass_balance_for_output,
     trace_backward,
@@ -105,6 +110,24 @@ def lot_dict(lot: StockLot) -> dict:
     }
 
 
+def stock_unit_dict(unit: StockUnit) -> dict:
+    return {
+        'id': unit.id,
+        'unit_serial': unit.unit_serial,
+        'lot_id': unit.lot_id,
+        'location_id': unit.location_id,
+        'unit_id': unit.unit_id,
+        'quantity_initial': _dec(unit.quantity_initial),
+        'quantity_remaining': _dec(unit.quantity_remaining),
+        'status': unit.status,
+        'created_by_entry_id': unit.created_by_entry_id,
+        'created_at': unit.created_at.isoformat() if unit.created_at else None,
+        'voided_at': unit.voided_at.isoformat() if unit.voided_at else None,
+        'void_reason': unit.void_reason,
+        'gs1': stock_units.build_gs1_payload(unit),
+    }
+
+
 def unit_conversion_dict(row: StockUnitConversion) -> dict:
     return {
         'id': row.id,
@@ -117,6 +140,7 @@ def unit_conversion_dict(row: StockUnitConversion) -> dict:
 
 
 def entry_dict(entry: StockEntry) -> dict:
+    counterparty = entry.counterparty_location
     return {
         'id': entry.id,
         'idempotency_key': entry.idempotency_key,
@@ -124,6 +148,8 @@ def entry_dict(entry: StockEntry) -> dict:
         'lot_id': entry.lot_id,
         'location_id': entry.location_id,
         'counterparty_location_id': entry.counterparty_location_id,
+        'supplier_id': entry.counterparty_location_id,
+        'supplier_name': counterparty.name if counterparty is not None else None,
         'transfer_group_id': entry.transfer_group_id,
         'quantity': _dec(entry.quantity),
         'unit_id': entry.unit_id,
@@ -478,6 +504,30 @@ def _optional_unit_id(body: dict) -> int | None:
     return int(raw)
 
 
+def _receipt_supplier_location_id(body: dict, lot: StockLot) -> int | None:
+    """Supplier comes from product_supplier (shape-format row) when given."""
+    ps_id = body.get('product_supplier_id')
+    if ps_id not in (None, ''):
+        try:
+            row = ProductSupplier.objects.get(pk=int(ps_id), is_active=True)
+        except (ProductSupplier.DoesNotExist, TypeError, ValueError) as exc:
+            raise StockValidationError(
+                f'product_supplier_id={ps_id} not found or inactive',
+            ) from exc
+        if row.product_id != lot.product_id:
+            raise StockValidationError(
+                f'product_supplier_id={ps_id} is for product_id={row.product_id}, '
+                f'lot is product_id={lot.product_id}',
+            )
+        return row.supplier_id
+
+    for key in ('counterparty_location_id', 'supplier_id'):
+        raw = body.get(key)
+        if raw not in (None, ''):
+            return int(raw)
+    return None
+
+
 def _decode_bearer_claims(request) -> dict:
     auth_header = request.headers.get('Authorization', '')
     if not auth_header.startswith('Bearer '):
@@ -829,9 +879,19 @@ def receipt_api(request):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        audit = _common_write_kwargs(request, body)
+        lot = _resolve_lot(body)
+        supplier_location_id = _receipt_supplier_location_id(body, lot)
+        if (
+            lot.origin == StockLotOrigin.PURCHASE
+            and supplier_location_id is None
+        ):
+            raise StockValidationError(
+                'supplier_id or product_supplier_id is required for purchase goods-in.',
+            )
         entry = services.receipt(
             idempotency_key=body['idempotency_key'],
-            lot=_resolve_lot(body),
+            lot=lot,
             location_id=int(body['location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
@@ -841,13 +901,45 @@ def receipt_api(request):
                 if body.get('unit_cost') not in (None, '')
                 else None
             ),
-            **_common_write_kwargs(request, body),
+            counterparty_location_id=supplier_location_id,
+            **audit,
         )
+        # Ensure supplier name is available without extra query when FK loaded.
+        if supplier_location_id is not None and entry.counterparty_location_id:
+            entry = (
+                StockEntry.objects
+                .select_related('counterparty_location')
+                .get(pk=entry.pk)
+            )
+        data = entry_dict(entry)
+        print_count = body.get('print_unit_count')
+        print_qty = body.get('print_quantity_per_unit')
+        if print_count not in (None, '') or print_qty not in (None, ''):
+            if print_count in (None, '') or print_qty in (None, ''):
+                return api_error(
+                    'print_unit_count and print_quantity_per_unit are both required to print labels.',
+                )
+            units = stock_units.create_units_for_entry(
+                source_entry=entry,
+                unit_count=int(print_count),
+                quantity_per_unit=_parse_decimal(
+                    print_qty, 'print_quantity_per_unit',
+                ),
+                idempotency_key_prefix=(
+                    str(body['print_idempotency_key_prefix'])
+                    if body.get('print_idempotency_key_prefix') not in (None, '')
+                    else f"{body['idempotency_key']}:print"
+                ),
+                actor_user_id=audit.get('actor_user_id'),
+                lan_username=audit.get('lan_username'),
+                source_workstation=audit.get('source_workstation'),
+            )
+            data['units'] = [stock_unit_dict(u) for u in units]
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
         return api_error(str(exc))
-    return api_success('Receipt posted.', entry_dict(entry), status_code=201)
+    return api_success('Receipt posted.', data, status_code=201)
 
 
 @csrf_exempt
@@ -873,13 +965,24 @@ def issue_api(request):
     return api_success('Issue posted.', entry_dict(entry), status_code=201)
 
 
+def _parse_unit_moves(body: dict) -> list | None:
+    raw = body.get('unit_moves')
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise StockValidationError('unit_moves must be a list')
+    return raw
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 def transfer_api(request):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.')
+    unit_moves = None
     try:
+        unit_moves = _parse_unit_moves(body)
         out_entry, in_entry = services.transfer(
             idempotency_key=body['idempotency_key'],
             lot=_resolve_lot(body),
@@ -888,15 +991,32 @@ def transfer_api(request):
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
+            unit_moves=unit_moves,
             **_common_write_kwargs(request, body),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
         return api_error(str(exc))
+
+    payload = {'out': entry_dict(out_entry), 'in': entry_dict(in_entry)}
+    if unit_moves is not None:
+        serials = []
+        for row in unit_moves:
+            if isinstance(row, dict) and row.get('unit_serial'):
+                serials.append(
+                    stock_units.resolve_unit_serial(str(row['unit_serial'])),
+                )
+        units = (
+            StockUnit.objects
+            .filter(unit_serial__in=serials)
+            .select_related('lot__product', 'unit', 'location')
+            .order_by('id')
+        )
+        payload['units'] = [stock_unit_dict(u) for u in units]
     return api_success(
         'Transfer posted.',
-        {'out': entry_dict(out_entry), 'in': entry_dict(in_entry)},
+        payload,
         status_code=201,
     )
 
@@ -1083,7 +1203,12 @@ def balance_list_api(request):
         except ValueError as exc:
             return api_error(str(exc))
 
-    data = [serialize_balance_row(b) for b in qs[:500]]
+    rows = list(qs[:500])
+    receipt_meta = receipt_meta_by_lot_ids({b.lot_id for b in rows})
+    data = [
+        serialize_balance_row(b, receipt_meta=receipt_meta.get(b.lot_id))
+        for b in rows
+    ]
     return api_success('Balances fetched.', data)
 
 
@@ -1286,3 +1411,190 @@ def reservation_consume_api(request, pk: int):
     except StockValidationError as exc:
         return api_error(str(exc))
     return api_success('Reservation consumed.', reservation_dict(row))
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def stock_units_print_api(request):
+    """Print physical labels against a receipt or production_output entry."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        source_entry = StockEntry.objects.select_related(
+            'lot__product', 'unit', 'location',
+        ).get(pk=body['entry_id'])
+        audit = _common_write_kwargs(request, body)
+        units = stock_units.create_units_for_entry(
+            source_entry=source_entry,
+            unit_count=int(body['unit_count']),
+            quantity_per_unit=_parse_decimal(
+                body['quantity_per_unit'], 'quantity_per_unit',
+            ),
+            idempotency_key_prefix=str(body['idempotency_key_prefix']),
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+    except StockEntry.DoesNotExist:
+        return api_error('entry_id not found.', status_code=404)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except (ValueError, StockValidationError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success(
+        'Stock units printed.',
+        [stock_unit_dict(u) for u in units],
+        status_code=201,
+    )
+
+
+@csrf_exempt
+@require_GET
+def stock_units_detail_api(request, unit_serial: str):
+    """Scan lookup: resolve a physical unit serial to product/stock info."""
+    try:
+        unit = stock_units.get_unit_by_serial(unit_serial)
+    except StockValidationError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg else 400
+        return api_error(msg, status_code=status)
+
+    balance = (
+        StockBalance.objects
+        .filter(lot_id=unit.lot_id, location_id=unit.location_id)
+        .only('quantity', 'quantity_base', 'updated_at')
+        .first()
+    )
+    product = unit.lot.product
+    data = stock_unit_dict(unit)
+    data['product'] = {
+        'id': product.id,
+        'name': product.name,
+        'external_barcode': product.external_barcode,
+    }
+    data['lot'] = lot_dict(unit.lot)
+    data['location'] = {
+        'id': unit.location_id,
+        'name': unit.location.name,
+    }
+    data['unit'] = {
+        'id': unit.unit_id,
+        'name': unit.unit.name,
+    }
+    data['location_balance'] = (
+        {
+            'quantity': _dec(balance.quantity),
+            'quantity_base': _dec(balance.quantity_base),
+            'updated_at': (
+                balance.updated_at.isoformat() if balance.updated_at else None
+            ),
+        }
+        if balance is not None
+        else None
+    )
+
+    trace_mode = (request.GET.get('trace') or '').strip().lower()
+    if trace_mode in ('backward', 'forward'):
+        rows = (
+            trace_backward(lot_id=unit.lot_id)
+            if trace_mode == 'backward'
+            else trace_forward(lot_id=unit.lot_id)
+        )
+        for row in rows:
+            if isinstance(row.get('quantity_base'), Decimal):
+                row['quantity_base'] = _dec(row['quantity_base'])
+        data['trace'] = rows
+    elif trace_mode:
+        return api_error('trace must be backward or forward.')
+
+    return api_success('Stock unit fetched.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def stock_units_consume_api(request, unit_serial: str):
+    """Scan-to-consume: issue / disposal / production_consumption via unit serial."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        result = stock_units.consume_unit(
+            unit_serial=unit_serial,
+            entry_type=str(body['entry_type']),
+            quantity=_parse_decimal(body['quantity'], 'quantity'),
+            idempotency_key=body['idempotency_key'],
+            output_entry_id=(
+                int(body['output_entry_id'])
+                if body.get('output_entry_id') not in (None, '')
+                else None
+            ),
+            effective_at=_parse_effective_at(body.get('effective_at')),
+            **_common_write_kwargs(request, body),
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except StockValidationError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg else 400
+        return api_error(msg, status_code=status)
+    except (ValueError, TypeError) as exc:
+        return api_error(str(exc))
+    return api_success(
+        'Stock unit consumed.',
+        {
+            'entry': entry_dict(result['entry']),
+            'unit': stock_unit_dict(result['unit']),
+            'consumption_id': result['consumption'].id,
+        },
+        status_code=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def stock_units_void_api(request, unit_serial: str):
+    """Void a damaged or misprinted label (no stock_balance change)."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        audit = _common_write_kwargs(request, body)
+        unit = stock_units.void_unit(
+            unit_serial=unit_serial,
+            reason=str(body['reason']),
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except StockValidationError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg else 400
+        return api_error(msg, status_code=status)
+    return api_success('Stock unit voided.', stock_unit_dict(unit))
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def stock_units_reprint_api(request, unit_serial: str):
+    """Reprint same serial; records a print event for audit."""
+    body = _parse_json_body(request)
+    if body is None:
+        body = {}
+    try:
+        audit = _common_write_kwargs(request, body)
+        result = stock_units.reprint_unit(
+            unit_serial=unit_serial,
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+    except StockValidationError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg else 400
+        return api_error(msg, status_code=status)
+    data = stock_unit_dict(result['unit'])
+    data['print_event_id'] = result['print_event_id']
+    return api_success('Stock unit reprint recorded.', data, status_code=201)

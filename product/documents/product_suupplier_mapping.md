@@ -56,7 +56,7 @@ Goods-in later: `stock_qty = received_count × multiplier` (in `inner_unit`).
 |---|---|---|
 | Mapping row with multiplier | `product_supplier` + Shape Format | **Done** |
 | Product default → mapping id | `is_default` on mapping | **Done** (API-enforced; MySQL has no partial unique) |
-| Stock movement → mapping id | `stock_lot.shape_format` → label only | **Later** — wire FK to `product_supplier` at goods-in |
+| Stock movement → mapping id | `product_supplier_id` on receipt → `stock_entry.counterparty_location_id` = mapping.supplier | **Done** (receipt) |
 | Multiplier used in stock-in | `multiplier` stored, unused by stock yet | **Later** |
 
 ---

@@ -470,6 +470,7 @@ def transfer(
     quantity: Decimal,
     unit_id: int | None = None,
     effective_at=None,
+    unit_moves: list | None = None,
     **kwargs,
 ) -> tuple[StockEntry, StockEntry]:
     if quantity <= 0:
@@ -487,6 +488,9 @@ def transfer(
 
     effective_at = effective_at or timezone.now()
     group_id = str(uuid4())
+
+    # Local import: stock_units imports services (consume path).
+    from stock_ledger.util.unit_moves import apply_unit_moves_for_transfer
 
     with transaction.atomic():
         out_entry = _insert_entry(
@@ -513,6 +517,14 @@ def transfer(
             effective_at=effective_at,
             **kwargs,
         )
+        if unit_moves is not None:
+            apply_unit_moves_for_transfer(
+                lot_id=lot.id,
+                from_location_id=from_location_id,
+                to_location_id=to_location_id,
+                quantity=quantity,
+                unit_moves=unit_moves,
+            )
     return out_entry, in_entry
 
 
