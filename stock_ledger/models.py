@@ -676,3 +676,167 @@ class ProductionRun(models.Model):
 
     def __str__(self):
         return f'production_run:{self.id}:entry:{self.stock_entry_id}'
+
+
+class StockUnitStatus(models.TextChoices):
+    ACTIVE = 'active', 'Active'
+    PARTIALLY_CONSUMED = 'partially_consumed', 'Partially consumed'
+    CONSUMED = 'consumed', 'Consumed'
+    VOID = 'void', 'Void'
+    IN_TRANSIT = 'in_transit', 'In transit'
+
+
+class StockUnitPrintReason(models.TextChoices):
+    INITIAL = 'initial', 'Initial'
+    REPRINT = 'reprint', 'Reprint'
+    RELABEL = 'relabel', 'Relabel'
+
+
+class StockUnit(models.Model):
+    """One physical labeled unit (bag / pallet / box group)."""
+
+    unit_serial = models.CharField(max_length=32, unique=True)
+    lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='units',
+    )
+    location = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.PROTECT,
+        related_name='stock_units',
+    )
+    unit = models.ForeignKey(
+        'product.Unit',
+        on_delete=models.PROTECT,
+        related_name='stock_units',
+    )
+    quantity_initial = models.DecimalField(max_digits=16, decimal_places=6)
+    quantity_remaining = models.DecimalField(max_digits=16, decimal_places=6)
+    status = models.CharField(
+        max_length=20,
+        choices=StockUnitStatus.choices,
+        default=StockUnitStatus.ACTIVE,
+    )
+    created_by_entry = models.ForeignKey(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='created_units',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    voided_at = models.DateTimeField(null=True, blank=True)
+    void_reason = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = 'stock_unit'
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(quantity_remaining__gte=Decimal('0'))
+                    & models.Q(quantity_remaining__lte=models.F('quantity_initial'))
+                ),
+                name='chk_stock_unit_qty_bounds',
+            ),
+            models.CheckConstraint(
+                check=models.Q(quantity_initial__gt=Decimal('0')),
+                name='chk_stock_unit_qty_initial',
+            ),
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        StockUnitStatus.ACTIVE,
+                        StockUnitStatus.PARTIALLY_CONSUMED,
+                        StockUnitStatus.CONSUMED,
+                        StockUnitStatus.VOID,
+                        StockUnitStatus.IN_TRANSIT,
+                    ]
+                ),
+                name='chk_stock_unit_status',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['lot', 'location', 'status'],
+                name='idx_stock_unit_lot_loc',
+            ),
+        ]
+
+    def __str__(self):
+        return f'stock_unit:{self.unit_serial}:{self.status}'
+
+
+class StockUnitConsumption(models.Model):
+    """Append-only link: physical unit drawn down by a ledger entry."""
+
+    stock_unit = models.ForeignKey(
+        StockUnit,
+        on_delete=models.PROTECT,
+        related_name='consumptions',
+    )
+    stock_entry = models.ForeignKey(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='unit_consumptions',
+    )
+    quantity_base = models.DecimalField(max_digits=16, decimal_places=6)
+
+    class Meta:
+        db_table = 'stock_unit_consumption'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['stock_unit', 'stock_entry'],
+                name='uq_stock_unit_consumption',
+            ),
+            models.CheckConstraint(
+                check=models.Q(quantity_base__gt=Decimal('0')),
+                name='chk_stock_unit_consumption_qty',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_unit_consumption:{self.id}:'
+            f'unit:{self.stock_unit_id}:entry:{self.stock_entry_id}'
+        )
+
+
+class StockUnitPrintEvent(models.Model):
+    """Append-only print / reprint audit."""
+
+    stock_unit = models.ForeignKey(
+        StockUnit,
+        on_delete=models.PROTECT,
+        related_name='print_events',
+    )
+    printed_at = models.DateTimeField()
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    reason = models.CharField(
+        max_length=16,
+        choices=StockUnitPrintReason.choices,
+    )
+
+    class Meta:
+        db_table = 'stock_unit_print_event'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    reason__in=[
+                        StockUnitPrintReason.INITIAL,
+                        StockUnitPrintReason.REPRINT,
+                        StockUnitPrintReason.RELABEL,
+                    ]
+                ),
+                name='chk_stock_unit_print_reason',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['stock_unit', 'printed_at'],
+                name='idx_stock_unit_print_unit',
+            ),
+        ]
+
+    def __str__(self):
+        return f'stock_unit_print_event:{self.id}:{self.reason}'

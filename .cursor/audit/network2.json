@@ -1,0 +1,352 @@
+[
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockTracePage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockTracePage.tsx\");const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport10_react_jsxDevRuntime[\"jsxDEV\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { Button } from \"/src/components/Button.tsx\";\nimport { ApiError } from \"/src/shared/api/client.ts\";\nimport { DataTable } from \"/src/shared/ui/DataTable.tsx\";\nimport { FormField } from \"/src/shared/ui/FormField.tsx\";\nimport { PageShell } from \"/src/shared/ui/PageShell.tsx\";\nimport { fetchMassBalance, fetchTraceBackward, fetchTraceForward } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nimport { formatQty, formatStockDate } from \"/src/features/stock/utils/format.ts\";\nimport { movementTypeLabel } from \"/src/features/stock/utils/status.ts\";\nimport \"/src/features/managers/managers.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/pages/StockTracePage.tsx\";\nimport __vite__cjsImport10_react_jsxDevRuntime from \"/node_modules/.vite/deps/react_jsx-de"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockAuditTimelinePage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockAuditTimelinePage.tsx\");const useEffect = __vite__cjsImport0_react[\"useEffect\"]; const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport8_react_jsxDevRuntime[\"jsxDEV\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { Button } from \"/src/components/Button.tsx\";\nimport { fetchStockAuditTimeline } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nimport { ApiError } from \"/src/shared/api/client.ts\";\nimport { DataTable } from \"/src/shared/ui/DataTable.tsx\";\nimport { FormField } from \"/src/shared/ui/FormField.tsx\";\nimport { PageShell } from \"/src/shared/ui/PageShell.tsx\";\nimport \"/src/features/managers/managers.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/pages/StockAuditTimelinePage.tsx\";\nimport __vite__cjsImport8_react_jsxDevRuntime from \"/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=64bcf3d2\";\nvar _s = $RefreshSig$();\nconst DEFAULT_FILTERS = {\n\tproductId: \"\",\n\tlocationId: \"\",\n\tentry"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockReservationsPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockReservationsPage.tsx\");const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport9_react_jsxDevRuntime[\"jsxDEV\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { Button } from \"/src/components/Button.tsx\";\nimport { ApiError } from \"/src/shared/api/client.ts\";\nimport { DataTable } from \"/src/shared/ui/DataTable.tsx\";\nimport { FormField } from \"/src/shared/ui/FormField.tsx\";\nimport { PageShell } from \"/src/shared/ui/PageShell.tsx\";\nimport { consumeReservation, createReservation, releaseReservation } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nimport { formatQty, formatStockDate } from \"/src/features/stock/utils/format.ts\";\nimport \"/src/features/managers/managers.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/pages/StockReservationsPage.tsx\";\nimport __vite__cjsImport9_react_jsxDevRuntime from \"/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=64bcf3d2\";\nvar _s = $RefreshSig$();\nfunction"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockUnitScanPage.tsx?t=1786022389892",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockUnitScanPage.tsx\");const _jsxDEV = __vite__cjsImport3_react_jsxDevRuntime[\"jsxDEV\"];import { PageShell } from \"/src/shared/ui/PageShell.tsx\";\nimport { StockUnitLookupPanel } from \"/src/features/stock/components/StockUnitLookupPanel.tsx?t=1786022389892\";\nimport \"/src/features/managers/managers.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/pages/StockUnitScanPage.tsx\";\nimport __vite__cjsImport3_react_jsxDevRuntime from \"/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=64bcf3d2\";\nexport function StockUnitScanPage() {\n\treturn /* @__PURE__ */ _jsxDEV(PageShell, {\n\t\ttitle: \"Stock unit scan\",\n\t\tdescription: \"Scan a GS1 label serial for product, lot, location, supplier, and qty remaining.\",\n\t\tchildren: /* @__PURE__ */ _jsxDEV(StockUnitLookupPanel, {}, void 0, false, {\n\t\t\tfileName: _jsxFileName,\n\t\t\tlineNumber: 11,\n\t\t\tcolumnNumber: 7\n\t\t}, this)\n\t}, void 0, false, {\n\t\tfileName: _jsxFileName,\n\t\tlineNumber: 7,\n\t\tcolumnNumber: 5\n\t}, this);\n}\n_c = StockUnitScanPage;\nvar _c;\n$Refres"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockEntryDetailPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockEntryDetailPage.tsx\");const useEffect = __vite__cjsImport0_react[\"useEffect\"]; const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport9_react_jsxDevRuntime[\"jsxDEV\"]; const _Fragment = __vite__cjsImport9_react_jsxDevRuntime[\"Fragment\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { Link, useParams } from \"/node_modules/.vite/deps/react-router-dom.js?v=64bcf3d2\";\nimport { ApiError } from \"/src/shared/api/client.ts\";\nimport { LoadingMessage } from \"/src/shared/ui/LoadingMessage.tsx\";\nimport { PageShell } from \"/src/shared/ui/PageShell.tsx\";\nimport { fetchEntryDetail } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nimport { formatQty, formatStockDate } from \"/src/features/stock/utils/format.ts\";\nimport { movementTypeLabel } from \"/src/features/stock/utils/status.ts\";\nimport \"/src/features/managers/managers.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/pages/StockEntryDetailPage.tsx\";\ni"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockMovementsPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockMovementsPage.tsx\");const useMemo = __vite__cjsImport0_react[\"useMemo\"]; const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport7_react_jsxDevRuntime[\"jsxDEV\"]; const _Fragment = __vite__cjsImport7_react_jsxDevRuntime[\"Fragment\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { Button } from \"/src/components/Button.tsx\";\nimport { FormField } from \"/src/shared/ui/FormField.tsx\";\nimport { PageShell } from \"/src/shared/ui/PageShell.tsx\";\nimport { movementTypeLabel } from \"/src/features/stock/utils/status.ts\";\nimport { useStockMutations } from \"/src/features/stock/hooks/useStockMutations.ts?t=1786021981437\";\nimport \"/src/features/managers/managers.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/pages/StockMovementsPage.tsx\";\nimport __vite__cjsImport7_react_jsxDevRuntime from \"/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=64bcf3d2\";\nvar _s = $RefreshSig$();\nconst TABS = [\n\t\"receipt\",\n\t\"issue\",\n\t"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockOverviewPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/pages/StockOverviewPage.tsx\");const useCallback = __vite__cjsImport0_react[\"useCallback\"]; const useEffect = __vite__cjsImport0_react[\"useEffect\"]; const useId = __vite__cjsImport0_react[\"useId\"]; const useRef = __vite__cjsImport0_react[\"useRef\"]; const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport9_react_jsxDevRuntime[\"jsxDEV\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { useNavigate } from \"/node_modules/.vite/deps/react-router-dom.js?v=64bcf3d2\";\nimport { Button } from \"/src/components/Button.tsx\";\nimport { ExcelIcon } from \"/src/features/planning/components/ExcelIcon.tsx\";\nimport { LoadingMessage } from \"/src/shared/ui/LoadingMessage.tsx\";\nimport { StockOverviewGrid } from \"/src/features/stock/components/StockOverviewGrid.tsx?t=1786011233526\";\nimport \"/src/features/stock/components/StockOverviewGrid.css\";\nimport { useStockOverview } from \"/src/features/stock/hooks/useStockOverview.ts?t=1786021981437\";\nimport { downloadStockOverviewExcel } from \"/src/featur"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/index.ts?t=1786021981437",
+    "reqBody": "",
+    "body": "export * from \"/src/features/stock/api/stockClient.ts?t=1786021981437\";\nexport * from \"/src/features/stock/api/stockMappers.ts?t=1786021981437\";\nexport * from \"/src/features/stock/api/stockBalancesStream.ts?t=1786021981437\";\n\n//# sourceMappingURL=data:application/json;base64,eyJtYXBwaW5ncyI6IkFBQUEsY0FBYztBQUNkLGNBQWM7QUFDZCxjQUFjIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbImluZGV4LnRzIl0sInZlcnNpb24iOjMsInNvdXJjZXNDb250ZW50IjpbImV4cG9ydCAqIGZyb20gJy4vc3RvY2tDbGllbnQnXHJcbmV4cG9ydCAqIGZyb20gJy4vc3RvY2tNYXBwZXJzJ1xyXG5leHBvcnQgKiBmcm9tICcuL3N0b2NrQmFsYW5jZXNTdHJlYW0nXHJcbiJdfQ=="
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/format.ts",
+    "reqBody": "",
+    "body": "function asNumber(value) {\n\tif (value == null) return 0;\n\tconst numeric = typeof value === \"number\" ? value : Number(value);\n\treturn Number.isFinite(numeric) ? numeric : 0;\n}\nexport function formatQty(value) {\n\treturn asNumber(value).toLocaleString(\"en-GB\", {\n\t\tminimumFractionDigits: 0,\n\t\tmaximumFractionDigits: 3\n\t});\n}\nexport function formatCurrencyGbp(value) {\n\tconst amount = asNumber(value);\n\treturn new Intl.NumberFormat(\"en-GB\", {\n\t\tstyle: \"currency\",\n\t\tcurrency: \"GBP\",\n\t\tminimumFractionDigits: 2,\n\t\tmaximumFractionDigits: 2\n\t}).format(amount);\n}\nexport function formatStockDate(iso) {\n\tif (!iso) return \"—\";\n\tconst d = new Date(iso);\n\tif (Number.isNaN(d.getTime())) return \"—\";\n\treturn d.toLocaleDateString(\"en-GB\", {\n\t\tday: \"numeric\",\n\t\tmonth: \"long\",\n\t\tyear: \"numeric\"\n\t});\n}\nexport function safeRatio(numerator, denominator) {\n\tconst n = asNumber(numerator);\n\tconst d = asNumber(denominator);\n\tif (d === 0) return 0;\n\treturn n / d;\n}\n\n//# sourceMappingURL=data:application/json;base64,eyJtYXBwaW5ncyI6IkFBQUEsU0FBUyxTQUFTLE9BQW1EO0NBQ25FLElBQUksU0FBUyxNQUFNLE9BQU87Q0FDMUIsTUFBTSxVQUFVLE9BQU8sVUFBVSxXQUFXLFFBQVEsT0FBTyxLQUFLO0NBQ2hFLE9BQU8sT0FBTyxTQUFTLE9BQU8sSUFBSSxVQUFVO0FBQzlDO0FBRU"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/status.ts",
+    "reqBody": "",
+    "body": "export function warningLevelLabel(level) {\n\tswitch (level) {\n\t\tcase \"none\": return \"OK\";\n\t\tcase \"low\": return \"Low\";\n\t\tcase \"min\": return \"Min\";\n\t\tcase \"max\": return \"Max\";\n\t\tdefault: {\n\t\t\tconst _exhaustive = level;\n\t\t\treturn _exhaustive;\n\t\t}\n\t}\n}\nexport function warningLevelVariant(level) {\n\tswitch (level) {\n\t\tcase \"none\": return \"ok\";\n\t\tcase \"low\": return \"warn\";\n\t\tcase \"min\": return \"danger\";\n\t\tcase \"max\": return \"muted\";\n\t\tdefault: {\n\t\t\tconst _exhaustive = level;\n\t\t\treturn _exhaustive;\n\t\t}\n\t}\n}\nexport function movementTypeLabel(type) {\n\tconst value = type.replace(/_/g, \" \").trim();\n\tif (!value) return \"Unknown\";\n\treturn value.charAt(0).toUpperCase() + value.slice(1);\n}\n\n//# sourceMappingURL=data:application/json;base64,eyJtYXBwaW5ncyI6IkFBSUEsT0FBTyxTQUFTLGtCQUFrQixPQUFrQztDQUNsRSxRQUFRLE9BQVI7RUFDRSxLQUFLLFFBQ0gsT0FBTztFQUNULEtBQUssT0FDSCxPQUFPO0VBQ1QsS0FBSyxPQUNILE9BQU87RUFDVCxLQUFLLE9BQ0gsT0FBTztFQUNULFNBQVM7R0FDUCxNQUFNLGNBQXFCO0dBQzNCLE9BQU87RUFDVDtDQUNGO0FBQ0Y7QUFFQSxPQUFPLFNBQVMsb0JBQW9CLE9BQXdDO0NBQzFFLFFBQVEsT0FBUjtFQUNFLEtBQUssUUFDSCxPQUFPO0VBQ1QsS0FBSyxPQUNILE9BQU87RUFDVCxLQUFLLE9BQ0gsT0FBTztFQUNULEtBQUssT0FDSCxPQUFPO0VBQ1QsU0FBUztHQUNQLE1BQU0sY0FBcUI7R0FDM0IsT0FBTzt"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/components/StockUnitLookupPanel.tsx?t=1786022389892",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/components/StockUnitLookupPanel.tsx\");const useEffect = __vite__cjsImport0_react[\"useEffect\"]; const useRef = __vite__cjsImport0_react[\"useRef\"]; const useState = __vite__cjsImport0_react[\"useState\"];const _jsxDEV = __vite__cjsImport9_react_jsxDevRuntime[\"jsxDEV\"]; const _Fragment = __vite__cjsImport9_react_jsxDevRuntime[\"Fragment\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { Button } from \"/src/components/Button.tsx\";\nimport { Popup } from \"/src/shared/ui/Popup.tsx\";\nimport { StatusBadge } from \"/src/shared/ui/StatusBadge.tsx\";\nimport { Gs1DataMatrixBarcode } from \"/src/features/production/components/Gs1DataMatrixBarcode.tsx?t=1786017045538\";\nimport { printWarehouseLabel } from \"/src/features/production/utils/printWarehouseLabel.ts?t=1786017045984\";\nimport { fetchStockUnit, postStockUnitReprint, postStockUnitVoid } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nimport { formatQty, formatStockDate } from \"/src/features/stock/utils/format.ts\";\nimport \"/src/features/production/pages/war"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/hooks/useStockMutations.ts?t=1786021981437",
+    "reqBody": "",
+    "body": "const useState = __vite__cjsImport0_react[\"useState\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { ApiError } from \"/src/shared/api/client.ts\";\nimport { postCountAdjustment, postDisposal, postIssue, postReceipt, postReversal, postTransfer } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nfunction toMessage(err, fallback) {\n\tif (err instanceof ApiError) return err.message;\n\tif (err instanceof Error) return err.message;\n\treturn fallback;\n}\nexport function useStockMutations() {\n\tconst [submitting, setSubmitting] = useState(false);\n\tconst [error, setError] = useState(null);\n\tconst [lastEntry, setLastEntry] = useState(null);\n\tconst [lastUnits, setLastUnits] = useState([]);\n\tconst [lastTransfer, setLastTransfer] = useState(null);\n\tasync function run(action, fallbackError) {\n\t\tsetSubmitting(true);\n\t\tsetError(null);\n\t\tsetLastTransfer(null);\n\t\ttry {\n\t\t\treturn await action();\n\t\t} catch (err) {\n\t\t\tsetError(toMessage(err, fallbackError));\n\t\t\treturn null;\n\t\t} finally {\n\t\t\tsetSubmitting(false);\n\t\t}\n\t}\n\tasync function receipt(input) {\n\t\tconst result = await run(() => postReceipt(input), \"Receipt failed.\");\n\t\tif (result) {\n\t\t\tsetLastEntry(r"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/components/StockOverviewGrid.css",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/components/StockOverviewGrid.css\");import { updateStyle as __vite__updateStyle, removeStyle as __vite__removeStyle } from \"/@vite/client\"\nconst __vite__id = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/components/StockOverviewGrid.css\"\nconst __vite__css = \".stock-overview {\\r\\n  display: flex;\\r\\n  flex-direction: column;\\r\\n  height: calc(100vh - 56px);\\r\\n  min-height: 0;\\r\\n  padding: 6px 10px 8px;\\r\\n  box-sizing: border-box;\\r\\n  gap: 6px;\\r\\n}\\r\\n\\r\\n.stock-overview__header {\\r\\n  display: flex;\\r\\n  flex-wrap: wrap;\\r\\n  align-items: center;\\r\\n  gap: 8px 12px;\\r\\n  flex-shrink: 0;\\r\\n}\\r\\n\\r\\n.stock-overview__title {\\r\\n  margin: 0;\\r\\n  font-size: 1.15rem;\\r\\n  font-weight: 700;\\r\\n  line-height: 1.2;\\r\\n}\\r\\n\\r\\n.stock-overview__header-actions {\\r\\n  display: flex;\\r\\n  flex-wrap: wrap;\\r\\n  align-items: center;\\r\\n  gap: 4px 8px;\\r\\n}\\r\\n\\r\\n.btn.stock-overview__export {\\r\\n  display: inline-flex;\\r\\n  align-items: center;\\r\\n  justify-content: center;\\r\\n  gap: 0.4rem;\\r\\n  width: auto;\\r\\n  "
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/components/StockOverviewGrid.tsx?t=1786011233526",
+    "reqBody": "",
+    "body": "import { createHotContext as __vite__createHotContext } from \"/@vite/client\";import.meta.hot = __vite__createHotContext(\"/src/features/stock/components/StockOverviewGrid.tsx\");const useCallback = __vite__cjsImport0_react[\"useCallback\"]; const useEffect = __vite__cjsImport0_react[\"useEffect\"]; const useMemo = __vite__cjsImport0_react[\"useMemo\"]; const useRef = __vite__cjsImport0_react[\"useRef\"];const _jsxDEV = __vite__cjsImport6_react_jsxDevRuntime[\"jsxDEV\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { AgGridReact } from \"/node_modules/.vite/deps/ag-grid-react.js?v=64bcf3d2\";\nimport { AllCommunityModule, ModuleRegistry, themeQuartz } from \"/node_modules/.vite/deps/ag-grid-community.js?v=64bcf3d2\";\nimport { formatQty, formatStockDate } from \"/src/features/stock/utils/format.ts\";\nimport { isStockOverviewFilterActive, rowPassesStockOverviewFilters } from \"/src/features/stock/utils/filters.ts\";\nimport \"/src/features/stock/components/StockOverviewGrid.css\";\nvar _jsxFileName = \"C:/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/features/stock/components/StockOverviewGrid.tsx\";\nimport __vite__cjsImport6_react_jsxDevRuntime "
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/exportStockOverviewExcel.ts",
+    "reqBody": "",
+    "body": "import * as XLSX from \"/node_modules/.vite/deps/xlsx.js?v=64bcf3d2\";\nimport { formatQty, formatStockDate } from \"/src/features/stock/utils/format.ts\";\nconst HEADERS = [\n\t\"Date\",\n\t\"Item ID\",\n\t\"Location\",\n\t\"Class\",\n\t\"Range\",\n\t\"Item Name\",\n\t\"Item Code\",\n\t\"Quantity\",\n\t\"Unit\",\n\t\"Production Date\",\n\t\"Use By\",\n\t\"Trace Number\",\n\t\"Yield\"\n];\nfunction cellDate(iso) {\n\tif (!iso) return \"\";\n\tconst formatted = formatStockDate(iso);\n\treturn formatted === \"—\" ? \"\" : formatted;\n}\nfunction itemId(row) {\n\treturn row.locationName ? `${row.productId} ${row.locationName}` : String(row.productId);\n}\nfunction stamp(d = new Date()) {\n\tconst pad = (n) => String(n).padStart(2, \"0\");\n\treturn `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}-${pad(d.getMinutes())}`;\n}\nexport function downloadStockOverviewExcel(rows) {\n\tconst data = [Array.from(HEADERS), ...rows.map((row) => [\n\t\tcellDate(row.updatedAt),\n\t\titemId(row),\n\t\trow.locationName ?? \"\",\n\t\trow.className ?? \"\",\n\t\trow.rangeName ?? \"\",\n\t\trow.productName,\n\t\trow.productCode ?? \"\",\n\t\tformatQty(row.onHandQty),\n\t\trow.unitName ?? \"\",\n\t\tcellDate(row.productionDate),\n\t\tcellDate(row.useBy),\n\t\trow.traceNumber ?? \"\",\n\t\trow.yieldFactor"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/hooks/useStockOverview.ts?t=1786021981437",
+    "reqBody": "",
+    "body": "const useCallback = __vite__cjsImport0_react[\"useCallback\"]; const useEffect = __vite__cjsImport0_react[\"useEffect\"]; const useMemo = __vite__cjsImport0_react[\"useMemo\"]; const useRef = __vite__cjsImport0_react[\"useRef\"]; const useState = __vite__cjsImport0_react[\"useState\"];import __vite__cjsImport0_react from \"/node_modules/.vite/deps/react.js?v=64bcf3d2\";\nimport { ApiError } from \"/src/shared/api/client.ts\";\nimport { fetchAtp, fetchBalances } from \"/src/features/stock/api/index.ts?t=1786021981437\";\nimport { openStockBalancesStream } from \"/src/features/stock/api/stockBalancesStream.ts?t=1786021981437\";\nimport { stockBalanceRowId } from \"/src/features/stock/components/StockOverviewGrid.tsx?t=1786011233526\";\nimport { applyStockOverviewFilters, uniqueLabels } from \"/src/features/stock/utils/filters.ts\";\nconst DEFAULT_FILTERS = {\n\tquery: \"\",\n\tlocations: [],\n\tclasses: [],\n\tranges: [],\n\titems: [],\n\twarningLevel: \"all\",\n\thideZeroStock: false\n};\n/** Backup poll only while SSE is down */\nconst BACKUP_POLL_MS = 3e4;\nconst RECONNECT_MIN_MS = 1e3;\nconst RECONNECT_MAX_MS = 3e4;\nfunction toMessage(err) {\n\tif (err instanceof ApiError) return err.message;\n\tif (err instanceof Error) return err.m"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/stockMappers.ts?t=1786021981437",
+    "reqBody": "",
+    "body": "function toNumber(value, fallback = 0) {\n\tif (typeof value === \"number\") return Number.isFinite(value) ? value : fallback;\n\tif (typeof value === \"string\") {\n\t\tconst n = Number(value);\n\t\treturn Number.isFinite(n) ? n : fallback;\n\t}\n\treturn fallback;\n}\nfunction toOptionalNumber(value) {\n\tif (value == null || value === \"\") return null;\n\tconst n = toNumber(value, Number.NaN);\n\treturn Number.isFinite(n) ? n : null;\n}\nfunction toStringOrNull(value) {\n\treturn typeof value === \"string\" && value.trim() ? value : null;\n}\n/** Qty fields may be number or decimal string from API. */\nfunction toQtyString(value) {\n\tif (value == null || value === \"\") return null;\n\tif (typeof value === \"number\" && Number.isFinite(value)) return String(value);\n\tif (typeof value === \"string\" && value.trim()) return value.trim();\n\treturn null;\n}\nfunction warningFromBalance(row) {\n\tconst quantity = toNumber(row.quantity);\n\tconst minStock = toOptionalNumber(row.min_stock);\n\tconst lowStock = toOptionalNumber(row.low_stock);\n\tconst maxStock = toOptionalNumber(row.max_stock);\n\tif (minStock != null && quantity <= minStock) return \"min\";\n\tif (lowStock != null && quantity <= lowStock) return \"low\";\n\tif (maxStock != null && qu"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/stockClient.ts?t=1786021981437",
+    "reqBody": "",
+    "body": "import { apiFetch } from \"/src/shared/api/client.ts\";\nimport { unwrapData } from \"/src/features/recipe/api/envelope.ts\";\nimport { asList, mapAtpRow, mapAuditTimelineRow, mapBalanceRow, mapEntryDetail, mapLot, mapMassBalance, mapProductionListRow, mapProductionRequirements, mapProductionResult, mapReceiptResult, mapReservation, mapStockUnitDetail, mapStockUnitLabel, mapTraceRow, mapUnitConversion } from \"/src/features/stock/api/stockMappers.ts?t=1786021981437\";\nfunction qs(query) {\n\tconst search = new URLSearchParams();\n\tfor (const [key, value] of Object.entries(query)) {\n\t\tif (value == null || value === \"\") continue;\n\t\tsearch.set(key, String(value));\n\t}\n\tconst output = search.toString();\n\treturn output ? `?${output}` : \"\";\n}\nexport async function fetchLots(params) {\n\tconst raw = await apiFetch(`/stock/lots/${qs({ product_id: params?.productId })}`);\n\treturn asList(unwrapData(raw)).map(mapLot);\n}\nexport async function createLot(input) {\n\tconst raw = await apiFetch(\"/stock/lots/\", {\n\t\tmethod: \"POST\",\n\t\tbody: JSON.stringify(input)\n\t});\n\treturn mapLot(unwrapData(raw));\n}\nexport async function fetchLot(lotId) {\n\tconst raw = await apiFetch(`/stock/lots/${lotId}/`);\n\treturn mapLot(unwrapD"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/stockBalancesStream.ts?t=1786021981437",
+    "reqBody": "",
+    "body": "import.meta.env = {\"BASE_URL\": \"/\", \"DEV\": true, \"MODE\": \"development\", \"PROD\": false, \"SSR\": false, \"VITE_API_BASE_URL\": \"http://localhost:8000\", \"VITE_COGNITO_CLIENT_ID\": \"19fkflttf5nve5p2opc5535oo4\", \"VITE_COGNITO_REGION\": \"eu-west-2\", \"VITE_COGNITO_USER_POOL_ID\": \"eu-west-2_lL0YSimzi\", \"VITE_CONTAINER_API_TOKEN\": \"dev-static-token\", \"VITE_MAINTENANCE_MESSAGE\": \"Maintenance in progress - some features may be unavailable.\", \"VITE_MAINTENANCE_MODE\": \"True\"};import { mapBalanceRow } from \"/src/features/stock/api/stockMappers.ts?t=1786021981437\";\nconst STORAGE_KEY = \"gazeboo.cloud.cognito.tokens\";\nfunction baseUrl() {\n\tconst raw = import.meta.env.VITE_API_BASE_URL;\n\tif (!raw) throw new Error(\"VITE_API_BASE_URL is not set\");\n\treturn raw.replace(/\\/$/, \"\");\n}\nfunction authHeaderValue() {\n\ttry {\n\t\tconst raw = localStorage.getItem(STORAGE_KEY);\n\t\tif (!raw) return null;\n\t\tconst parsed = JSON.parse(raw);\n\t\tif (!parsed.accessToken) return null;\n\t\treturn `Bearer ${parsed.accessToken}`;\n\t} catch {\n\t\treturn null;\n\t}\n}\nfunction parseEventData(data) {\n\tlet raw;\n\ttry {\n\t\traw = JSON.parse(data);\n\t} catch {\n\t\treturn null;\n\t}\n\tif (raw.type === \"upsert\" && raw.row) {\n\t\treturn {\n\t\t\ttype: \"upsert\",\n\t\t"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/filters.ts",
+    "reqBody": "",
+    "body": "function normalize(value) {\n\treturn (value ?? \"\").trim().toLowerCase();\n}\nfunction containsAny(haystack, needles) {\n\treturn needles.every((token) => haystack.includes(token));\n}\nfunction matchesSelected(value, selected) {\n\tif (!selected.length) return true;\n\tconst n = normalize(value);\n\treturn selected.some((s) => normalize(s) === n);\n}\nexport function buildSearchBlob(row) {\n\treturn normalize([\n\t\trow.productName,\n\t\trow.productCode,\n\t\trow.className,\n\t\trow.rangeName,\n\t\trow.locationName,\n\t\trow.traceNumber,\n\t\trow.batchNo,\n\t\trow.referenceNo,\n\t\tString(row.productId)\n\t].filter(Boolean).join(\" \"));\n}\nexport function isStockOverviewFilterActive(filters) {\n\treturn filters.locations.length > 0 || filters.classes.length > 0 || filters.ranges.length > 0 || filters.items.length > 0 || filters.warningLevel !== \"all\" || filters.hideZeroStock || filters.query.trim().length > 0;\n}\nexport function rowPassesStockOverviewFilters(row, filters) {\n\tif (!matchesSelected(row.locationName, filters.locations)) return false;\n\tif (!matchesSelected(row.className, filters.classes)) return false;\n\tif (!matchesSelected(row.rangeName, filters.ranges)) return false;\n\tif (!matchesSelected(row.productName, filters.item"
+  },
+  {
+    "status": 404,
+    "method": "POST",
+    "url": "http://localhost:8000/api/auth/login/",
+    "reqBody": "{\"email\":\"utsavgohel\",\"password\":\"Gazebo@2025\"}",
+    "body": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">\n  <title>Page not found at /api/auth/login/</title>\n  <meta name=\"robots\" content=\"NONE,NOARCHIVE\">\n  <style type=\"text/css\">\n    html * { padding:0; margin:0; }\n    body * { padding:10px 20px; }\n    body * * { padding:0; }\n    body { font:small sans-serif; background:#eee; color:#000; }\n    body>div { border-bottom:1px solid #ddd; }\n    h1 { font-weight:normal; margin-bottom:.4em; }\n    h1 span { font-size:60%; color:#666; font-weight:normal; }\n    table { border:none; border-collapse: collapse; width:100%; }\n    td, th { vertical-align:top; padding:2px 3px; }\n    th { width:12em; text-align:right; color:#666; padding-right:.5em; }\n    #info { background:#f6f6f6; }\n    #info ol { margin: 0.5em 4em; }\n    #info ol li { font-family: monospace; }\n    #summary { background: #ffc; }\n    #explanation { background:#eee; border-bottom: 0px none; }\n    pre.exception_value { font-family: sans-serif; color: #575757; font-size: 1.5em; margin: 10px 0 10px 0; }\n  </style>\n</head>\n<body>\n  <div id=\"summary\">\n    <h1>Page not found <span>(404)</span></h1>\n    \n    <table class=\"meta\">\n   "
+  },
+  {
+    "status": 200,
+    "method": "POST",
+    "url": "http://localhost:8000/auth/login/",
+    "reqBody": "{\"email\":\"utsavgohel\",\"password\":\"Gazebo@2025\"}",
+    "body": "{\"status\": \"success\", \"message\": \"Signed in successfully.\", \"data\": {\"access_token\": \"eyJraWQiOiJRM0taRkxDbW1WaGUzL2RjMHVaOUdyUTZqOVNDYlBHcUJLUEg3QXBoN2VvPSIsImFsZyI6IlJTMjU2In0.eyJzdWIiOiJiNjEyODIzNC0wMGQxLTcwYzktZDQwYS1lNDFjZTViZmYxNjgiLCJpc3MiOiJodHRwczovL2NvZ25pdG8taWRwLmV1LXdlc3QtMi5hbWF6b25hd3MuY29tL2V1LXdlc3QtMl9sTDBZU2ltemkiLCJjbGllbnRfaWQiOiIydGZnaWZ0OHNmNXFmbzR1ZWRobWtqa281NiIsIm9yaWdpbl9qdGkiOiI0NjAwMzQ3MC1kYzIwLTQwNjEtOTYwMy04OTE5N2RhZmI2ODQiLCJldmVudF9pZCI6IjFkMzQ1NGNiLWJmNDMtNGUzYS1hNThiLWRmYTY0NDM2YzQxZiIsInRva2VuX3VzZSI6ImFjY2VzcyIsInNjb3BlIjoiYXdzLmNvZ25pdG8uc2lnbmluLnVzZXIuYWRtaW4iLCJhdXRoX3RpbWUiOjE3ODYwMjMyMTQsImV4cCI6MTc4NjAyNjgxNCwiaWF0IjoxNzg2MDIzMjE0LCJqdGkiOiIzMmJhODFlMS03ZTQxLTQ1MjQtYWZhNi0wZDZjMzUzYTYzZDYiLCJ1c2VybmFtZSI6InV0c2F2Z29oZWwifQ.xcszbjG9tdK9yxWOm-ELH9utMDe03lfijiJznskFE5nSDr44bYeLWyT-jYlE2viJAz-aIS4P3dMiqMN0wUjtc9--g59L43ppMxmoJrRyHLTautklsOvdBsrzimyE4xr82WT8rQrlJ2FTCXQv8vSWlcgdiwSEZh5Cgo33icHWsQOl4AjkcqPTQyPvs1HVgFwJ7lLa23Fs9EpzmYj7ofq9PdAwz-3WniptxOtHPH08iY7ERKmP2-lXfsBQzgI4r_bLSO2u1n1iT9QRJf9P0fqz8V9hSIXp9_EdzUOdRb5PTFy95h6-JmdL5IScgv0yKClSxVBmZO7s2tgw6r-8spzcdg\", \"id_token\": \"eyJraWQiOiJ3b2NIVS9HY08rYi9HQUdxT3pveng4K3NSRUJWS3ZCSXdLdVJjKzJuQ"
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockEntryDetailPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockAuditTimelinePage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockMovementsPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockOverviewPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockReservationsPage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockTracePage.tsx?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/pages/StockUnitScanPage.tsx?t=1786022389892",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/index.ts?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/format.ts",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/status.ts",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/hooks/useStockMutations.ts?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/components/StockOverviewGrid.tsx?t=1786011233526",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/components/StockOverviewGrid.css",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/hooks/useStockOverview.ts?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/exportStockOverviewExcel.ts",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/components/StockUnitLookupPanel.tsx?t=1786022389892",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/stockClient.ts?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/stockMappers.ts?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/api/stockBalancesStream.ts?t=1786021981437",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 304,
+    "method": "GET",
+    "url": "http://localhost:5173/src/features/stock/utils/filters.ts",
+    "reqBody": "",
+    "body": ""
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/product/unit/",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Product units fetched successfully.\", \"data\": [{\"id\": 9003, \"name\": \"Bag\"}, {\"id\": 9004, \"name\": \"Bottle\"}, {\"id\": 6, \"name\": \"Box\"}, {\"id\": 9002, \"name\": \"Case\"}, {\"id\": 9001, \"name\": \"Each\"}, {\"id\": 9102, \"name\": \"Each\"}, {\"id\": 9101, \"name\": \"g\"}, {\"id\": 2, \"name\": \"grams\"}, {\"id\": 5, \"name\": \"Kg\"}, {\"id\": 7, \"name\": \"Liter\"}, {\"id\": 3, \"name\": \"meters\"}, {\"id\": 4, \"name\": \"seconds\"}, {\"id\": 1, \"name\": \"unit\"}]}"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/product/unit/",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Product units fetched successfully.\", \"data\": [{\"id\": 9003, \"name\": \"Bag\"}, {\"id\": 9004, \"name\": \"Bottle\"}, {\"id\": 6, \"name\": \"Box\"}, {\"id\": 9002, \"name\": \"Case\"}, {\"id\": 9001, \"name\": \"Each\"}, {\"id\": 9102, \"name\": \"Each\"}, {\"id\": 9101, \"name\": \"g\"}, {\"id\": 2, \"name\": \"grams\"}, {\"id\": 5, \"name\": \"Kg\"}, {\"id\": 7, \"name\": \"Liter\"}, {\"id\": 3, \"name\": \"meters\"}, {\"id\": 4, \"name\": \"seconds\"}, {\"id\": 1, \"name\": \"unit\"}]}"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/container/departments/",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Department list fetched successfully.\", \"data\": {\"count\": 38, \"results\": [{\"container_id\": 167, \"id\": 167, \"name\": \"Accounts Adjust\", \"external_code\": \"ADJ999\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": []}, {\"container_id\": 32, \"id\": 32, \"name\": \"Belts\", \"external_code\": \"BLT001\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"process\", \"transform\"], \"features\": [\"linear_plan\", \"staff_budget\"]}, {\"container_id\": 169, \"id\": 169, \"name\": \"Chiller - 503102\", \"external_code\": \"CHL169\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": [\"breakdown_list\"]}, {\"container_id\": 170, \"id\": 170, \"name\": \"Chiller - 503927\", \"external_code\": \"CHL170\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": [\"breakdown_list\"]}, {\"container_id\": 195, \"id\": 195, \"name\": \"Chiller - RC 1\", \"external_code\": \"CHL195\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": [\"breakdown_list\"]}, {\"container_id\": 196, \"id\": 196, \"name\": \"Chiller - RC 2\", \"external_code"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/container/departments/",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Department list fetched successfully.\", \"data\": {\"count\": 38, \"results\": [{\"container_id\": 167, \"id\": 167, \"name\": \"Accounts Adjust\", \"external_code\": \"ADJ999\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": []}, {\"container_id\": 32, \"id\": 32, \"name\": \"Belts\", \"external_code\": \"BLT001\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"process\", \"transform\"], \"features\": [\"linear_plan\", \"staff_budget\"]}, {\"container_id\": 169, \"id\": 169, \"name\": \"Chiller - 503102\", \"external_code\": \"CHL169\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": [\"breakdown_list\"]}, {\"container_id\": 170, \"id\": 170, \"name\": \"Chiller - 503927\", \"external_code\": \"CHL170\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": [\"breakdown_list\"]}, {\"container_id\": 195, \"id\": 195, \"name\": \"Chiller - RC 1\", \"external_code\": \"CHL195\", \"visible\": true, \"static\": false, \"locked\": true, \"roles\": [\"internal\", \"storage\"], \"features\": [\"breakdown_list\"]}, {\"container_id\": 196, \"id\": 196, \"name\": \"Chiller - RC 2\", \"external_code"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/product/?source_container_id=8",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Product list fetched successfully.\", \"data\": [{\"id\": 1957, \"name\": \"BALTI PASTE\", \"alternate_name\": \"NEW: BALTI PASTE (CAT B)\", \"recipe_code\": \"SAUCE0-05\", \"is_active\": true, \"product_class_id\": 1, \"category_id\": 15, \"category_path\": \"Raw Materials > SAUCE > PASTE\", \"range_id\": 25, \"unit_id\": 2, \"unit_name\": \"grams\", \"source_container_id\": 8, \"destination_container_id\": 15, \"shelf_life_days\": null, \"recipe_version_id\": null}, {\"id\": 1999, \"name\": \"CARROT DICED 10MM ( FROZEN )\", \"alternate_name\": \"10mm Diced Carrots\", \"recipe_code\": \"VEGFRO-04\", \"is_active\": true, \"product_class_id\": 1, \"category_id\": 67, \"category_path\": \"Raw Materials > VEGETABLE - FROZEN > MISC\", \"range_id\": 16, \"unit_id\": 2, \"unit_name\": \"grams\", \"source_container_id\": 8, \"destination_container_id\": 223, \"shelf_life_days\": null, \"recipe_version_id\": null}, {\"id\": 910130, \"name\": \"CHILLI POWDER-\", \"alternate_name\": null, \"recipe_code\": \"SPICE0-08\", \"is_active\": true, \"product_class_id\": 19, \"category_id\": 73, \"category_path\": \"Raw Materials\", \"range_id\": 98, \"unit_id\": 6, \"unit_name\": \"Box\", \"source_container_id\": 8, \"destination_container_id\": 15, \"shelf_life_days\": null, \"recip"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/stock/balances/?location_id=8",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Balances fetched.\", \"data\": [{\"lot_id\": 17, \"product_id\": 1996, \"product_name\": \"PEAS ( FROZEN )\", \"recipe_code\": \"VEGFRO-01\", \"product_class_id\": 15, \"product_class_name\": \"Ingredient\", \"range_id\": 16, \"range_name\": \"Vegetables\", \"unit_id\": 2, \"unit_name\": \"grams\", \"yield_factor\": \"1.0000\", \"trace_number\": \"26215\", \"production_date\": \"2026-08-03\", \"use_by\": \"2026-08-31\", \"location_id\": 8, \"location_name\": \"Unit 2\", \"supplier_id\": null, \"supplier_name\": null, \"po_number\": null, \"quantity\": \"50.000000\", \"quantity_base\": null, \"last_entry_id\": 62, \"updated_at\": \"2026-08-03T22:09:10.341796+00:00\"}, {\"lot_id\": 19, \"product_id\": 910122, \"product_name\": \"SALT\", \"recipe_code\": \"SPICE0-02\", \"product_class_id\": 19, \"product_class_name\": \"Raw - Snacks\", \"range_id\": 98, \"range_name\": \"Undefined\", \"unit_id\": 2, \"unit_name\": \"grams\", \"yield_factor\": null, \"trace_number\": \"26216\", \"production_date\": \"2026-08-04\", \"use_by\": \"2026-11-18\", \"location_id\": 8, \"location_name\": \"Unit 2\", \"supplier_id\": null, \"supplier_name\": null, \"po_number\": null, \"quantity\": \"50000.000000\", \"quantity_base\": \"50.000000\", \"last_entry_id\": 64, \"updated_at\": \"2026-08-04T08:29:15.964693+"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/stock/stock-units/S3QE6R30ZTZ3/",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Stock unit fetched.\", \"data\": {\"id\": 67, \"unit_serial\": \"S3QE6R30ZTZ3\", \"lot_id\": 109, \"location_id\": 8, \"unit_id\": 6, \"quantity_initial\": \"10.000000\", \"quantity_remaining\": \"10.000000\", \"status\": \"active\", \"created_by_entry_id\": 423, \"created_at\": \"2026-08-06T12:48:39.293795+00:00\", \"voided_at\": null, \"void_reason\": null, \"gs1\": {\"gtin\": null, \"batch\": \"26217\", \"expiry\": \"260813\", \"serial\": \"S3QE6R30ZTZ3\", \"payload_string\": \"(10)26217(17)260813(21)S3QE6R30ZTZ3\", \"human_readable\": {\"product_name\": \"SUGAR-\", \"quantity\": \"10.000000\", \"quantity_remaining\": \"10.000000\", \"use_by\": \"2026-08-13\", \"production_date\": null, \"trace_number\": \"26217\", \"unit_serial\": \"S3QE6R30ZTZ3\"}}, \"product\": {\"id\": 910125, \"name\": \"SUGAR-\", \"external_barcode\": null}, \"lot\": {\"id\": 109, \"product_id\": 910125, \"recipe_version_id\": null, \"shape_format_id\": null, \"trace_number\": \"26217\", \"supplier_lot_code\": null, \"origin\": \"purchase\", \"production_date\": null, \"use_by\": \"2026-08-13\", \"created_at\": \"2026-08-06T12:48:39.009144+00:00\"}, \"location\": {\"id\": 8, \"name\": \"Unit 2\"}, \"unit\": {\"id\": 6, \"name\": \"Box\"}, \"location_balance\": {\"quantity\": \"15.000000\", \"quantity_base\": null, \"upd"
+  },
+  {
+    "status": 200,
+    "method": "GET",
+    "url": "http://localhost:8000/stock/stock-units/S3QE6R30ZTZ3/",
+    "reqBody": "",
+    "body": "{\"status\": \"success\", \"message\": \"Stock unit fetched.\", \"data\": {\"id\": 67, \"unit_serial\": \"S3QE6R30ZTZ3\", \"lot_id\": 109, \"location_id\": 8, \"unit_id\": 6, \"quantity_initial\": \"10.000000\", \"quantity_remaining\": \"10.000000\", \"status\": \"active\", \"created_by_entry_id\": 423, \"created_at\": \"2026-08-06T12:48:39.293795+00:00\", \"voided_at\": null, \"void_reason\": null, \"gs1\": {\"gtin\": null, \"batch\": \"26217\", \"expiry\": \"260813\", \"serial\": \"S3QE6R30ZTZ3\", \"payload_string\": \"(10)26217(17)260813(21)S3QE6R30ZTZ3\", \"human_readable\": {\"product_name\": \"SUGAR-\", \"quantity\": \"10.000000\", \"quantity_remaining\": \"10.000000\", \"use_by\": \"2026-08-13\", \"production_date\": null, \"trace_number\": \"26217\", \"unit_serial\": \"S3QE6R30ZTZ3\"}}, \"product\": {\"id\": 910125, \"name\": \"SUGAR-\", \"external_barcode\": null}, \"lot\": {\"id\": 109, \"product_id\": 910125, \"recipe_version_id\": null, \"shape_format_id\": null, \"trace_number\": \"26217\", \"supplier_lot_code\": null, \"origin\": \"purchase\", \"production_date\": null, \"use_by\": \"2026-08-13\", \"created_at\": \"2026-08-06T12:48:39.009144+00:00\"}, \"location\": {\"id\": 8, \"name\": \"Unit 2\"}, \"unit\": {\"id\": 6, \"name\": \"Box\"}, \"location_balance\": {\"quantity\": \"15.000000\", \"quantity_base\": null, \"upd"
+  }
+]

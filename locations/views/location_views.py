@@ -46,14 +46,22 @@ def location_list_api(request):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
-    location_id = body.get('id')
     name = body.get('name')
-    if location_id in (None, '') or name in (None, ''):
-        return api_error('Missing required fields: id, name', status_code=400)
+    if name in (None, ''):
+        return api_error('Missing required field: name', status_code=400)
+
+    location_id = body.get('id')
+    if location_id in (None, ''):
+        location_id = None
+    else:
+        try:
+            location_id = int(location_id)
+        except (TypeError, ValueError):
+            return api_error('id must be a number when provided.', status_code=400)
 
     try:
         location = create_location(
-            location_id=int(location_id),
+            location_id=location_id,
             name=name,
             external_code=body.get('external_code'),
             visible=bool(body.get('visible', True)),

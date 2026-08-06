@@ -36,7 +36,27 @@ urlpatterns = [
     path('disposal/', views.disposal_api, name='stock-disposal'),
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
-    path('entries/<int:pk>/', views.entry_detail_api, name='stock-entry-detail'),
+    path('stock-units/print/', views.stock_units_print_api, name='stock-units-print'),
+    path(
+        'stock-units/<str:unit_serial>/consume/',
+        views.stock_units_consume_api,
+        name='stock-units-consume',
+    ),
+    path(
+        'stock-units/<str:unit_serial>/void/',
+        views.stock_units_void_api,
+        name='stock-units-void',
+    ),
+    path(
+        'stock-units/<str:unit_serial>/reprint/',
+        views.stock_units_reprint_api,
+        name='stock-units-reprint',
+    ),
+    path(
+        'stock-units/<str:unit_serial>/',
+        views.stock_units_detail_api,
+        name='stock-units-detail',
+    ),    path('entries/<int:pk>/', views.entry_detail_api, name='stock-entry-detail'),
     path('audit/timeline/', views.audit_timeline_api, name='stock-audit-timeline'),
     path('balances/', views.balance_list_api, name='stock-balances'),
     path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),

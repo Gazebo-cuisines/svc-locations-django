@@ -1,0 +1,60 @@
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockTracePage.tsx?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockAuditTimelinePage.tsx?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockReservationsPage.tsx?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockUnitScanPage.tsx?t=1786022389892
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockEntryDetailPage.tsx?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockMovementsPage.tsx?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/pages/StockOverviewPage.tsx?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/api/index.ts?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/utils/format.ts
+NET GET 200 http://localhost:5173/src/features/stock/utils/status.ts
+NET GET 200 http://localhost:5173/src/features/stock/components/StockUnitLookupPanel.tsx?t=1786022389892
+NET GET 200 http://localhost:5173/src/features/stock/hooks/useStockMutations.ts?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/components/StockOverviewGrid.css
+NET GET 200 http://localhost:5173/src/features/stock/components/StockOverviewGrid.tsx?t=1786011233526
+NET GET 200 http://localhost:5173/src/features/stock/utils/exportStockOverviewExcel.ts
+NET GET 200 http://localhost:5173/src/features/stock/hooks/useStockOverview.ts?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/api/stockMappers.ts?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/api/stockClient.ts?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/api/stockBalancesStream.ts?t=1786021981437
+NET GET 200 http://localhost:5173/src/features/stock/utils/filters.ts
+NET POST 404 http://localhost:8000/api/auth/login/
+NET POST 200 http://localhost:8000/auth/login/
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockEntryDetailPage.tsx?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockAuditTimelinePage.tsx?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockMovementsPage.tsx?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockOverviewPage.tsx?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockReservationsPage.tsx?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockTracePage.tsx?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/pages/StockUnitScanPage.tsx?t=1786022389892
+NET GET 304 http://localhost:5173/src/features/stock/api/index.ts?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/utils/format.ts
+NET GET 304 http://localhost:5173/src/features/stock/utils/status.ts
+NET GET 304 http://localhost:5173/src/features/stock/hooks/useStockMutations.ts?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/components/StockOverviewGrid.tsx?t=1786011233526
+NET GET 304 http://localhost:5173/src/features/stock/components/StockOverviewGrid.css
+NET GET 304 http://localhost:5173/src/features/stock/hooks/useStockOverview.ts?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/utils/exportStockOverviewExcel.ts
+NET GET 304 http://localhost:5173/src/features/stock/components/StockUnitLookupPanel.tsx?t=1786022389892
+NET GET 304 http://localhost:5173/src/features/stock/api/stockClient.ts?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/api/stockMappers.ts?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/api/stockBalancesStream.ts?t=1786021981437
+NET GET 304 http://localhost:5173/src/features/stock/utils/filters.ts
+NET GET 200 http://localhost:8000/product/unit/
+NET GET 200 http://localhost:8000/product/unit/
+NET GET 200 http://localhost:8000/container/departments/
+NET GET 200 http://localhost:8000/container/departments/
+NET GET 200 http://localhost:8000/product/?source_container_id=8
+NET GET 200 http://localhost:8000/stock/balances/?location_id=8
+URL after Unit2: http://localhost:5173/production/warehouse
+BODY: Menu | Gazebo Fine Foods Limited | Warehouse |  | Unit 2 — Raw Material Warehouse · location #8. Production stock moves. |  | PRODUCTION | Warehouse | SITE | Unit 2 — Raw Material Warehouse | Change warehouse | STOCK MOVEMENTS | Stock | All stock at Unit 2 | Scan label | Lookup unit / goods-in details | Goods Out | Send stock to production | Goods In | Receive against PO | Stock · 34 lots | Refresh | Scan | Product | Supplier | Trace | On hand | Reserved | ATP | Unit | Use by | BALTI PASTE · SAUCE0-05 | — | DUMMY-1957 | 98,344.979 | 0 | 98,344.979 | grams | 2027-08-04 | BALTI PASTE · SAUCE0-05 | — | 26215 | 800 | 0 | 800 | grams | 2027-08-05 | CARROT DICED 10MM ( FROZEN ) · VEGFRO-04 | — | 26215 | 97,932 | 0 | 97,932 | grams | 2026-07-08 | CARROT DICED 10MM ( FROZEN ) · VEGFRO-04 | — | DUMMY-1999 | 100,000 | 0 | 100,000 | grams | 2027-08-04 | CHILLI POWDER- · SPICE0-08 | — | DUMMY-910130 | 1,958.604 | 0 | 1,958.604 | Box | 2027-08-04 | CHILLI POWDER- · SPICE0-08 | — | 26215 | 5 | 0 | 5 | Box | 2027-11-04 | CORIANDER CHOPPED ( FROZEN ) · VEGFRO-10 | — | DUMMY-2005 | 99,700 | 0 | 99,700 | grams | 2027-08-04 | CUMIN SEED- · SPICE0-04 | — | DUMMY-910127 | 1,915 | 0 | 1,915 | Box | 2027-08-04 | GARAM MASALA · SPICE0-06 | — | DUMMY-910128 | 1,955 | 0 | 1,955 | Box | 2027-08-04 | LEMON JUICE · SAUCE0-02 | — | DUMMY-1954 | 99,585 | 0 | 99,585 | grams | 2027-08-04 | ONION CHOPPED 2-6MM · ONION-01 | Hussian Meats | 26217 | 60,000 | 0 | 60,000 | grams | — | ONION SLICED 2-6MM · ONION-02 | Hussian Meats | 26217 | 295,000 | 0 | 295,000 | grams | 2026-08-25 | ONION SLICED 2-6MM · ONION-02 | Hussian Meats | 26217 | 200,000 | 0 | 200,000 | grams | 2026-08-26 | ONION WHITE DICED 10MM ( FROZEN ) · VEGFRO-02 | — | DUMMY-1997 | 199,170 | 0 | 199,170 | grams | 2027-08-04 | PEAS ( FROZEN ) · VEGFRO-01 | — | 26215 | 50 | 0 | 50 | grams | 2026-08-31 | PEAS ( FROZEN ) · VEGFRO-01 | — | DUMMY-1996 | 193,500 | 0 | 193,500 | grams | 2027-08-04 | POTATO DICED 10MM ( FRESH ) · VEGCHI-02 | — | 26215 | 100,000 | 0 | 100,000 | grams | 2026-08-07 | POTATO DICED 10MM ( FRESH ) · VEGCHI-02 | — | DUMMY-2059 | 100,000 | 0 | 100,000 | grams | 2027-08-04 | SALT · SPICE0-02 | — | 26217 | 50,000 | 0 | 50,000 | grams | 2026-08-20 | SALT · SPICE0-02 | — | 26212 | 4,613.86 | 0 | 4,613.86 | grams | 2026-08-21 | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+TABS: ["Menu","Gazebo Fine Foods Limited","Unit 2 — Raw Material WarehouseChange warehouse","StockAll stock at Unit 2","Scan labelLookup unit / goods-in details","Goods OutSend stock to production","Goods InReceive against PO","Refresh","Scan"]
+GO: Menu | Gazebo Fine Foods Limited | Warehouse |  | Unit 2 — Raw Material Warehouse · location #8. Production stock moves. |  | PRODUCTION | Warehouse | SITE | Unit 2 — Raw Material Warehouse | Change warehouse | STOCK MOVEMENTS | Stock | All stock at Unit 2 | Scan label | Lookup unit / goods-in details | Goods Out | Send stock to production | Goods In | Receive against PO | Goods Out | Refresh |  | From Unit 2 · scan bags into cart, then Confirm (one transfer per lot). |  | To department | Search departments… | Scan bags | Manual FIFO | Add |  | Cart · 0 bags · total 0 |  | Scan bag labels to build the transfer cart. |  | Undo last | Confirm Goods Out | Cart summary |  | No bags scanned yet. |  | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+FINAL_URL: http://localhost:5173/production/warehouse
+FINAL_BODY: Menu | Gazebo Fine Foods Limited | Warehouse |  | Unit 2 — Raw Material Warehouse · location #8. Production stock moves. |  | PRODUCTION | Warehouse | SITE | Unit 2 — Raw Material Warehouse | Change warehouse | STOCK MOVEMENTS | Stock | All stock at Unit 2 | Scan label | Lookup unit / goods-in details | Goods Out | Send stock to production | Goods In | Receive against PO | Goods Out | Refresh |  | From Unit 2 · scan bags into cart, then Confirm (one transfer per lot). |  | To department | Search departments… | Scan bags | Manual FIFO | Add |  | Cart · 0 bags · total 0 |  | Scan bag labels to build the transfer cart. |  | Undo last | Confirm Goods Out | Cart summary |  | No bags scanned yet. |  | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+NET GET 200 http://localhost:8000/stock/stock-units/S3QE6R30ZTZ3/
+SCAN1: Menu | Gazebo Fine Foods Limited | Warehouse |  | Unit 2 — Raw Material Warehouse · location #8. Production stock moves. |  | PRODUCTION | Warehouse | SITE | Unit 2 — Raw Material Warehouse | Change warehouse | STOCK MOVEMENTS | Stock | All stock at Unit 2 | Scan label | Lookup unit / goods-in details | Goods Out | Send stock to production | Goods In | Receive against PO | Goods Out | Refresh |  | From Unit 2 · scan bags into cart, then Confirm (one transfer per lot). |  | To department | Search departments… | Scan bags | Manual FIFO | Add |  | Cart · 1 bag · total 10 |  | PRODUCT	TRACE	USE BY	QTY	 | SUGAR- | S3QE6R30ZTZ3 | 	26217	2026-08-13	 / 10 Box	Remove | Undo last | Confirm Goods Out | Cart summary | 1 bag | SUGAR- | · 26217 · 10 Box | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+NET GET 200 http://localhost:8000/stock/stock-units/S3QE6R30ZTZ3/
+SCANDUP: Menu | Gazebo Fine Foods Limited | Warehouse |  | Unit 2 — Raw Material Warehouse · location #8. Production stock moves. |  | PRODUCTION | Warehouse | SITE | Unit 2 — Raw Material Warehouse | Change warehouse | STOCK MOVEMENTS | Stock | All stock at Unit 2 | Scan label | Lookup unit / goods-in details | Goods Out | Send stock to production | Goods In | Receive against PO | Goods Out | Refresh | Duplicate |  | From Unit 2 · scan bags into cart, then Confirm (one transfer per lot). |  | To department | Search departments… | Scan bags | Manual FIFO | Add |  | Cart · 1 bag · total 10 |  | PRODUCT	TRACE	USE BY	QTY	 | SUGAR- | S3QE6R30ZTZ3 | 	26217	2026-08-13	 / 10 Box	Remove | Undo last | Confirm Goods Out | Cart summary | 1 bag | SUGAR- | · 26217 · 10 Box | Powered by Gazebo Tech | Need help? Use the help link in the bottom right.
+combo count 1
+selectish 1
