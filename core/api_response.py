@@ -1,4 +1,5 @@
 """Standard API response helpers. Use for every endpoint."""
+# pylint: disable=invalid-name
 
 from typing import Any
 
