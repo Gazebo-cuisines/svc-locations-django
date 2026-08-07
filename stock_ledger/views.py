@@ -44,6 +44,11 @@ from stock_ledger.util.serialize import (
     receipt_meta_by_lot_ids,
     serialize_balance_row,
 )
+from stock_ledger.util.recall import (
+    RecallLookupError,
+    build_product_genealogy_index,
+    build_recall_report,
+)
 from stock_ledger.util.trace import (
     mass_balance_for_output,
     trace_backward,
@@ -1432,6 +1437,54 @@ def atp_api(request):
         'ATP fetched.',
         {'lot_id': lot_id, 'location_id': location_id, 'available_to_promise': _dec(qty)},
     )
+
+
+@csrf_exempt
+@require_GET
+def recall_api(request):
+    """Complaint / recall: product_id + use_by → all matching lots + genealogy."""
+    product_raw = request.GET.get('product_id')
+    use_by_raw = request.GET.get('use_by')
+    if product_raw in (None, ''):
+        return api_error('product_id query param is required.')
+    if use_by_raw in (None, ''):
+        return api_error('use_by query param is required.')
+    try:
+        product_id = int(product_raw)
+    except (TypeError, ValueError):
+        return api_error('product_id must be an integer.')
+    try:
+        use_by = _parse_date(use_by_raw, 'use_by')
+    except ValueError as exc:
+        return api_error(str(exc))
+    if use_by is None:
+        return api_error('use_by query param is required.')
+    try:
+        data = build_recall_report(product_id=product_id, use_by=use_by)
+    except RecallLookupError as exc:
+        return api_error(str(exc), status_code=exc.status_code)
+    return api_success('Recall report fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+def product_genealogy_api(request, product_id: int):
+    """All lots for a product with genealogy trees (or index-only)."""
+    with_trees_raw = (request.GET.get('with_trees') or '1').strip().lower()
+    if with_trees_raw in ('0', 'false', 'no'):
+        with_trees = False
+    elif with_trees_raw in ('1', 'true', 'yes'):
+        with_trees = True
+    else:
+        return api_error('with_trees must be 0 or 1.')
+    try:
+        data = build_product_genealogy_index(
+            product_id=product_id,
+            with_trees=with_trees,
+        )
+    except RecallLookupError as exc:
+        return api_error(str(exc), status_code=exc.status_code)
+    return api_success('Product genealogy fetched.', data)
 
 
 @csrf_exempt
