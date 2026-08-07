@@ -482,6 +482,32 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(ais['21'], 'ABC123')
         self.assertEqual(parse_gs1(f'P{self.product.id}'), {})
 
+    def test_scan_product_trace_preselects_lot(self):
+        lot = self._lot(use_by=date(2026, 9, 1))
+        lot.trace_number = '26218'
+        lot.save(update_fields=['trace_number'])
+        self._receipt(lot, '10')
+
+        code = f'P{self.product.id}T26218'
+        resp = self.client.get(f'/stock/scan/?code={code}')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['match_type'], 'product_trace')
+        self.assertEqual(data['selected_lot_id'], lot.id)
+        self.assertEqual(data['product']['product_id'], self.product.id)
+
+        # Unknown product id → 404
+        self.assertEqual(
+            self.client.get('/stock/scan/?code=P99999999T26218').status_code,
+            404,
+        )
+        # Known product, unknown trace → product only, no selected lot
+        miss = self.client.get(
+            f'/stock/scan/?code=P{self.product.id}TNOPE',
+        ).json()['data']
+        self.assertEqual(miss['match_type'], 'product')
+        self.assertIsNone(miss['selected_lot_id'])
+
     def test_scan_accepts_product_code_bare_id_and_rejects_unknown(self):
         self._receipt(self._lot(use_by=date(2026, 9, 1)), '100')
 
