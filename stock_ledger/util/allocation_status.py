@@ -280,3 +280,28 @@ def exclude_incomplete_lot_ids(
     if not location_hides_incomplete_stock(int(location_id)):
         return set()
     return incomplete_production_lot_ids(lot_ids)
+
+
+def held_balance_keys(
+    balances,
+    *,
+    include_incomplete: bool = False,
+) -> set[tuple[int, int]]:
+    """
+    (location_id, lot_id) pairs to drop from a balances read.
+    Honours each location's show_incomplete_stock (works for global lists).
+    """
+    if include_incomplete:
+        return set()
+    by_loc: dict[int, set[int]] = {}
+    for b in balances:
+        by_loc.setdefault(int(b.location_id), set()).add(int(b.lot_id))
+    held: set[tuple[int, int]] = set()
+    for loc_id, lot_ids in by_loc.items():
+        for lot_id in exclude_incomplete_lot_ids(
+            location_id=loc_id,
+            lot_ids=lot_ids,
+            include_incomplete=False,
+        ):
+            held.add((loc_id, lot_id))
+    return held

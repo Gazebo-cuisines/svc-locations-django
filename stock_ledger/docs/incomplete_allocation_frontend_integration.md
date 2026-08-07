@@ -39,7 +39,8 @@ GET /stock/balances/?location_id=<Dispatch>
 ```
 
 Incomplete MADE lots are **hidden** when that location’s
-`stock_profile.show_incomplete_stock` is `false` (default).
+`stock_profile.show_incomplete_stock` is `false` (default) — including
+**global** `GET /stock/balances/` (no `location_id`).
 
 After the last allocate, the lot appears with **no transfer**.
 
