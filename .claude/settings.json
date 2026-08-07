@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"c:\\\\Users\\\\varun\\\\projects\\\\gazeboo-cloud\\\\microservice\\\\svc-locations-django\" && find .. -maxdepth 2 -iname \"*front*\" -o -iname \"*ui*\" 2>/dev/null | grep -v node_modules)",
+      "Read(//c/Users/varun/projects/gazeboo-cloud/microservice/**)",
+      "Bash(ls \"C:\\\\Users\\\\varun\\\\projects\\\\gazeboo-cloud\\\\frontend\\\\gazeboo-cloud-web\\\\src\" 2>&1 | head -50)",
+      "Read(//c/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/src/**)",
+      "Bash(ls \"C:\\\\Users\\\\varun\\\\projects\\\\gazeboo-cloud\\\\frontend\\\\gazeboo-cloud-web\" 2>&1 | head -50)",
+      "Read(//c/Users/varun/projects/gazeboo-cloud/frontend/gazeboo-cloud-web/**)",
+      "Bash(ls \"C:\\\\Users\\\\varun\\\\projects\\\\gazeboo-cloud\\\\frontend\\\\gazeboo-cloud-web\\\\src\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\varun\\\\projects\\\\gazeboo-cloud\\\\frontend\\\\gazeboo-cloud-web\" && find src -iname \"*hook*\" -path \"*stock*\" -o -iname \"*hook*\" -path \"*production*\" 2>/dev/null)"
+    ]
+  }
+}
