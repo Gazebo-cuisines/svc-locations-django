@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from product.models import Product
-from stock_ledger.models import StockUnit
+from stock_ledger.models import StockLot, StockUnit
 from stock_ledger.util import stock_units
 from stock_ledger.util.conversions import StockValidationError
 
@@ -13,22 +13,28 @@ from stock_ledger.util.conversions import StockValidationError
 # legacy per-unit serial labels keep scanning; product labels carry P<id> alone.
 _AI_PATTERN = re.compile(r'\((\d{2,4})\)([^(]*)')
 _PRODUCT_CODE = re.compile(r'^P?(\d+)$', re.IGNORECASE)
+# Production batch label: P{productId}T{trace} (e.g. P545T26218).
+_PRODUCT_TRACE = re.compile(r'^P?(\d+)T(.+)$', re.IGNORECASE)
 
 
 def parse_gs1(text: str) -> dict[str, str]:
     return {ai: value.strip() for ai, value in _AI_PATTERN.findall(text or '')}
 
 
+def _product_by_id(product_id: int) -> Product | None:
+    return (
+        Product.objects
+        .select_related('unit', 'product_class', 'range')
+        .filter(pk=product_id)
+        .first()
+    )
+
+
 def _product_by_code(text: str) -> Product | None:
     match = _PRODUCT_CODE.match(text)
     if match is None:
         return None
-    return (
-        Product.objects
-        .select_related('unit', 'product_class', 'range')
-        .filter(pk=int(match.group(1)))
-        .first()
-    )
+    return _product_by_id(int(match.group(1)))
 
 
 def resolve_scan(code: str) -> dict:
@@ -50,6 +56,25 @@ def resolve_scan(code: str) -> dict:
             'product': unit.lot.product,
             'lot': unit.lot,
             'unit': unit,
+        }
+
+    pt = _PRODUCT_TRACE.match(text)
+    if pt is not None:
+        product = _product_by_id(int(pt.group(1)))
+        if product is None:
+            raise StockValidationError(f'code={text} not found')
+        trace = pt.group(2).strip()
+        lot = (
+            StockLot.objects
+            .filter(product_id=product.id, trace_number__iexact=trace)
+            .order_by('id')
+            .first()
+        )
+        return {
+            'match_type': 'product_trace' if lot is not None else 'product',
+            'product': product,
+            'lot': lot,
+            'unit': None,
         }
 
     product = _product_by_code(text)
