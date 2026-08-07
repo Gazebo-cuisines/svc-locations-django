@@ -232,10 +232,18 @@ def _project_balance(*, entry: StockEntry, override_reason: str | None,) -> Stoc
 
 def _schedule_balance_stream(balance: StockBalance) -> None:
     """Publish upsert/remove after commit. Build payload now; fan-out stays off hot path."""
+    # Delayed import: allocation_status imports helpers from this module.
+    from stock_ledger.util.allocation_status import exclude_incomplete_lot_ids
+
     lot_id = balance.lot_id
     location_id = balance.location_id
     at = timezone.now().isoformat()
-    if balance.quantity == 0:
+    held = exclude_incomplete_lot_ids(
+        location_id=location_id,
+        lot_ids={lot_id},
+    )
+    # Incomplete MADE at a hide-flag location: never upsert into Stock Overview SSE.
+    if balance.quantity == 0 or lot_id in held:
         event = {
             'type': 'remove',
             'at': at,

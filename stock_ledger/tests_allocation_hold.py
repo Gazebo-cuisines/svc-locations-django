@@ -154,6 +154,12 @@ class IncompleteAllocationHoldTests(TestCase):
         lot_ids = {row['lot_id'] for row in resp.json()['data']}
         self.assertNotIn(lot.id, lot_ids)
 
+        # Global balances (no location_id) must also honour Dispatch hide flag.
+        global_resp = self.client.get('/stock/balances/')
+        self.assertEqual(global_resp.status_code, 200)
+        global_lots = {row['lot_id'] for row in global_resp.json()['data']}
+        self.assertNotIn(lot.id, global_lots)
+
     def test_consume_all_makes_complete_and_visible(self):
         lot, entry, _ = self._make_fg()
         self._consume_all(entry)

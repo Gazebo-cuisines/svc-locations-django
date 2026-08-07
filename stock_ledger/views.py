@@ -35,6 +35,7 @@ from stock_ledger.util.allocation_status import (
     allocation_status,
     allocation_status_for_entries,
     exclude_incomplete_lot_ids,
+    held_balance_keys,
 )
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
@@ -1308,19 +1309,15 @@ def balance_list_api(request):
     include_incomplete = str(request.GET.get('include_incomplete', '')).lower() in (
         '1', 'true', 'yes',
     )
-    rows = list(qs[:500])
-    if location_id and not include_incomplete:
+    if location_id not in (None, ''):
         try:
-            loc_id = int(location_id)
+            int(location_id)
         except (TypeError, ValueError):
             return api_error('location_id must be an integer.')
-        held = exclude_incomplete_lot_ids(
-            location_id=loc_id,
-            lot_ids={b.lot_id for b in rows},
-            include_incomplete=False,
-        )
-        if held:
-            rows = [b for b in rows if b.lot_id not in held]
+    rows = list(qs[:500])
+    held = held_balance_keys(rows, include_incomplete=include_incomplete)
+    if held:
+        rows = [b for b in rows if (b.location_id, b.lot_id) not in held]
 
     receipt_meta = receipt_meta_by_lot_ids({b.lot_id for b in rows})
     data = [
