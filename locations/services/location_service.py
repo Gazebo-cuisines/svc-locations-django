@@ -107,6 +107,7 @@ def create_location(
         production_form_identifier=profile.get('production_form_identifier'),
         usage_form_identifier=profile.get('usage_form_identifier'),
         real_stock=profile.get('real_stock', True),
+        show_incomplete_stock=profile.get('show_incomplete_stock', False),
         min_shelf_life=profile.get('min_shelf_life'),
         max_shelf_life=profile.get('max_shelf_life'),
         use_by_modifier=profile.get('use_by_modifier'),

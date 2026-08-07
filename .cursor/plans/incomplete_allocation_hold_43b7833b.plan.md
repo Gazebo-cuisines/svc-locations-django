@@ -4,19 +4,19 @@ overview: Keep posting MADE stock at Dispatch as today, but mark production outp
 todos:
   - id: chunk1-status
     content: Chunk 1 — allocation_status helper + production list fields/filter
-    status: pending
+    status: completed
   - id: chunk2-profile
     content: Chunk 2 — LocationStockProfile.show_incomplete_stock + location API
-    status: pending
+    status: completed
   - id: chunk3-balances
     content: Chunk 3 — Filter balances at destination when incomplete and flag off
-    status: pending
+    status: completed
   - id: chunk4-status-api
     content: Chunk 4 — GET production/<id>/allocation-status/ for management reasons
-    status: pending
+    status: completed
   - id: chunk5-tests-docs
     content: Chunk 5 — Tests + short FE integration note
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -50,80 +50,48 @@ flowchart LR
 
 ---
 
-## Chunk 1 — Completeness helper + production list fields
+## Chunks — approve one at a time
 
-Add `stock_ledger/util/allocation_status.py`:
+| # | Chunk | Done when |
+|---|---|---|
+| 1 | Completeness helper + production list Incomplete/Complete + reasons + list filter | Sleeving grid can badge Incomplete and show why |
+| 2 | Department setting `show_incomplete_stock` on `LocationStockProfile` | Admin can toggle per dept via location API |
+| 3 | Gate Dispatch balances (hide incomplete lots when flag off) | Entry 430-style MADE hidden from Dispatch until BOM done |
+| 4 | `GET /stock/production/<id>/allocation-status/` detail for management | One-row drill-down with full remaining BOM |
+| 5 | Tests + FE integration note | Green under `core.settings_test` + short FE doc |
 
-```python
-def allocation_status(*, output_entry_id) -> dict:
-    # reuse production_requirements() without balances
-    # status: 'complete' | 'incomplete' | 'no_recipe'
-    # remaining_lines: [{component_product_id, name, remaining_quantity, needed, consumed}]
-    # incomplete_reasons: human strings e.g. "CUSAL base still needs 12.5 kg"
-```
+Say **approve** (or **approve 1**) to build only Chunk 1.
 
-Rules:
-- No recipe / no components → treat as **complete** (nothing to allocate; do not block Dispatch).
-- Any line with `remaining_quantity > 0` → **incomplete**.
-- All zero → **complete**.
+---
 
-Extend [`production_list_row`](stock_ledger/views.py) (and detail) with:
-- `allocation_status`
-- `incomplete_reasons` (list of strings)
-- `remaining_component_count`
+## Chunk 1 — Completeness helper + production list fields (DONE)
 
-Add list filter `?allocation_status=incomplete|complete|all` (default `all`) on `GET /stock/production/`.
+[`stock_ledger/util/allocation_status.py`](stock_ledger/util/allocation_status.py):
+- `allocation_status(output_entry_id=…)` and batch `allocation_status_for_entries(ids)`
+- Statuses: `complete` | `incomplete` | `no_recipe` (no recipe / empty BOM → not incomplete)
 
-**Done when:** Sleeving grid can show Incomplete and the BOM-based reasons without a second round-trip for every row (batch-compute for the page of runs).
+[`production_list_row`](stock_ledger/views.py) now includes `allocation_status`, `incomplete_reasons`, `remaining_component_count`. List filter `?allocation_status=incomplete|complete|all`. POST/PUT production responses include the same fields.
 
-## Chunk 2 — Department setting `show_incomplete_stock`
+## Chunk 2 — Department setting `show_incomplete_stock` (DONE)
 
-On [`LocationStockProfile`](locations/models.py):
+On [`LocationStockProfile`](locations/models.py): `show_incomplete_stock` (default `False`). Migration `locations/0003_show_incomplete_stock.py`. Wired in create + presentation; PATCH via existing `stock_profile` dict on location update.
 
-```python
-show_incomplete_stock = models.BooleanField(default=False)
-```
+## Chunk 3 — Gate Dispatch balances (DONE)
 
-- Migration on `locations`.
-- Wire through existing `stock_profile` create/update in [`location_service.py`](locations/services/location_service.py) and presentation dict.
-- Meaning: **when this location is the balance `location_id` being queried**, if `False` (default), hide incomplete lots; if `True`, include them (admin/ops override for that department).
+[`exclude_incomplete_lot_ids`](stock_ledger/util/allocation_status.py) + helpers. Applied on:
+- `GET /stock/balances/?location_id=` (honours `show_incomplete_stock`; `?include_incomplete=1` override)
+- `GET /stock/scan/` FIFO batches at a location (same rules)
 
-Sleeving does not need this on for their own Incomplete work queue — they use the production list. Dispatch stays `False`.
+Purchase/opening lots never hidden. Warehouse remaining (storage only) unchanged.
 
-## Chunk 3 — Gate Dispatch balances (and related reads)
+## Chunk 4 — Management “why stopped” payload (DONE)
 
-In [`balance_list_api`](stock_ledger/views.py) / shared filter helper:
+`GET /stock/production/<entry_id>/allocation-status/?location_id=` → status, incomplete_reasons, remaining_lines, plus full requirements `components` when a recipe exists.
 
-When `location_id` is set and that location’s profile has `show_incomplete_stock=False`:
-- Exclude balances whose lot was created by a `PRODUCTION_OUTPUT` that is still incomplete (BOM remaining > 0).
-- Lots with no production output origin (purchase receipts, opening) stay visible.
-- Optional query override: `?include_incomplete=1` for support/admin, still respect profile unless override is allowed (use override only when explicitly requested; document it).
+## Chunk 5 — Tests + FE note (DONE)
 
-Also apply the same gate to any Dispatch-facing aggregate that lists sellable FG (e.g. [`warehouse_remaining_api`](stock_ledger/views.py) if it can include process destinations — only if those endpoints currently expose the same lots).
-
-Do **not** change ATP/reservations in v1 unless they already read the same balance queryset.
-
-**Done when:** after MADE with unfinished allocate, `GET /stock/balances/?location_id=<Dispatch>` does not return that lot; after last consume brings remaining to 0, the lot appears without a transfer.
-
-## Chunk 4 — Management “why stopped” payload
-
-On production list/detail (Chunk 1 fields) plus a thin endpoint for one row:
-
-`GET /stock/production/<entry_id>/allocation-status/`
-
-Returns full `production_requirements` summary + `status` + `incomplete_reasons`. Frontend Incomplete filter and management panel use this; no new write API.
-
-## Chunk 5 — Tests + FE note
-
-Tests (SQLite `core.settings_test`):
-- MADE with recipe, no consume → incomplete; Dispatch balances empty for that lot when `show_incomplete_stock=False`.
-- Consume all lines → complete; lot appears.
-- Purchase lot at same Dispatch location never hidden.
-- Profile `show_incomplete_stock=True` → incomplete lot visible.
-- `?allocation_status=incomplete` filters production list.
-- Product with no recipe → complete immediately.
-
-Short FE note in `stock_ledger/docs/` (same style as barcode doc): Incomplete badge, Complete = BOM done, Dispatch list uses balances as today, admin toggle on department stock profile.
+[`stock_ledger/tests_allocation_hold.py`](stock_ledger/tests_allocation_hold.py) — 8 tests green.
+[`stock_ledger/docs/incomplete_allocation_frontend_integration.md`](stock_ledger/docs/incomplete_allocation_frontend_integration.md).
 
 ---
 

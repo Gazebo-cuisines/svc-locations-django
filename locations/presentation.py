@@ -46,6 +46,7 @@ def location_detail_dict(location: Location) -> dict:
                 'production_form_identifier': profile.production_form_identifier,
                 'usage_form_identifier': profile.usage_form_identifier,
                 'real_stock': profile.real_stock,
+                'show_incomplete_stock': profile.show_incomplete_stock,
                 'min_shelf_life': profile.min_shelf_life,
                 'max_shelf_life': profile.max_shelf_life,
                 'use_by_modifier': profile.use_by_modifier,

@@ -28,6 +28,11 @@ urlpatterns = [
         name='stock-production-requirements',
     ),
     path(
+        'production/<int:entry_id>/allocation-status/',
+        views.production_allocation_status_api,
+        name='stock-production-allocation-status',
+    ),
+    path(
         'production/<int:entry_id>/consume/',
         views.production_consume_api,
         name='stock-production-consume',
