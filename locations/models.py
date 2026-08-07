@@ -105,6 +105,8 @@ class LocationStockProfile(models.Model):
     usage_form_identifier = models.CharField(max_length=64, null=True, blank=True)
     # Legacy realstock: -1/null => True, 0 => False
     real_stock = models.BooleanField(default=True)
+    # When False (default), balances at this location hide FG lots from incomplete MADE.
+    show_incomplete_stock = models.BooleanField(default=False)
     min_shelf_life = models.IntegerField(null=True, blank=True)
     max_shelf_life = models.IntegerField(null=True, blank=True)
     use_by_modifier = models.IntegerField(null=True, blank=True)

@@ -28,6 +28,14 @@ from stock_ledger.models import (
 )
 from stock_ledger.stream import iter_sse, subscribe
 from stock_ledger.util import reservations, scan, services, stock_units
+from stock_ledger.util.allocation_status import (
+    STATUS_COMPLETE,
+    STATUS_INCOMPLETE,
+    STATUS_NO_RECIPE,
+    allocation_status,
+    allocation_status_for_entries,
+    exclude_incomplete_lot_ids,
+)
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
 from stock_ledger.util.serialize import (
@@ -221,11 +229,29 @@ def production_run_dict(run: ProductionRun) -> dict:
     }
 
 
-def production_list_row(run: ProductionRun) -> dict:
+def _allocation_fields(status: dict | None) -> dict:
+    if status is None:
+        return {
+            'allocation_status': STATUS_COMPLETE,
+            'incomplete_reasons': [],
+            'remaining_component_count': 0,
+        }
+    return {
+        'allocation_status': status['allocation_status'],
+        'incomplete_reasons': status['incomplete_reasons'],
+        'remaining_component_count': status['remaining_component_count'],
+    }
+
+
+def production_list_row(
+    run: ProductionRun,
+    *,
+    allocation: dict | None = None,
+) -> dict:
     entry = run.stock_entry
     lot = entry.lot
     product = lot.product
-    return {
+    row = {
         'entry_id': entry.id,
         'run_id': run.id,
         'base_date': _format_display_date(run.base_date),
@@ -255,6 +281,8 @@ def production_list_row(run: ProductionRun) -> dict:
         'trace_number': lot.trace_number,
         'recipe_version_id': lot.recipe_version_id,
     }
+    row.update(_allocation_fields(allocation))
+    return row
 
 
 def _optional_int_param(raw, field_name: str):
@@ -287,6 +315,12 @@ def _list_production_runs(request):
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
 
+    status_filter = str(request.GET.get('allocation_status', 'all')).lower()
+    if status_filter not in ('all', 'incomplete', 'complete'):
+        return api_error(
+            'Invalid allocation_status. Use incomplete, complete, or all.',
+        )
+
     qs = (
         ProductionRun.objects.filter(
             stock_entry__entry_type=StockEntryType.PRODUCTION_OUTPUT,
@@ -298,6 +332,7 @@ def _list_production_runs(request):
             'stock_entry__counterparty_location',
             'stock_entry__unit',
             'stock_entry__lot__product',
+            'stock_entry__lot__recipe_version',
         )
         .order_by('base_date', 'started_at', 'id')
     )
@@ -313,10 +348,24 @@ def _list_production_runs(request):
         if date_to is not None:
             qs = qs.filter(base_date__lte=date_to)
 
-    return api_success(
-        'Production entries fetched.',
-        [production_list_row(run) for run in qs[:500]],
+    runs = list(qs[:500])
+    statuses = allocation_status_for_entries(
+        [run.stock_entry_id for run in runs],
     )
+
+    rows = []
+    for run in runs:
+        status = statuses.get(run.stock_entry_id)
+        alloc = status['allocation_status'] if status else STATUS_COMPLETE
+        # no_recipe counts as complete for the Incomplete filter.
+        is_incomplete = alloc == STATUS_INCOMPLETE
+        if status_filter == 'incomplete' and not is_incomplete:
+            continue
+        if status_filter == 'complete' and is_incomplete:
+            continue
+        rows.append(production_list_row(run, allocation=status))
+
+    return api_success('Production entries fetched.', rows)
 
 
 @csrf_exempt
@@ -337,7 +386,11 @@ def production_api(request):
         return api_error(str(exc))
     return api_success(
         'Production posted.',
-        {'entry': entry_dict(entry), 'run': production_run_dict(run)},
+        {
+            'entry': entry_dict(entry),
+            'run': production_run_dict(run),
+            **_allocation_fields(allocation_status(output_entry_id=entry.id)),
+        },
         status_code=201,
     )
 
@@ -444,6 +497,7 @@ def production_detail_api(request, entry_id: int):
             'entry': entry_dict(entry),
             'run': production_run_dict(run),
             'replaced_entry_id': entry_id,
+            **_allocation_fields(allocation_status(output_entry_id=entry.id)),
         },
         status_code=201,
     )
@@ -854,6 +908,47 @@ def production_requirements_api(request, entry_id: int):
 
 
 @csrf_exempt
+@require_GET
+def production_allocation_status_api(request, entry_id: int):
+    """Management drill-down: why a MADE row is incomplete + full BOM remaining."""
+    location_id = request.GET.get('location_id')
+    try:
+        loc = int(location_id) if location_id not in (None, '') else None
+        status = allocation_status(output_entry_id=entry_id)
+    except (ValueError, StockValidationError, TypeError) as exc:
+        msg = str(exc)
+        code = 404 if 'not found' in msg else 400
+        return api_error(msg, status_code=code)
+
+    data = {
+        **status,
+        'location_id': loc,
+        'made_quantity': None,
+        'product_id': None,
+        'recipe_version_id': None,
+        'process_loss': None,
+        'components': [],
+    }
+    if status['allocation_status'] != STATUS_NO_RECIPE:
+        try:
+            req = services.production_requirements(
+                output_entry_id=entry_id,
+                location_id=loc,
+            )
+            data.update({
+                'made_quantity': req['made_quantity'],
+                'product_id': req['product_id'],
+                'recipe_version_id': req['recipe_version_id'],
+                'process_loss': req['process_loss'],
+                'components': req['components'],
+            })
+        except StockValidationError:
+            pass
+
+    return api_success('Production allocation status fetched.', data)
+
+
+@csrf_exempt
 @require_http_methods(['POST'])
 def production_consume_api(request, entry_id: int):
     """Floor allocate: stock-out a component pile against production output."""
@@ -1215,7 +1310,23 @@ def balance_list_api(request):
     elif order not in ('', 'default'):
         return api_error('Invalid order. Use fifo or default.')
 
+    include_incomplete = str(request.GET.get('include_incomplete', '')).lower() in (
+        '1', 'true', 'yes',
+    )
     rows = list(qs[:500])
+    if location_id and not include_incomplete:
+        try:
+            loc_id = int(location_id)
+        except (TypeError, ValueError):
+            return api_error('location_id must be an integer.')
+        held = exclude_incomplete_lot_ids(
+            location_id=loc_id,
+            lot_ids={b.lot_id for b in rows},
+            include_incomplete=False,
+        )
+        if held:
+            rows = [b for b in rows if b.lot_id not in held]
+
     receipt_meta = receipt_meta_by_lot_ids({b.lot_id for b in rows})
     data = [
         serialize_balance_row(b, receipt_meta=receipt_meta.get(b.lot_id))
@@ -1425,8 +1536,20 @@ def reservation_consume_api(request, pk: int):
     return api_success('Reservation consumed.', reservation_dict(row))
 
 
-def _fifo_batch_rows(*, product_id: int, location_id: int | None) -> list[dict]:
+def _fifo_batch_rows(
+    *,
+    product_id: int,
+    location_id: int | None,
+    include_incomplete: bool = False,
+) -> list[dict]:
     rows = list(fifo_balances(product_id=product_id, location_id=location_id)[:200])
+    held = exclude_incomplete_lot_ids(
+        location_id=location_id,
+        lot_ids={b.lot_id for b in rows},
+        include_incomplete=include_incomplete,
+    )
+    if held:
+        rows = [b for b in rows if b.lot_id not in held]
     receipt_meta = receipt_meta_by_lot_ids({b.lot_id for b in rows})
     today = timezone.localdate()
     batches = []
@@ -1461,7 +1584,14 @@ def scan_resolve_api(request):
         return api_error(msg, status_code=404 if 'not found' in msg else 400)
 
     product = match['product']
-    batches = _fifo_batch_rows(product_id=product.id, location_id=loc_id)
+    include_incomplete = str(request.GET.get('include_incomplete', '')).lower() in (
+        '1', 'true', 'yes',
+    )
+    batches = _fifo_batch_rows(
+        product_id=product.id,
+        location_id=loc_id,
+        include_incomplete=include_incomplete,
+    )
     total = sum(Decimal(row['quantity']) for row in batches) if batches else Decimal('0')
 
     return api_success('Scan resolved.', {
