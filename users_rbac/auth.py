@@ -1,8 +1,10 @@
 """Cognito JWT verification and request auth."""
 
 import os
+import ssl
 from functools import wraps
 
+import certifi
 import jwt
 
 from core.api_response import error_response
@@ -33,7 +35,12 @@ def _jwks_url() -> str:
 def _get_jwks_client():
     global _jwks_client
     if _jwks_client is None:
-        _jwks_client = jwt.PyJWKClient(_jwks_url(), cache_jwk_set=True)
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        _jwks_client = jwt.PyJWKClient(
+            _jwks_url(),
+            cache_jwk_set=True,
+            ssl_context=ctx,
+        )
     return _jwks_client
 
 

@@ -46,7 +46,7 @@ def photo_url(user: RbacUser, *, expires_in: int = PRESIGN_SECONDS) -> str | Non
             Params={'Bucket': _bucket(), 'Key': user.photo_key},
             ExpiresIn=expires_in,
         )
-    except ClientError:
+    except Exception:
         return None
 
 
