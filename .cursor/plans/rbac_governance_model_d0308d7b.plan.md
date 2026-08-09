@@ -7,19 +7,19 @@ todos:
     status: completed
   - id: chunk-2-cognito
     content: "Chunk 2: Cognito AdminCreateUser / password / enable-disable; username without email; login audit hooks"
-    status: pending
+    status: completed
   - id: chunk-3-jwt
     content: "Chunk 3: JWKS JWT verify + require_auth + IP helper; attach request.rbac_user"
-    status: pending
+    status: completed
   - id: chunk-4-user-apis
     content: "Chunk 4: User CRUD + PUT grants + GET /auth/me/ (+ Postman docs)"
-    status: pending
+    status: completed
   - id: chunk-5-audit-apis
     content: "Chunk 5: Write RbacAuditEvent on admin/auth actions; GET /auth/audit/ and /users/:id/audit/"
-    status: pending
+    status: completed
   - id: chunk-6-perm-helpers
     content: "Chunk 6: require_* helpers; auth.access_denied on 403"
-    status: pending
+    status: completed
   - id: chunk-7-gate-activity
     content: "Chunk 7: Gate production/warehouse writes; stamp domain actors; GET /users/:id/activity/"
     status: pending
@@ -40,7 +40,7 @@ isProject: false
 | **6** | **Permission helpers** | `require_production_area` / `require_warehouse` / `require_admin_area`; log `auth.access_denied` | 3, 1 |
 | **7** | **Enforce + activity** | Gate real production/warehouse writes; stamp product/stock actor from JWT; `GET .../activity/` | 5, 6 |
 
-**Current:** Chunk 1 done. Waiting approval on **Chunk 2** (Cognito identity ops).
+**Current:** Chunks 1–6 done. Waiting approval on **Chunk 7** (gate writes + activity).
 
 ### Chunk 1 detail (next to build)
 
@@ -82,7 +82,28 @@ Wire `COGNITO_USER_POOL_ID` (required for admin APIs; already in `.env.examples`
 
 **Done when:** mocked boto3 tests cover create (with/without email), disable, reset; login still works.
 
+### Chunk 3 detail (next)
+
+**Goal:** trust the Bearer token. Every later human API uses `@require_auth` so `request.rbac_user` is a real local profile, not a spoofable JWT payload.
+
+**Add** [`users_rbac/auth.py`](users_rbac/auth.py):
+
+1. Fetch Cognito JWKS (`https://cognito-idp.{region}.amazonaws.com/{pool}/.well-known/jwks.json`), cache in memory.
+2. Verify JWT: signature + `iss` + `token_use` (`id` or `access`) + `exp` + audience/`client_id` = `COGNITO_CLIENT_ID`.
+3. Lookup `RbacUser` by claim `sub`. Missing or `is_active=False` → 401/403.
+4. `@require_auth` decorator: set `request.rbac_user`, `request.cognito_claims`, `request.client_ip`, `request.user_agent`.
+5. `client_ip(request)`: first `X-Forwarded-For` hop else `REMOTE_ADDR`.
+
+**Login** stays public (no decorator). Product/stock unsigned decode **not** replaced yet (Chunk 7).
+
+**Lib:** `PyJWT[crypto]` (not already in requirements).
+
+**Not in this chunk:** user/grant HTTP APIs, permission helpers, audit writes, gating production/warehouse routes.
+
+**Done when:** tests cover valid token → user attached; bad/expired/unsigned token → 401; inactive user → 403; X-Forwarded-For IP.
+
 ---
+
 
 
 ## Decisions (locked)
