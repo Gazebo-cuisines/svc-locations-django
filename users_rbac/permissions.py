@@ -5,7 +5,7 @@ from functools import wraps
 from core.api_response import error_response
 from users_rbac.audit import record_event
 from users_rbac.auth import attach_user
-from users_rbac.grants import PERIOD_FLAGS, grants_dict
+from users_rbac.grants import PERIOD_FLAGS, grants_dict, has_global_access
 from users_rbac.models import (
     AdminAccess,
     ProductionAccess,
@@ -27,30 +27,40 @@ def deny_access(request, required: dict):
 
 
 def require_any_admin(request):
+    if has_global_access(request.rbac_user):
+        return None
     if AdminAccess.objects.filter(user=request.rbac_user).exists():
         return None
     return deny_access(request, {'admin': 'any'})
 
 
 def require_admin_area(request, area: str):
+    if has_global_access(request.rbac_user):
+        return None
     if AdminAccess.objects.filter(user=request.rbac_user, area=area).exists():
         return None
     return deny_access(request, {'admin_area': area})
 
 
 def require_production_area(request, area: str):
+    if has_global_access(request.rbac_user):
+        return None
     if ProductionAccess.objects.filter(user=request.rbac_user, area=area).exists():
         return None
     return deny_access(request, {'production_area': area})
 
 
 def require_any_production(request):
+    if has_global_access(request.rbac_user):
+        return None
     if ProductionAccess.objects.filter(user=request.rbac_user).exists():
         return None
     return deny_access(request, {'production': 'any'})
 
 
 def require_any_warehouse(request, *, action: str | None = None):
+    if has_global_access(request.rbac_user):
+        return None
     qs = WarehouseAccess.objects.filter(user=request.rbac_user)
     if action == 'goods_in':
         qs = qs.filter(can_goods_in=True)
@@ -62,6 +72,8 @@ def require_any_warehouse(request, *, action: str | None = None):
 
 
 def require_floor_write(request):
+    if has_global_access(request.rbac_user):
+        return None
     if ProductionAccess.objects.filter(user=request.rbac_user).exists():
         return None
     if WarehouseAccess.objects.filter(user=request.rbac_user).exists():
@@ -111,6 +123,8 @@ def require_warehouse(
     action: str | None = None,
     period: str | None = None,
 ):
+    if has_global_access(request.rbac_user):
+        return None
     row = WarehouseAccess.objects.filter(user=request.rbac_user, unit=unit).first()
     required = {'warehouse_unit': unit, 'action': action, 'period': period}
     if not row:

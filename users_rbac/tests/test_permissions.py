@@ -115,6 +115,27 @@ class PermissionHelperTests(TestCase):
         )
         self.assertIsNone(require_floor_write(self._req()))
 
+    def test_it_has_global_rights(self):
+        it = RbacUser.objects.create(
+            cognito_sub='sub-it',
+            username='it01',
+            display_name='IT',
+        )
+        UserDepartment.objects.create(user=it, department=Department.IT)
+        request = self.factory.get('/x/', REMOTE_ADDR='10.0.1.22')
+        request.rbac_user = it
+        self.assertIsNone(require_any_admin(request))
+        self.assertIsNone(require_admin_area(request, AdminArea.FINANCE))
+        self.assertIsNone(require_production_area(request, ProductionArea.HIGH_RISK))
+        self.assertIsNone(
+            require_warehouse(
+                request,
+                WarehouseUnit.UNIT_2,
+                action='goods_out',
+            )
+        )
+        self.assertIsNone(require_floor_write(request))
+
     def test_any_admin_denied_for_floor(self):
         response = require_any_admin(self._req())
         self.assertEqual(response.status_code, 403)

@@ -5,6 +5,7 @@ class Department(models.TextChoices):
     PRODUCTION = 'production', 'Production'
     WAREHOUSE = 'warehouse', 'Warehouse'
     ADMIN = 'admin', 'Admin'
+    IT = 'it', 'IT'
 
 
 class ProductionArea(models.TextChoices):

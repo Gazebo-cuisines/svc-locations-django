@@ -18,6 +18,14 @@ from users_rbac.models import (
 from users_rbac.photos import photo_url
 
 GRANT_KEYS = ('departments', 'production_areas', 'warehouse', 'admin_areas')
+
+
+def has_global_access(user: RbacUser) -> bool:
+    return UserDepartment.objects.filter(user=user, department=Department.IT).exists()
+
+
+def is_admin_user(user: RbacUser) -> bool:
+    return has_global_access(user) or AdminAccess.objects.filter(user=user).exists()
 PERIOD_FLAGS = {
     'previous': 'goods_in_previous',
     'today': 'goods_in_today',
@@ -154,7 +162,7 @@ def user_dict(user: RbacUser, *, with_grants: bool = True) -> dict:
         'display_name': user.display_name,
         'photo_url': photo_url(user),
         'is_active': user.is_active,
-        'is_admin': AdminAccess.objects.filter(user=user).exists(),
+        'is_admin': is_admin_user(user),
         'cognito_sub': user.cognito_sub,
         'created_at': user.created_at.isoformat() if user.created_at else None,
     }

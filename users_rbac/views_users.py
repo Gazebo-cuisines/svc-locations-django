@@ -7,7 +7,13 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from core.api_response import error_response, success_response
 from users_rbac.audit import profile_snapshot, record_event
 from users_rbac.auth import require_admin, require_auth
-from users_rbac.grants import apply_grants, extract_grants, user_dict, validate_grants
+from users_rbac.grants import (
+    apply_grants,
+    extract_grants,
+    is_admin_user,
+    user_dict,
+    validate_grants,
+)
 from users_rbac.models import RbacAuditAction, RbacUser
 from users_rbac.photos import upload_photo
 from users_rbac.services import create_identity, reset_password, set_active
@@ -193,7 +199,7 @@ def user_reset_password(request, user_id: int):
 def _can_edit_photo(request, user: RbacUser) -> bool:
     if request.rbac_user.id == user.id:
         return True
-    return request.rbac_user.admin_access.exists()
+    return is_admin_user(request.rbac_user)
 
 
 @csrf_exempt
