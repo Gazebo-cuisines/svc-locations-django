@@ -18,6 +18,9 @@ from users_rbac.models import (
 from users_rbac.permissions import (
     require_admin_area,
     require_any_admin,
+    require_any_production,
+    require_any_warehouse,
+    require_floor_write,
     require_production_area,
     require_warehouse,
 )
@@ -102,6 +105,15 @@ class PermissionHelperTests(TestCase):
             RbacAuditEvent.objects.latest('id').detail_json['required'],
             {'admin_area': 'finance'},
         )
+
+    def test_any_production_and_warehouse(self):
+        self.assertIsNone(require_any_production(self._req()))
+        self.assertIsNone(require_any_warehouse(self._req(), action='goods_in'))
+        self.assertEqual(
+            require_any_warehouse(self._req(), action='goods_out').status_code,
+            403,
+        )
+        self.assertIsNone(require_floor_write(self._req()))
 
     def test_any_admin_denied_for_floor(self):
         response = require_any_admin(self._req())

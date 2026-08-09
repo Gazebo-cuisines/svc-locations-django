@@ -44,6 +44,7 @@ class RbacUser(models.Model):
     username = models.CharField(max_length=128, unique=True)
     email = models.EmailField(max_length=254, unique=True, null=True, blank=True)
     display_name = models.CharField(max_length=128, blank=True, default='')
+    photo_key = models.CharField(max_length=512, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_by_sub = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

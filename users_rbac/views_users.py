@@ -9,6 +9,7 @@ from users_rbac.audit import profile_snapshot, record_event
 from users_rbac.auth import require_admin, require_auth
 from users_rbac.grants import apply_grants, extract_grants, user_dict, validate_grants
 from users_rbac.models import RbacAuditAction, RbacUser
+from users_rbac.photos import upload_photo
 from users_rbac.services import create_identity, reset_password, set_active
 
 
@@ -187,3 +188,45 @@ def user_reset_password(request, user_id: int):
         detail_json={'reset': True},
     )
     return success_response('Password was reset.', data={'ref': user.id})
+
+
+def _can_edit_photo(request, user: RbacUser) -> bool:
+    if request.rbac_user.id == user.id:
+        return True
+    return request.rbac_user.admin_access.exists()
+
+
+@csrf_exempt
+@require_POST
+@require_auth
+def me_photo(request):
+    uploaded = request.FILES.get('file') or request.FILES.get('photo')
+    if not uploaded:
+        return error_response('Photo file is required.', status_code=400)
+    try:
+        upload_photo(request.rbac_user, uploaded)
+    except ValueError as exc:
+        return error_response(str(exc), status_code=400)
+    return success_response(
+        'Photo updated successfully.',
+        data=user_dict(request.rbac_user),
+    )
+
+
+@csrf_exempt
+@require_POST
+@require_auth
+def user_photo(request, user_id: int):
+    user = _get_user(user_id)
+    if not user:
+        return error_response("We couldn't find that user.", status_code=404)
+    if not _can_edit_photo(request, user):
+        return error_response('You do not have permission to do that.', status_code=403)
+    uploaded = request.FILES.get('file') or request.FILES.get('photo')
+    if not uploaded:
+        return error_response('Photo file is required.', status_code=400)
+    try:
+        upload_photo(user, uploaded)
+    except ValueError as exc:
+        return error_response(str(exc), status_code=400)
+    return success_response('Photo updated successfully.', data=user_dict(user))

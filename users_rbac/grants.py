@@ -15,6 +15,7 @@ from users_rbac.models import (
     WarehouseAccess,
     WarehouseUnit,
 )
+from users_rbac.photos import photo_url
 
 GRANT_KEYS = ('departments', 'production_areas', 'warehouse', 'admin_areas')
 PERIOD_FLAGS = {
@@ -151,6 +152,7 @@ def user_dict(user: RbacUser, *, with_grants: bool = True) -> dict:
         'username': user.username,
         'email': user.email,
         'display_name': user.display_name,
+        'photo_url': photo_url(user),
         'is_active': user.is_active,
         'is_admin': AdminAccess.objects.filter(user=user).exists(),
         'cognito_sub': user.cognito_sub,

@@ -65,43 +65,63 @@ def verify_token(token: str) -> dict:
         )
     except jwt.ExpiredSignatureError as exc:
         raise ValueError('expired') from exc
-    except jwt.InvalidTokenError as exc:
+    except Exception as exc:
         raise ValueError('invalid') from exc
     if not _audience_ok(claims, client_id):
         raise ValueError('invalid')
     return claims
 
 
+def attach_user(request, *, missing='error', invalid='error'):
+    """Set request.rbac_user from Bearer JWT. missing/invalid: 'error' | 'ok'."""
+    if getattr(request, 'rbac_user', None):
+        return None
+    header = request.headers.get('Authorization', '')
+    if not header.startswith('Bearer '):
+        if missing == 'error':
+            return error_response('Please sign in to continue.', status_code=401)
+        return None
+    token = header.split(' ', 1)[1].strip()
+    try:
+        claims = verify_token(token)
+    except ValueError:
+        if invalid == 'error':
+            return error_response(
+                'Your session is not valid. Please sign in again.',
+                status_code=401,
+            )
+        return None
+    sub = claims.get('sub')
+    if not sub:
+        if invalid == 'error':
+            return error_response(
+                'Your session is not valid. Please sign in again.',
+                status_code=401,
+            )
+        return None
+    try:
+        user = RbacUser.objects.get(cognito_sub=sub)
+    except RbacUser.DoesNotExist:
+        if invalid == 'error':
+            return error_response("We couldn't find your account.", status_code=401)
+        return None
+    if not user.is_active:
+        if missing == 'error' or invalid == 'error':
+            return error_response('This account is disabled.', status_code=403)
+        return None
+    request.rbac_user = user
+    request.cognito_claims = claims
+    request.client_ip = client_ip(request)
+    request.user_agent = request.META.get('HTTP_USER_AGENT') or ''
+    return None
+
+
 def require_auth(view_func):
     @wraps(view_func)
     def wrapped(request, *args, **kwargs):
-        header = request.headers.get('Authorization', '')
-        if not header.startswith('Bearer '):
-            return error_response('Please sign in to continue.', status_code=401)
-        token = header.split(' ', 1)[1].strip()
-        try:
-            claims = verify_token(token)
-        except ValueError:
-            return error_response(
-                'Your session is not valid. Please sign in again.',
-                status_code=401,
-            )
-        sub = claims.get('sub')
-        if not sub:
-            return error_response(
-                'Your session is not valid. Please sign in again.',
-                status_code=401,
-            )
-        try:
-            user = RbacUser.objects.get(cognito_sub=sub)
-        except RbacUser.DoesNotExist:
-            return error_response("We couldn't find your account.", status_code=401)
-        if not user.is_active:
-            return error_response('This account is disabled.', status_code=403)
-        request.rbac_user = user
-        request.cognito_claims = claims
-        request.client_ip = client_ip(request)
-        request.user_agent = request.META.get('HTTP_USER_AGENT') or ''
+        denied = attach_user(request)
+        if denied:
+            return denied
         return view_func(request, *args, **kwargs)
 
     return wrapped

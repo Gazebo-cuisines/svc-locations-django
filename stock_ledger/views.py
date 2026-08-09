@@ -49,6 +49,12 @@ from stock_ledger.util.trace import (
     trace_backward,
     trace_forward,
 )
+from users_rbac.auth import attach_user, client_ip
+from users_rbac.permissions import (
+    gate_floor_write,
+    gate_production_write,
+    gate_warehouse_write,
+)
 
 
 def _parse_json_body(request):
@@ -371,6 +377,7 @@ def _list_production_runs(request):
 
 @csrf_exempt
 @require_http_methods(['GET', 'POST'])
+@gate_production_write
 def production_api(request):
     """Floor production: GET list (calendar/dept) or POST stock-in + run sidecar."""
     if request.method == 'GET':
@@ -464,6 +471,7 @@ def _write_production(request, body: dict, *, replace_entry_id: int | None = Non
 
 @csrf_exempt
 @require_http_methods(['PUT', 'DELETE'])
+@gate_production_write
 def production_detail_api(request, entry_id: int):
     """PUT = reverse+recreate (edit). DELETE = reverse only."""
     if request.method == 'DELETE':
@@ -476,7 +484,6 @@ def production_detail_api(request, entry_id: int):
                     or f'reverse-production:{entry_id}'
                 ),
                 effective_at=_parse_effective_at(body.get('effective_at')),
-                actor_user_id=body.get('actor_user_id'),
                 **_common_write_kwargs(request, body),
             )
         except (ValueError, StockValidationError, TypeError) as exc:
@@ -603,32 +610,42 @@ def _decode_bearer_claims(request) -> dict:
 
 
 def _common_write_kwargs(request, body: dict) -> dict:
-    claims = _decode_bearer_claims(request)
-    # Person-facing label (match product audit). Never fall back to Cognito sub.
-    lan_username = body.get('lan_username') or (
-        claims.get('name')
-        or claims.get('email')
-        or claims.get('cognito:username')
-        or claims.get('username')
-    )
-    source_workstation = (
-        body.get('source_workstation') or request.META.get('HTTP_USER_AGENT')
-    )
-    source_workstation_ip = (
-        body.get('source_workstation_ip') or request.META.get('REMOTE_ADDR')
-    )
-
-    if lan_username is not None:
-        lan_username = str(lan_username)[:64]
-    if source_workstation is not None:
-        source_workstation = str(source_workstation)[:64]
-    if source_workstation_ip is not None:
-        source_workstation_ip = str(source_workstation_ip)[:45]
+    attach_user(request, missing='ok', invalid='ok')
+    user = getattr(request, 'rbac_user', None)
+    if user:
+        lan_username = (user.display_name or user.username)[:64]
+        source_workstation = (request.META.get('HTTP_USER_AGENT') or '')[:64] or None
+        source_workstation_ip = (
+            getattr(request, 'client_ip', None) or client_ip(request) or ''
+        )[:45] or None
+        actor_user_id = user.id
+    else:
+        claims = _decode_bearer_claims(request)
+        # Person-facing label (match product audit). Never fall back to Cognito sub.
+        lan_username = body.get('lan_username') or (
+            claims.get('name')
+            or claims.get('email')
+            or claims.get('cognito:username')
+            or claims.get('username')
+        )
+        source_workstation = (
+            body.get('source_workstation') or request.META.get('HTTP_USER_AGENT')
+        )
+        source_workstation_ip = (
+            body.get('source_workstation_ip') or request.META.get('REMOTE_ADDR')
+        )
+        actor_user_id = body.get('actor_user_id')
+        if lan_username is not None:
+            lan_username = str(lan_username)[:64]
+        if source_workstation is not None:
+            source_workstation = str(source_workstation)[:64]
+        if source_workstation_ip is not None:
+            source_workstation_ip = str(source_workstation_ip)[:45]
 
     kwargs = {
         'override_reason': body.get('override_reason'),
         'authorised_by_user_id': body.get('authorised_by_user_id'),
-        'actor_user_id': body.get('actor_user_id'),
+        'actor_user_id': actor_user_id,
         'lan_username': lan_username,
         'source_workstation': source_workstation,
         'source_workstation_ip': source_workstation_ip,
@@ -799,6 +816,7 @@ def unit_conversions_api(request):
 
 @csrf_exempt
 @require_http_methods(['GET', 'POST'])
+@gate_production_write
 def downtime_api(request):
     """Record downtime time-row (qty 0, no stock). GET lists downtime product types."""
     if request.method == 'GET':
@@ -951,6 +969,7 @@ def production_allocation_status_api(request, entry_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_production_write
 def production_consume_api(request, entry_id: int):
     """Floor allocate: stock-out a component pile against production output."""
     body = _parse_json_body(request)
@@ -976,6 +995,7 @@ def production_consume_api(request, entry_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
 def receipt_api(request):
     body = _parse_json_body(request)
     if body is None:
@@ -1046,6 +1066,7 @@ def receipt_api(request):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_out')
 def issue_api(request):
     body = _parse_json_body(request)
     if body is None:
@@ -1078,6 +1099,7 @@ def _parse_unit_moves(body: dict) -> list | None:
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write()
 def transfer_api(request):
     body = _parse_json_body(request)
     if body is None:
@@ -1125,6 +1147,7 @@ def transfer_api(request):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_out')
 def disposal_api(request):
     body = _parse_json_body(request)
     if body is None:
@@ -1148,6 +1171,7 @@ def disposal_api(request):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write()
 def count_adjustment_api(request):
     body = _parse_json_body(request)
     if body is None:
@@ -1182,6 +1206,7 @@ def count_adjustment_api(request):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_floor_write
 def reversal_api(request):
     body = _parse_json_body(request)
     if body is None:
@@ -1192,7 +1217,6 @@ def reversal_api(request):
             idempotency_key=body['idempotency_key'],
             entry=source,
             effective_at=_parse_effective_at(body.get('effective_at')),
-            actor_user_id=body.get('actor_user_id'),
             **_common_write_kwargs(request, body),
         )
     except StockEntry.DoesNotExist:
@@ -1650,6 +1674,7 @@ def product_label_api(request, product_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write()
 def stock_units_print_api(request):
     """Print physical labels against a receipt or production_output entry."""
     body = _parse_json_body(request)
@@ -1748,6 +1773,7 @@ def stock_units_detail_api(request, unit_serial: str):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_floor_write
 def stock_units_consume_api(request, unit_serial: str):
     """Scan-to-consume: issue / disposal / production_consumption via unit serial."""
     body = _parse_json_body(request)
@@ -1788,6 +1814,7 @@ def stock_units_consume_api(request, unit_serial: str):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write()
 def stock_units_void_api(request, unit_serial: str):
     """Void a damaged or misprinted label (no stock_balance change)."""
     body = _parse_json_body(request)
@@ -1813,6 +1840,7 @@ def stock_units_void_api(request, unit_serial: str):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write()
 def stock_units_reprint_api(request, unit_serial: str):
     """Reprint same serial; records a print event for audit."""
     body = _parse_json_body(request)

@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: chunk-7-gate-activity
     content: "Chunk 7: Gate production/warehouse writes; stamp domain actors; GET /users/:id/activity/"
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -40,7 +40,7 @@ isProject: false
 | **6** | **Permission helpers** | `require_production_area` / `require_warehouse` / `require_admin_area`; log `auth.access_denied` | 3, 1 |
 | **7** | **Enforce + activity** | Gate real production/warehouse writes; stamp product/stock actor from JWT; `GET .../activity/` | 5, 6 |
 
-**Current:** Chunks 1–6 done. Waiting approval on **Chunk 7** (gate writes + activity).
+**Current:** Chunks 1–7 done.
 
 ### Chunk 1 detail (next to build)
 

@@ -2,11 +2,14 @@
 
 from datetime import datetime
 
-from django.db.models import Q
+from django.db.models import Q, TextField
+from django.db.models.functions import Cast
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from core.api_response import error_response, success_response
+from product.models import ProductAudit
+from stock_ledger.models import StockEntry
 from users_rbac.auth import client_ip, require_admin
 from users_rbac.models import RbacAuditEvent, RbacUser
 
@@ -166,6 +169,113 @@ def user_audit(request, user_id: int):
         'User audit fetched.',
         data={
             'items': [event_dict(row) for row in rows],
+            'count': count,
+            'limit': limit,
+            'offset': offset,
+        },
+    )
+
+
+def _in_range(at_iso, dt_from, dt_to) -> bool:
+    if not at_iso:
+        return not dt_from and not dt_to
+    try:
+        at = datetime.fromisoformat(str(at_iso).replace('Z', '+00:00'))
+    except ValueError:
+        return False
+    if dt_from and at < dt_from:
+        return False
+    if dt_to and at > dt_to:
+        return False
+    return True
+
+
+def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
+    items = []
+    rbac_qs = RbacAuditEvent.objects.filter(
+        Q(actor_sub=user.cognito_sub) | Q(actor_username=user.username)
+    )
+    if dt_from:
+        rbac_qs = rbac_qs.filter(at__gte=dt_from)
+    if dt_to:
+        rbac_qs = rbac_qs.filter(at__lte=dt_to)
+    for row in rbac_qs:
+        item = event_dict(row)
+        item['source'] = 'rbac'
+        items.append(item)
+
+    stock_qs = StockEntry.objects.filter(
+        Q(actor_user_id=user.id) | Q(lan_username__iexact=user.username)
+    ).select_related('unit', 'location', 'lot__product')
+    if dt_from:
+        stock_qs = stock_qs.filter(recorded_at__gte=dt_from)
+    if dt_to:
+        stock_qs = stock_qs.filter(recorded_at__lte=dt_to)
+    for entry in stock_qs:
+        at = entry.recorded_at.isoformat() if entry.recorded_at else None
+        items.append(
+            {
+                'source': 'stock',
+                'at': at,
+                'action': entry.entry_type,
+                'entry_id': entry.id,
+                'product_id': entry.lot.product_id,
+                'product_name': entry.lot.product.name,
+                'location_id': entry.location_id,
+                'quantity': str(entry.quantity) if entry.quantity is not None else None,
+                'lan_username': entry.lan_username,
+                'actor_user_id': entry.actor_user_id,
+                'source_ip': entry.source_workstation_ip,
+                'request_path': None,
+            }
+        )
+
+    product_rows = ProductAudit.objects.annotate(
+        events_text=Cast('timeline_events', TextField()),
+    ).filter(events_text__contains=user.cognito_sub)
+    for row in product_rows:
+        for event in row.timeline_events or []:
+            if event.get('actor_sub') != user.cognito_sub:
+                continue
+            if not _in_range(event.get('at'), dt_from, dt_to):
+                continue
+            items.append(
+                {
+                    'source': 'product',
+                    'at': event.get('at'),
+                    'action': event.get('action'),
+                    'product_id': row.product_id,
+                    'entity': event.get('entity'),
+                    'actor_sub': event.get('actor_sub'),
+                    'actor_name': event.get('actor_name'),
+                    'source_ip': event.get('source_workstation_ip'),
+                    'request_path': event.get('request_path'),
+                }
+            )
+
+    items.sort(key=lambda row: row.get('at') or '', reverse=True)
+    return items
+
+
+@csrf_exempt
+@require_GET
+@require_admin
+def user_activity(request, user_id: int):
+    user = RbacUser.objects.filter(pk=user_id).first()
+    if not user:
+        return error_response("We couldn't find that user.", status_code=404)
+    try:
+        limit, offset = _page_params(request)
+        dt_from = _parse_dt((request.GET.get('from') or '').strip(), 'from')
+        dt_to = _parse_dt((request.GET.get('to') or '').strip(), 'to')
+    except ValueError as exc:
+        return error_response(str(exc), status_code=400)
+    items = _activity_items(user, dt_from, dt_to)
+    count = len(items)
+    return success_response(
+        'User activity fetched.',
+        data={
+            'items': items[offset : offset + limit],
             'count': count,
             'limit': limit,
             'offset': offset,
