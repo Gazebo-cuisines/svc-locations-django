@@ -105,6 +105,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
+MEDIA_S3_BUCKET = os.getenv('MEDIA_S3_BUCKET', 'gazebo-media-files')
 AWS_PROFILE = os.getenv('AWS_PROFILE')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-2')
 CORS_ALLOW_HEADERS = (

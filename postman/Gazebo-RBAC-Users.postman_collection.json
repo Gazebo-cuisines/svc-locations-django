@@ -1,0 +1,578 @@
+{
+  "info": {
+    "name": "Gazebo - RBAC Users",
+    "description": "# Gazebo RBAC Users\n\nCognito identity + Django grant matrix for Production / Warehouse / Admin.\n\n**Tables:** `rbac_user` (+ `photo_key`), `rbac_user_department`, `rbac_production_access`, `rbac_warehouse_access`, `rbac_admin_access`, `rbac_audit_event`\n\n**Photos:** private objects in `gazebo-media-files` at `User-profile/{cognito_sub}/\u2026`; APIs return short-lived `photo_url` (presigned GET), never a public URL.\n\n## Base URL\n`{{base_url}}` = `http://127.0.0.1:8000`\n\n## Auth\n1. Run **Login** (`POST /auth/login/`) \u2014 public\n2. Copy `data.id_token` into `{{id_token}}` (or use the Login test script)\n3. All other routes need `Authorization: Bearer {{id_token}}`\n4. Admin write + audit list APIs need **any** Admin area grant\n\n## Envelope\nSuccess: `{ \"status\": \"success\", \"message\": \"...\", \"data\": ... }`\nError: `{ \"status\": \"error\", \"message\": \"...\", \"data\": null }`\n\n## Vars\n`{{base_url}}`, `{{id_token}}`, `{{user_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "id_token",
+      "value": ""
+    },
+    {
+      "key": "user_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Public login + signed-in self profile + own photo upload.\n\n**Routes:** `POST /auth/login/`, `GET /auth/me/`, `POST /auth/me/photo/`\n\n**Vars:** `{{id_token}}`",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/login/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "login",
+                ""
+              ]
+            },
+            "description": "### Login\n\n`POST /auth/login/`\n\nPublic sign-in. Exchange username (or email) and password for Cognito tokens. Floor staff use badge usernames with no email. Copy `data.id_token` into `{{id_token}}` for later calls.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `username` | yes* | Cognito username (e.g. `amit01`) |\n| `email` | yes* | Alternative to username |\n| `password` | yes | Password |\n\n\\* Provide `username` **or** `email`.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Content-Type` | yes | `application/json` |\n\n### Response body (HTTP 200)\n\n`message`: `Signed in successfully.`  \n`data`:\n\n| Field | Meaning |\n|---|---|\n| `access_token` | Cognito access token |\n| `id_token` | Cognito ID token \u2192 use as Bearer `{{id_token}}` |\n| `refresh_token` | Refresh token |\n| `expires_in` | Seconds until access expires |\n| `token_type` | Usually `Bearer` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Signed in |\n| 400 | Invalid JSON, or missing username/email or password |\n| 401 | Invalid credentials / Cognito reject |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"jane.admin\",\n  \"password\": \"Secret123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('id_token', response.data.id_token || '');",
+                  "    console.log('id_token saved to collection var.');",
+                  "} else {",
+                  "    console.log('Login failed.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get my profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/me/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me",
+                ""
+              ]
+            },
+            "description": "### Get my profile\n\n`GET /auth/me/`\n\nReturns the caller's local profile and effective grants. Use this to drive FE nav / permission UI. Any signed-in user (admin not required).\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` |\n\n### Response body (HTTP 200)\n\n`message`: `Your profile was fetched.`  \n`data`: one user object:\n\n| Field | Meaning |\n|---|---|\n| `id` | Local `rbac_user` PK (`{{user_id}}`) |\n| `username` | Cognito / badge username |\n| `email` | Optional; null for floor users |\n| `display_name` | UI / audit label |\n| `photo_url` | Short-lived private S3 URL (`User-profile/{cognito_sub}/\u2026`); null if none |\n| `is_active` | Soft-disable flag (synced with Cognito) |\n| `is_admin` | `true` if any admin area grant |\n| `cognito_sub` | Cognito subject |\n| `created_at` | ISO timestamp |\n| `departments` | `production` / `warehouse` / `admin` |\n| `production_areas` | `low_risk` / `high_risk` / `sleeving` / `dispatch` |\n| `warehouse` | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | `technical` / `operational` / `npd` / `finance` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | OK |\n| 401 | Missing/invalid token or no local profile |\n| 403 | Account disabled |"
+          }
+        },
+        {
+          "name": "Upload my photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "JPEG, PNG, or WebP; max 2 MB"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/me/photo/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me",
+                "photo",
+                ""
+              ]
+            },
+            "description": "### Upload my photo\n\n`POST /auth/me/photo/`\n\nSigned-in user uploads their own profile photo. Stored privately in bucket `gazebo-media-files` at `User-profile/{cognito_sub}/photo-{uuid}.{ext}` with SSE-AES256 (no public ACL). Response includes a short-lived presigned `photo_url` (about 1 hour).\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\n`multipart/form-data`:\n\n| Field | Required | Meaning |\n|---|---|---|\n| `file` | yes* | Image file (JPEG / PNG / WebP, max 2 MB) |\n| `photo` | yes* | Alias for `file` |\n\n\\* Provide `file` **or** `photo`.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` |\n| `Content-Type` | yes | `multipart/form-data` (set by client) |\n\n### Response body (HTTP 200)\n\n`message`: `Photo updated successfully.`  \n`data`: user object (same as Get my profile), including:\n\n| Field | Meaning |\n|---|---|---|\n| `photo_url` | Presigned GET for the new object (expires ~1h) |\n| `cognito_sub` | Folder key under `User-profile/` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Uploaded |\n| 400 | Missing file, wrong type, or over 2 MB |\n| 401 | Missing/invalid token or no local profile |\n| 403 | Account disabled |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users & grants",
+      "description": "Admin Cognito + local profile CRUD and grant replace.\n\n**Tables:** `rbac_user` + grant tables\n\n**Auth:** Bearer + any Admin area grant\n\n**Vars:** `{{user_id}}`",
+      "item": [
+        {
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/?q=&department=production&is_active=true",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Optional username / display name search"
+                },
+                {
+                  "key": "department",
+                  "value": "production",
+                  "description": "Optional: production, warehouse, admin, it"
+                },
+                {
+                  "key": "is_active",
+                  "value": "true",
+                  "description": "Optional: true or false"
+                }
+              ]
+            },
+            "description": "### List users\n\n`GET /auth/users/`\n\nAdmin list of local profiles with full grant trees. Filter by search text, department membership, or active flag.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `q` | no | Case-insensitive match on username or display name |\n| `department` | no | `production`, `warehouse`, `admin`, or `it` |\n| `is_active` | no | `true` / `1` or `false` / `0` |\n\n### Request body\n\n**None**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n\n### Response body (HTTP 200)\n\n`message`: `Users fetched successfully.`  \n`data`: array of user objects (same shape as Get user):\n\n| Field | Meaning |\n|---|---|\n| `id` | Local `rbac_user` PK (`{{user_id}}`) |\n| `username` | Cognito / badge username |\n| `email` | Optional; null for floor users |\n| `display_name` | UI / audit label |\n| `photo_url` | Short-lived private S3 URL (`User-profile/{cognito_sub}/\u2026`); null if none |\n| `is_active` | Soft-disable flag (synced with Cognito) |\n| `is_admin` | `true` if any admin area grant |\n| `cognito_sub` | Cognito subject |\n| `created_at` | ISO timestamp |\n| `departments` | `production` / `warehouse` / `admin` |\n| `production_areas` | `low_risk` / `high_risk` / `sleeving` / `dispatch` |\n| `warehouse` | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | `technical` / `operational` / `npd` / `finance` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | OK |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |"
+          }
+        },
+        {
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                ""
+              ]
+            },
+            "description": "### Create user\n\n`POST /auth/users/`\n\nAdmin creates a Cognito user (no invite email) plus local `rbac_user`. Optional grant payload in the same request. Floor users omit `email`. Writes `user.created` audit.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `username` | yes | Cognito / badge username |\n| `password` | yes | Permanent password (never stored in Django) |\n| `email` | no | Office users only |\n| `display_name` | no | Audit / UI label |\n| `departments` | no | `production`, `warehouse`, `admin`, `it` (global) |\n| `production_areas` | no | `low_risk`, `high_risk`, `sleeving`, `dispatch` |\n| `warehouse` | no | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | no | `technical`, `operational`, `npd`, `finance` |\n\nProduction areas require department `production` (same rule for warehouse/admin). Goods IN periods require `goods_in` on that unit.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n| `Content-Type` | yes | `application/json` |\n\n### Response body (HTTP 201)\n\n`message`: `User created successfully.`  \n`data`: full user + grants:\n\n| Field | Meaning |\n|---|---|\n| `id` | Local `rbac_user` PK (`{{user_id}}`) |\n| `username` | Cognito / badge username |\n| `email` | Optional; null for floor users |\n| `display_name` | UI / audit label |\n| `photo_url` | Short-lived private S3 URL (`User-profile/{cognito_sub}/\u2026`); null if none |\n| `is_active` | Soft-disable flag (synced with Cognito) |\n| `is_admin` | `true` if any admin area grant |\n| `cognito_sub` | Cognito subject |\n| `created_at` | ISO timestamp |\n| `departments` | `production` / `warehouse` / `admin` |\n| `production_areas` | `low_risk` / `high_risk` / `sleeving` / `dispatch` |\n| `warehouse` | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | `technical` / `operational` / `npd` / `finance` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | Created |\n| 400 | Invalid JSON, missing username/password, bad grants, Cognito password rules |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 409 | Username or email already in use |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"amit01\",\n  \"password\": \"Secret123!\",\n  \"display_name\": \"Amit\",\n  \"departments\": [\"production\"],\n  \"production_areas\": [\"low_risk\"],\n  \"warehouse\": [],\n  \"admin_areas\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get user",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                ""
+              ]
+            },
+            "description": "### Get user\n\n`GET /auth/users/:id/`\n\nAdmin fetch of one profile and full grant tree.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key (`{{user_id}}`) |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n\n### Response body (HTTP 200)\n\n`message`: `User fetched successfully.`  \n`data`: user object:\n\n| Field | Meaning |\n|---|---|\n| `id` | Local `rbac_user` PK (`{{user_id}}`) |\n| `username` | Cognito / badge username |\n| `email` | Optional; null for floor users |\n| `display_name` | UI / audit label |\n| `photo_url` | Short-lived private S3 URL (`User-profile/{cognito_sub}/\u2026`); null if none |\n| `is_active` | Soft-disable flag (synced with Cognito) |\n| `is_admin` | `true` if any admin area grant |\n| `cognito_sub` | Cognito subject |\n| `created_at` | ISO timestamp |\n| `departments` | `production` / `warehouse` / `admin` |\n| `production_areas` | `low_risk` / `high_risk` / `sleeving` / `dispatch` |\n| `warehouse` | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | `technical` / `operational` / `npd` / `finance` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | OK |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 404 | User not found |"
+          }
+        },
+        {
+          "name": "Update user",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                ""
+              ]
+            },
+            "description": "### Update user\n\n`PATCH /auth/users/:id/`\n\nAdmin updates display name and/or active flag. `is_active` also enables/disables the Cognito user. Writes `user.updated` and/or `user.enabled` / `user.disabled` audit.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `display_name` | no | UI / audit label |\n| `is_active` | no | Boolean; syncs Cognito enable/disable |\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n| `Content-Type` | yes | `application/json` |\n\n### Response body (HTTP 200)\n\n`message`: `User updated successfully.`  \n`data`: updated user + grants:\n\n| Field | Meaning |\n|---|---|\n| `id` | Local `rbac_user` PK (`{{user_id}}`) |\n| `username` | Cognito / badge username |\n| `email` | Optional; null for floor users |\n| `display_name` | UI / audit label |\n| `photo_url` | Short-lived private S3 URL (`User-profile/{cognito_sub}/\u2026`); null if none |\n| `is_active` | Soft-disable flag (synced with Cognito) |\n| `is_admin` | `true` if any admin area grant |\n| `cognito_sub` | Cognito subject |\n| `created_at` | ISO timestamp |\n| `departments` | `production` / `warehouse` / `admin` |\n| `production_areas` | `low_risk` / `high_risk` / `sleeving` / `dispatch` |\n| `warehouse` | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | `technical` / `operational` / `npd` / `finance` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Updated |\n| 400 | Invalid JSON, `is_active` not boolean, Cognito error |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 404 | User not found |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_name\": \"Amit Floor\",\n  \"is_active\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Upload user photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "JPEG, PNG, or WebP; max 2 MB"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/photo/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                "photo",
+                ""
+              ]
+            },
+            "description": "### Upload user photo\n\n`POST /auth/users/:id/photo/`\n\nAdmin (any Admin area) or the user themselves uploads a profile photo. Same private S3 layout as Upload my photo: `gazebo-media-files` / `User-profile/{cognito_sub}/\u2026`.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key (`{{user_id}}`) |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n`multipart/form-data`:\n\n| Field | Required | Meaning |\n|---|---|---|\n| `file` | yes* | Image file (JPEG / PNG / WebP, max 2 MB) |\n| `photo` | yes* | Alias for `file` |\n\n\\* Provide `file` **or** `photo`.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` |\n| `Content-Type` | yes | `multipart/form-data` (set by client) |\n\n### Response body (HTTP 200)\n\n`message`: `Photo updated successfully.`  \n`data`: full user + grants including `photo_url`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Uploaded |\n| 400 | Missing file, wrong type, or over 2 MB |\n| 401 | Missing/invalid Bearer token |\n| 403 | Not self and no admin grant, or account disabled |\n| 404 | User not found |"
+          }
+        },
+        {
+          "name": "Replace grants",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/grants/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                "grants",
+                ""
+              ]
+            },
+            "description": "### Replace grants\n\n`PUT /auth/users/:id/grants/`\n\nAdmin idempotent replace of the full grant tree. Missing grant = no access. Writes `grants.replaced` with before/after snapshots.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `departments` | yes | `production`, `warehouse`, `admin`, `it` (global; empty list clears) |\n| `production_areas` | yes | Area list (empty ok) |\n| `warehouse` | yes | `{ unit, actions, goods_in_periods }` list |\n| `admin_areas` | yes | Admin area list (empty ok) |\n\n`unit`: `unit_1`, `unit_2`, `unit_11`.  \n`actions`: `goods_in`, `goods_out`.  \n`goods_in_periods`: `previous`, `today`, `future` (needs `goods_in`).\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n| `Content-Type` | yes | `application/json` |\n\n### Response body (HTTP 200)\n\n`message`: `User permissions updated.`  \n`data`: user + new grants:\n\n| Field | Meaning |\n|---|---|\n| `id` | Local `rbac_user` PK (`{{user_id}}`) |\n| `username` | Cognito / badge username |\n| `email` | Optional; null for floor users |\n| `display_name` | UI / audit label |\n| `photo_url` | Short-lived private S3 URL (`User-profile/{cognito_sub}/\u2026`); null if none |\n| `is_active` | Soft-disable flag (synced with Cognito) |\n| `is_admin` | `true` if any admin area grant |\n| `cognito_sub` | Cognito subject |\n| `created_at` | ISO timestamp |\n| `departments` | `production` / `warehouse` / `admin` |\n| `production_areas` | `low_risk` / `high_risk` / `sleeving` / `dispatch` |\n| `warehouse` | `[{ unit, actions, goods_in_periods }]` |\n| `admin_areas` | `technical` / `operational` / `npd` / `finance` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Replaced |\n| 400 | Invalid JSON / unknown values / area without department / periods without goods_in |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 404 | User not found |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"departments\": [\"production\", \"warehouse\"],\n  \"production_areas\": [\"low_risk\", \"dispatch\"],\n  \"warehouse\": [\n    {\n      \"unit\": \"unit_1\",\n      \"actions\": [\"goods_in\", \"goods_out\"],\n      \"goods_in_periods\": [\"today\", \"future\"]\n    }\n  ],\n  \"admin_areas\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/reset-password/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                "reset-password",
+                ""
+              ]
+            },
+            "description": "### Reset password\n\n`POST /auth/users/:id/reset-password/`\n\nAdmin sets a new permanent Cognito password. Password is never stored in Django or audit JSON. Writes `user.password_reset`.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `password` | yes | New permanent password |\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n| `Content-Type` | yes | `application/json` |\n\n### Response body (HTTP 200)\n\n`message`: `Password was reset.`  \n`data`:\n\n| Field | Meaning |\n|---|---|\n| `ref` | User id |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Reset |\n| 400 | Invalid JSON, missing password, Cognito rejected password |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 404 | User not found |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"NewSecret123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Audit",
+      "description": "Append-only `rbac_audit_event` history (CloudTrail-style) plus merged Amit-day activity.\n\n**Tables:** `rbac_audit_event`, `stock_entry`, `product_audit`\n\n**Routes:** `GET /auth/audit/`, `GET /auth/users/:id/audit/`, `GET /auth/users/:id/activity/`\n\n**Auth:** Bearer + any Admin area grant",
+      "item": [
+        {
+          "name": "List audit events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/audit/?actor=jane.admin&target=amit01&action=grants.replaced&from=&to=&limit=50&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "audit",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "actor",
+                  "value": "jane.admin",
+                  "description": "Optional username or cognito sub"
+                },
+                {
+                  "key": "target",
+                  "value": "amit01",
+                  "description": "Optional username or cognito sub"
+                },
+                {
+                  "key": "action",
+                  "value": "grants.replaced",
+                  "description": "Optional action code"
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "Optional ISO datetime"
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "Optional ISO datetime"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Page size, max 200"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Skip N rows"
+                }
+              ]
+            },
+            "description": "### List audit events\n\n`GET /auth/audit/`\n\nAdmin CloudTrail-style history of RBAC actions: user create/update/enable/disable, password reset, grant replace, login success/failure. Passwords are never stored.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `actor` | no | Username or cognito `sub` of who did it |\n| `target` | no | Username or cognito `sub` of who was affected |\n| `action` | no | e.g. `grants.replaced`, `auth.login_success` |\n| `from` | no | ISO datetime inclusive |\n| `to` | no | ISO datetime inclusive |\n| `limit` | no | Default 50, max 200 |\n| `offset` | no | Default 0 |\n\n### Request body\n\n**None**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n\n### Response body (HTTP 200)\n\n`message`: `Audit events fetched.`  \n`data`:\n\n| Field | Meaning |\n|---|---|\n| `items` | Array of audit events |\n| `count` | Total matching rows |\n| `limit` | Page size used |\n| `offset` | Skip used |\n\nEach item:\n\n| Field | Meaning |\n|---|---|\n| `id` | Event id |\n| `at` | ISO timestamp |\n| `action` | e.g. `user.created`, `grants.replaced`, `auth.login_success` |\n| `actor_sub` / `actor_username` / `actor_display_name` | Who did it |\n| `target_user_id` / `target_username` / `target_sub` | Who was affected |\n| `request_method` / `request_path` / `request_id` | Request context |\n| `source_ip` / `user_agent` | Client info |\n| `before_json` / `after_json` | Snapshots (grants / profile) |\n| `detail_json` | Extra flags (never passwords) |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | OK |\n| 400 | Bad datetime / `limit` / `offset` |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |"
+          }
+        },
+        {
+          "name": "User audit timeline",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/audit/?as=both&action=&from=&to=&limit=50&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                "audit",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "as",
+                  "value": "both",
+                  "description": "actor, target (default), or both"
+                },
+                {
+                  "key": "action",
+                  "value": "",
+                  "description": "Optional action code",
+                  "disabled": true
+                },
+                {
+                  "key": "from",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": true
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "### User audit timeline\n\n`GET /auth/users/:id/audit/`\n\nAdmin timeline for one user. Default `as=target` (what was done to them). `as=actor` = what they did. `as=both` = either.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key |\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `as` | no | `actor`, `target` (default), or `both` |\n| `action` | no | Filter action code |\n| `from` / `to` | no | ISO datetime |\n| `limit` / `offset` | no | Pagination (default 50 / 0, max 200) |\n\n### Request body\n\n**None**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n\n### Response body (HTTP 200)\n\n`message`: `User audit fetched.`  \n`data`: same shape as List audit events (`items`, `count`, `limit`, `offset`).\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | OK |\n| 400 | Bad `as` / datetime / pagination |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 404 | User not found |"
+          }
+        },
+        {
+          "name": "User activity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/users/{{user_id}}/activity/?from=&to=&limit=50&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                "{{user_id}}",
+                "activity",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "",
+                  "description": "Optional ISO datetime"
+                },
+                {
+                  "key": "to",
+                  "value": "",
+                  "description": "Optional ISO datetime"
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Page size, max 200"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Skip N rows"
+                }
+              ]
+            },
+            "description": "### User activity\n\n`GET /auth/users/:id/activity/`\n\nAdmin merged timeline of what this user did: RBAC events (login, denials, grant changes they made) plus stock entries and product audit hits keyed by their `cognito_sub` / username. Newest first. Use this for \u201cwhat did amit01 do after login?\u201d.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `rbac_user` primary key (`{{user_id}}`) |\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `from` | no | ISO datetime inclusive |\n| `to` | no | ISO datetime inclusive |\n| `limit` | no | Default 50, max 200 |\n| `offset` | no | Default 0 |\n\n### Request body\n\n**None**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Authorization: Bearer {{id_token}}` (admin) |\n\n### Response body (HTTP 200)\n\n`message`: `User activity fetched.`  \n`data`:\n\n| Field | Meaning |\n|---|---|---|\n| `items` | Merged events, newest first |\n| `count` | Total matching rows |\n| `limit` | Page size used |\n| `offset` | Skip used |\n\nEach item:\n\n| Field | Meaning |\n|---|---|---|\n| `source` | `rbac`, `stock`, or `product` |\n| `at` | ISO timestamp |\n| `action` | RBAC action, stock entry type, or product action |\n| `actor_sub` / `actor_username` / `lan_username` | Who (when present) |\n| `product_id` / `entry_id` / `request_path` | Domain pointers |\n| `source_ip` | Client IP when known |\n\nRBAC items also include the full audit event fields (`before_json`, `after_json`, `detail_json`, \u2026).\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | OK |\n| 400 | Bad datetime / `limit` / `offset` |\n| 401 | Missing/invalid Bearer token, expired session, or no local profile |\n| 403 | Account disabled, or caller has no admin grant |\n| 404 | User not found |"
+          }
+        }
+      ]
+    }
+  ]
+}
