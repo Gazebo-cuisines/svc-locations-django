@@ -45,6 +45,7 @@ class PurchaseOrder(models.Model):
     )
     ordered_at = models.DateField(null=True, blank=True)
     expected_at = models.DateField(null=True, blank=True)
+    delivery_at = models.DateField(null=True, blank=True)
     remarks = models.CharField(max_length=256, null=True, blank=True)
 
     source = models.CharField(

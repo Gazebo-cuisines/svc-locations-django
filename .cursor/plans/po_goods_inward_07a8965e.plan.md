@@ -19,19 +19,19 @@ todos:
     status: completed
   - id: chunk-06
     content: "Chunk 6: Resolve goods-in form for a PO"
-    status: pending
+    status: completed
   - id: chunk-07
     content: "Chunk 7: Header QC + reject + history + dual sign-off"
-    status: pending
+    status: completed
   - id: chunk-08
     content: "Chunk 8: Line QC + temp/shelf-life validation"
-    status: pending
+    status: completed
   - id: chunk-09
     content: "Chunk 9: Receive / stock-in via existing receipt + partial balance"
-    status: pending
+    status: completed
   - id: chunk-10
     content: "Chunk 10: Quarantine receive + QA release transfer"
-    status: pending
+    status: completed
   - id: chunk-11
     content: "Chunk 11: Attachments (COA/delivery note/photos)"
     status: pending
@@ -147,7 +147,38 @@ The scan shows **two printed variants**, which map exactly onto two templates.
 Three consequences for the model:
 
 - The `If Yes Please comment` column means every check answer is `{value, comment}`, not a bare boolean.
-- **Trace No sits on the header**, not the line (legacy had it per line). Capture once per delivery and default it onto lines, overridable.
+- **Trace No sits on the header**, not the line (legacy had it per line).
+- **Auto Julian Trace No (locked):** from delivery date → `YY` + zero-padded day-of-year `DDD`.
+  - Example: 2026-09-08 → year `26`, day `251` → **`26251`**
+  - Formula: `f"{delivery_date.year % 100:02d}{delivery_date.timetuple().tm_yday:03d}"`
+  - Generated on header QC save (and shown on form resolve as suggested value).
+  - Default delivery date = today (or PO `expected_at` if set).
+  - **Not freely typed** in normal UI; QA override only with a reason (stored in history).
+  - If same day needs uniqueness later: append `-PO{id}` only when a collision is detected (ponytail: start without suffix).
+
+## Goods-in UI controls (locked for Chunk 7–8)
+
+| Field | Control | Why |
+|-------|---------|-----|
+| Delivery Date | **Date picker** | Source of Julian trace |
+| Order No | **Read-only** | From `PO{id}` |
+| Trace No | **Read-only** (auto Julian) | No typos; override is QA-only |
+| Vehicle Temp / Product Temp | **Number input** (°C, 1 decimal) | Not a dropdown |
+| Vehicle clean / FB / pest / odour | **Yes / No toggle** (not free text) | Paper is YES/NO |
+| Packaging damaged / Damaged product | **Yes / No toggle** + **comment box if Yes** | Matches "If Yes Please comment" |
+| COA/COC received | **Yes / No toggle** | Simple gate |
+| Reject Delivery | **Yes / No toggle** (confirm dialog if Yes) | Critical path |
+| Spec Check | **Pass / Fail** (same as Yes/No) | Line QC |
+| UBD / BBE | **Date picker** | Line |
+| Checked By | **Current user** (read-only from auth) | Dual sign-off later can pick QC/TL user |
+| Random QC or TL Check | **Yes / No** + optional comment + QC/TL user | Issue 15 requirement |
+| Comment | **Text area** | Free text |
+
+**Do not use dropdowns** for Yes/No — toggles/radios are faster on warehouse tablets. Dropdowns only if a field has 3+ fixed options (none on GFF001F today).
+
+## Chunk 7 notes (updated)
+
+`POST /purchasing/pos/<id>/qc/header/` accepts answers + `delivery_date`. Server sets `delivery_trace_number` from Julian rule unless `trace_override` + `override_reason` provided.
 - `Random QC or TL Check` is a **second sign-off** distinct from `Checked By`: store `qc_tl_checked_by`, timestamp and comment.
 
 `Pack Size` and `Total Qty` are already derivable — pack shape from `ProductSupplier` and total from qty × multiplier — so they are rendered, not typed.

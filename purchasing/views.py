@@ -5,6 +5,14 @@ from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from purchasing.serialize import po_detail_dict, po_list_dict
+from purchasing.services.goods_in_form import (
+    GoodsInFormError,
+    resolve_goods_in_form,
+)
+from purchasing.services.header_qc import HeaderQcError, submit_header_qc
+from purchasing.services.line_qc import LineQcError, submit_line_qc
+from purchasing.services.receive import ReceiveError, receive_purchase_order
+from purchasing.services.release import ReleaseError, release_from_quarantine
 from purchasing.services.po import (
     PoValidationError,
     create_purchase_order,
@@ -97,3 +105,81 @@ def po_detail_api(request, po_id: int):
         return api_error(msg, status_code=status)
 
     return api_success('Purchase order updated successfully.', po_detail_dict(po))
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def po_goods_in_form_api(request, po_id: int):
+    try:
+        data = resolve_goods_in_form(po_id)
+    except GoodsInFormError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Goods inward form resolved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_header_qc_api(request, po_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = submit_header_qc(po_id, body=body)
+    except HeaderQcError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Header QC saved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_line_qc_api(request, po_id: int, line_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = submit_line_qc(po_id, line_id, body=body)
+    except LineQcError as exc:
+        msg = str(exc)
+        if msg in (
+            'Purchase order not found.',
+            'Purchase order line not found.',
+        ):
+            status = 404
+        else:
+            status = 400
+        return api_error(msg, status_code=status)
+    return api_success('Line QC saved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_receive_api(request, po_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = receive_purchase_order(po_id, body=body)
+    except ReceiveError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Goods received successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_release_api(request, po_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = release_from_quarantine(po_id, body=body)
+    except ReleaseError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Quarantine stock released successfully.', data)

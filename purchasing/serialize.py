@@ -51,6 +51,7 @@ def po_list_dict(po: PurchaseOrder) -> dict:
         ),
         'ordered_at': _iso_date(po.ordered_at),
         'expected_at': _iso_date(po.expected_at),
+        'delivery_at': _iso_date(po.delivery_at),
         'source': po.source,
         'external_number': po.external_number,
         'reject_delivery': po.reject_delivery,

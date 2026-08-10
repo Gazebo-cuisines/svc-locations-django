@@ -1,11 +1,12 @@
-from django.core.exceptions import ObjectDoesNotExist
+from datetime import date
 
-from product.models import ProductGoodsInType
+from product.models import ProductGoodsInType, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
     GoodsInCheckTemplate,
     PurchaseOrder,
 )
+from purchasing.services.julian import julian_trace_number
 from purchasing.services.po import get_purchase_order
 
 
@@ -65,15 +66,11 @@ def resolve_template(
 ) -> GoodsInCheckTemplate:
     gin_type = goods_in_type or ProductGoodsInType.OTHER
     qs = (
-        GoodsInCheckTemplate.objects.filter(
-            is_active=True,
-            scope=scope,
-        )
+        GoodsInCheckTemplate.objects.filter(is_active=True, scope=scope)
         .prefetch_related('items')
         .order_by('-version')
     )
 
-    # Exact type + regime
     if storage_regime:
         hit = qs.filter(
             goods_in_type=gin_type,
@@ -82,12 +79,10 @@ def resolve_template(
         if hit is not None:
             return hit
 
-    # Type fallback (regime null)
     hit = qs.filter(goods_in_type=gin_type, storage_regime__isnull=True).first()
     if hit is not None:
         return hit
 
-    # Global other
     hit = qs.filter(
         goods_in_type=ProductGoodsInType.OTHER,
         storage_regime__isnull=True,
@@ -102,28 +97,20 @@ def resolve_template(
     )
 
 
-def _line_product_meta(line) -> tuple[str | None, str | None]:
-    product = line.product
-    goods_in_type = product.goods_in_type
-    storage_regime = None
-    try:
-        storage_regime = product.technical.storage_regime
-    except ObjectDoesNotExist:
-        storage_regime = None
-    return goods_in_type, storage_regime
-
-
-def _dominant_header_key(lines) -> tuple[str | None, str | None]:
-    """Prefer first line's type/regime; packaging wins if any line is packaging."""
+def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
     if not lines:
         return ProductGoodsInType.OTHER, None
-    types = []
+
     for line in lines:
-        gin_type, regime = _line_product_meta(line)
+        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
         if gin_type == ProductGoodsInType.PACKAGING:
-            return ProductGoodsInType.PACKAGING, regime
-        types.append((gin_type, regime))
-    return types[0]
+            tech = tech_by_product.get(line.product_id)
+            return gin_type, tech.storage_regime if tech else None
+
+    first = lines[0]
+    gin_type = first.product.goods_in_type or ProductGoodsInType.OTHER
+    tech = tech_by_product.get(first.product_id)
+    return gin_type, tech.storage_regime if tech else None
 
 
 def resolve_goods_in_form(po_id: int) -> dict:
@@ -133,33 +120,14 @@ def resolve_goods_in_form(po_id: int) -> dict:
         raise GoodsInFormError('Purchase order not found.') from exc
 
     lines = list(po.lines.all())
-    # Ensure technical is available without N+1 when possible
-    product_ids = [line.product_id for line in lines]
-    if product_ids:
-        from product.models import ProductTechnical
-        tech_by_product = {
-            row.product_id: row
-            for row in ProductTechnical.objects.filter(product_id__in=product_ids)
-        }
-    else:
-        tech_by_product = {}
+    tech_by_product = {
+        row.product_id: row
+        for row in ProductTechnical.objects.filter(
+            product_id__in=[line.product_id for line in lines],
+        )
+    }
 
-    header_type, header_regime = _dominant_header_key(lines)
-    # Recompute dominant with tech map for accuracy
-    if lines:
-        first = lines[0]
-        header_type = first.product.goods_in_type or ProductGoodsInType.OTHER
-        header_regime = None
-        tech = tech_by_product.get(first.product_id)
-        if tech is not None:
-            header_regime = tech.storage_regime
-        for line in lines:
-            if line.product.goods_in_type == ProductGoodsInType.PACKAGING:
-                header_type = ProductGoodsInType.PACKAGING
-                tech = tech_by_product.get(line.product_id)
-                header_regime = tech.storage_regime if tech else None
-                break
-
+    header_type, header_regime = _header_key(lines, tech_by_product)
     header_template = resolve_template(
         goods_in_type=header_type,
         storage_regime=header_regime,
@@ -194,6 +162,14 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'template': _template_block(line_template),
         })
 
+    suggested_delivery_date = (
+        po.delivery_at or po.expected_at or date.today()
+    )
+    suggested_trace = (
+        po.delivery_trace_number
+        or julian_trace_number(suggested_delivery_date)
+    )
+
     return {
         'purchase_order_id': po.id,
         'number': po.number,
@@ -203,12 +179,22 @@ def resolve_goods_in_form(po_id: int) -> dict:
         'ship_to_location_id': po.ship_to_location_id,
         'expected_at': _iso_date(po.expected_at),
         'ordered_at': _iso_date(po.ordered_at),
+        'delivery_at': _iso_date(po.delivery_at),
+        'suggested_delivery_date': _iso_date(suggested_delivery_date),
         'delivery_trace_number': po.delivery_trace_number,
+        'suggested_trace_number': suggested_trace,
         'reject_delivery': po.reject_delivery,
         'vehicle_temperature': (
             str(po.vehicle_temperature)
             if po.vehicle_temperature is not None else None
         ),
+        'checked_by_user_id': po.checked_by_user_id,
+        'checked_at': po.checked_at.isoformat() if po.checked_at else None,
+        'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
+        'qc_tl_checked_at': (
+            po.qc_tl_checked_at.isoformat() if po.qc_tl_checked_at else None
+        ),
+        'qc_tl_comment': po.qc_tl_comment,
         'saved_header_answers': po.header_checks or {},
         'header': _template_block(header_template),
         'lines': line_blocks,
