@@ -13,10 +13,10 @@ todos:
     status: completed
   - id: chunk-04
     content: "Chunk 4: Manual raise PO API (create/list/get/patch + draft→ordered)"
-    status: pending
+    status: completed
   - id: chunk-05
     content: "Chunk 5: Goods-in check templates + seed food/packaging"
-    status: pending
+    status: completed
   - id: chunk-06
     content: "Chunk 6: Resolve goods-in form for a PO"
     status: pending
@@ -190,7 +190,7 @@ The form states: chilled `0–8 °C`, frozen `-18 °C ± 3 °C`, and tighter pro
 
 ## Domain model (legacy-aligned, FKs fixed)
 
-**`PurchaseOrder`**: `number` (`GZB-{id}`), supplier FK, `ship_to_location_id`, `status` (`draft` \| `ordered` \| `partial` \| `received` \| `cancelled`), create/expected dates, totals, header QC snapshot + `vehicle_temperature` / `reject_delivery`, `source` / `external_number`, created/checked users.
+**`PurchaseOrder`**: `number` (`PO{id}`), supplier FK, `ship_to_location_id`, `status` (`draft` \| `ordered` \| `partial` \| `received` \| `cancelled`), create/expected dates, totals, header QC snapshot + `vehicle_temperature` / `reject_delivery`, `source` / `external_number`, created/checked users.
 
 **`PurchaseOrderLine`**: product FK, optional `product_supplier_id`, pack/shape + multiplier snapshot, `qty_ordered` / `qty_received` / `qty_balance`, lot fields (production date, use-by, trace), line QC snapshot + `line_check_ok` / `line_closed` / `stock_in_done`, unit ordered/received, price.
 

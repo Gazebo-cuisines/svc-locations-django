@@ -9,5 +9,6 @@ urlpatterns = [
     path('recipe/', include('recipe.urls')),
     path('stock/', include('stock_ledger.urls')),
     path('planning/', include('planning.urls')),
+    path('purchasing/', include('purchasing.urls')),
     path('auth/', include('users_rbac.urls')),
 ]
