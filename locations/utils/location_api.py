@@ -12,6 +12,7 @@ def location_queryset():
         'addresses',
         'contacts',
         'stock_profile',
+        'supplier_profile',
     ).order_by('name')
 
 

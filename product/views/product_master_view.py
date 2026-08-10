@@ -15,6 +15,7 @@ from product.models import (
     Product,
     ProductClass,
     ProductCosting,
+    ProductGoodsInType,
     ProductLabelMode,
     PurchaseShapeFormat,
     Unit,
@@ -83,6 +84,7 @@ def product_detail_dict(product: Product) -> dict:
         'secondary_gff_recipe': product.secondary_gff_recipe,
         'external_barcode': product.external_barcode,
         'label_mode': product.label_mode,
+        'goods_in_type': product.goods_in_type,
         'is_downtime': product.is_downtime,
         'ingredient_count': product.ingredient_count,
         'remarks': product.remarks,
@@ -111,6 +113,23 @@ def _label_mode_error(value) -> str | None:
     return (
         f'Invalid label_mode. Use one of: {", ".join(ProductLabelMode.values)}.'
     )
+
+
+def _goods_in_type_error(value) -> str | None:
+    if value is None or value == '':
+        return None
+    if value in ProductGoodsInType.values:
+        return None
+    return (
+        f'Invalid goods_in_type. Use one of: '
+        f'{", ".join(ProductGoodsInType.values)}.'
+    )
+
+
+def _normalize_goods_in_type(value):
+    if value is None or value == '':
+        return None
+    return value
 
 
 def _parse_costing_decimal(value, field_name: str) -> Decimal:
@@ -290,6 +309,11 @@ def product_update_api(request, product: Product):
         if error is not None:
             return api_error(error, status_code=400)
 
+    if 'goods_in_type' in body:
+        error = _goods_in_type_error(body['goods_in_type'])
+        if error is not None:
+            return api_error(error, status_code=400)
+
     for field in (
         'name',
         'alternate_name',
@@ -306,6 +330,9 @@ def product_update_api(request, product: Product):
     ):
         if field in body:
             setattr(product, field, body[field])
+
+    if 'goods_in_type' in body:
+        product.goods_in_type = _normalize_goods_in_type(body['goods_in_type'])
 
     purchase = _purchase_details_from_body(body)
     if purchase is not None:
@@ -380,6 +407,11 @@ def product_create_api(request):
     if label_mode_error is not None:
         return api_error(label_mode_error, status_code=400)
 
+    goods_in_type = _normalize_goods_in_type(body.get('goods_in_type'))
+    goods_in_type_error = _goods_in_type_error(goods_in_type)
+    if goods_in_type_error is not None:
+        return api_error(goods_in_type_error, status_code=400)
+
     purchase = _purchase_details_from_body(body) or {}
     try:
         with transaction.atomic():
@@ -392,6 +424,7 @@ def product_create_api(request):
                 secondary_gff_recipe=body.get('secondary_gff_recipe'),
                 external_barcode=body.get('external_barcode'),
                 label_mode=label_mode,
+                goods_in_type=goods_in_type,
                 is_active=body.get('is_active', True),
                 is_downtime=body.get('is_downtime', False),
                 ingredient_count=body.get('ingredient_count'),

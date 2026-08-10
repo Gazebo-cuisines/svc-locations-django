@@ -8,7 +8,7 @@ from django.views.decorators.http import require_http_methods
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
 from product.query import active_products
-from product.models import Product, ProductTechnical
+from product.models import Product, ProductStorageRegime, ProductTechnical
 
 
 def technical_dict(t: ProductTechnical) -> dict:
@@ -33,7 +33,20 @@ def technical_dict(t: ProductTechnical) -> dict:
             str(t.temp_check_upper_bound)
             if t.temp_check_upper_bound is not None else None
         ),
+        'storage_regime': t.storage_regime,
     }
+
+
+def _parse_storage_regime(value):
+    if value is None or value == '':
+        return None
+    value = str(value)
+    if value not in ProductStorageRegime.values:
+        raise ValueError(
+            f'Invalid storage_regime. Use one of: '
+            f'{", ".join(ProductStorageRegime.values)}.',
+        )
+    return value
 
 
 def _parse_json_body(request):
@@ -121,6 +134,7 @@ def product_technical_api(request, pk: int):
             'temp_check_upper_bound': _parse_decimal(
                 body.get('temp_check_upper_bound'), 'temp_check_upper_bound',
             ),
+            'storage_regime': _parse_storage_regime(body.get('storage_regime')),
         }
         existing = ProductTechnical.objects.filter(pk=pk).first()
         before_data = technical_dict(existing) if existing else None

@@ -114,12 +114,42 @@ class LocationStockProfile(models.Model):
     metric_unit = models.IntegerField(null=True, blank=True)
     document_header = models.CharField(max_length=64, null=True, blank=True)
     default_report = models.CharField(max_length=64, null=True, blank=True)
+    is_quarantine = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'loc_stock_profile'
 
     def __str__(self):
         return f'stock:{self.location_id}'
+
+
+class SupplierApprovalStatus(models.TextChoices):
+    APPROVED = 'approved', 'Approved'
+    PENDING = 'pending', 'Pending'
+    SUSPENDED = 'suspended', 'Suspended'
+
+
+class LocationSupplierProfile(models.Model):
+    location = models.OneToOneField(
+        Location,
+        on_delete=models.CASCADE,
+        related_name='supplier_profile',
+        primary_key=True,
+        db_column='location_id',
+    )
+    approval_status = models.CharField(
+        max_length=16,
+        choices=SupplierApprovalStatus.choices,
+        null=True,
+        blank=True,
+    )
+    approval_expires_on = models.DateField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'loc_supplier_profile'
+
+    def __str__(self):
+        return f'supplier:{self.location_id}:{self.approval_status}'
 
 
 class LocationRelationType(models.TextChoices):

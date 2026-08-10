@@ -132,6 +132,19 @@ class ProductLabelMode(models.TextChoices):
     PER_UNIT = 'per_unit', 'One label per physical unit'
 
 
+class ProductGoodsInType(models.TextChoices):
+    RAW_MATERIAL = 'raw_material', 'Raw material'
+    PACKAGING = 'packaging', 'Packaging'
+    OTHER = 'other', 'Other'
+
+
+class ProductStorageRegime(models.TextChoices):
+    AMBIENT = 'ambient', 'Ambient'
+    CHILLED = 'chilled', 'Chilled'
+    FROZEN = 'frozen', 'Frozen'
+    NON_FOOD = 'non_food', 'Non-food'
+
+
 class Product(models.Model):
     """Core product identity + classification."""
 
@@ -147,6 +160,12 @@ class Product(models.Model):
         max_length=16,
         choices=ProductLabelMode.choices,
         default=ProductLabelMode.PRODUCT,
+    )
+    goods_in_type = models.CharField(
+        max_length=16,
+        choices=ProductGoodsInType.choices,
+        null=True,
+        blank=True,
     )
     is_active = models.BooleanField(default=True)
     is_downtime = models.BooleanField(default=False)
@@ -665,6 +684,12 @@ class ProductTechnical(models.Model):
     )
     temp_check_upper_bound = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True,
+    )
+    storage_regime = models.CharField(
+        max_length=16,
+        choices=ProductStorageRegime.choices,
+        null=True,
+        blank=True,
     )
 
     class Meta:
