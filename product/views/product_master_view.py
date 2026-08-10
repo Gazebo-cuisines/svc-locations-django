@@ -1,7 +1,8 @@
 import json
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Prefetch
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -13,10 +14,9 @@ from product.models import (
     Category,
     Product,
     ProductClass,
+    ProductCosting,
     ProductLabelMode,
     PurchaseShapeFormat,
-    Range,
-    SubRange,
     Unit,
 )
 from product.query import active_products
@@ -26,7 +26,7 @@ from recipe.utils import active_or_latest_version
 
 def _product_qs():
     return Product.objects.select_related(
-        'category', 'unit', 'shelf_life', 'recipe',
+        'category', 'unit', 'shelf_life', 'recipe', 'costing',
     ).prefetch_related(
         Prefetch(
             'recipe__versions',
@@ -57,8 +57,7 @@ def product_list_dict(product: Product) -> dict:
         'is_active': product.is_active,
         'product_class_id': product.product_class_id,
         'category_id': product.category_id,
-        'category_path': product.category.path,
-        'range_id': product.range_id,
+        'category_path': product.category.path if product.category_id else None,
         'unit_id': product.unit_id,
         'unit_name': product.unit.name,
         'source_container_id': product.source_container_id,
@@ -70,6 +69,14 @@ def product_list_dict(product: Product) -> dict:
 
 def product_detail_dict(product: Product) -> dict:
     data = product_list_dict(product)
+    try:
+        costing = product.costing
+        costing_data = {
+            'nominal_code': costing.nominal_code,
+            'price': str(costing.unit_price),
+        }
+    except ProductCosting.DoesNotExist:
+        costing_data = None
     data.update({
         'alternate_recipe_code': product.alternate_recipe_code,
         'gff_code': product.gff_code,
@@ -79,12 +86,12 @@ def product_detail_dict(product: Product) -> dict:
         'is_downtime': product.is_downtime,
         'ingredient_count': product.ingredient_count,
         'remarks': product.remarks,
-        'sub_range_id': product.sub_range_id,
         'purchase_details': {
             'purchase_unit_id': product.purchasing_unit_id,
             'purchase_format': product.purchase_shape_format_id,
             'purchase_version': product.purchasing_version,
         },
+        'costing': costing_data,
         'created_at': product.created_at.isoformat() if product.created_at else None,
         'updated_at': product.updated_at.isoformat() if product.updated_at else None,
     })
@@ -103,6 +110,37 @@ def _label_mode_error(value) -> str | None:
         return None
     return (
         f'Invalid label_mode. Use one of: {", ".join(ProductLabelMode.values)}.'
+    )
+
+
+def _parse_costing_decimal(value, field_name: str) -> Decimal:
+    if value is None or value == '':
+        return Decimal('0')
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f'Invalid decimal for costing.{field_name}.') from exc
+
+
+def _apply_nested_costing(product: Product, body: dict):
+    """Optional nested costing: { nominal_code, price } — price maps to unit_price."""
+    costing = body.get('costing')
+    if not isinstance(costing, dict):
+        return
+    nominal = costing.get('nominal_code')
+    if nominal in ('',):
+        nominal = None
+    if nominal is not None:
+        nominal = str(nominal)[:4] or None
+    price = costing.get('price', costing.get('unit_price', 0))
+    unit_cost = costing.get('unit_cost', 0)
+    ProductCosting.objects.update_or_create(
+        product_id=product.id,
+        defaults={
+            'nominal_code': nominal,
+            'unit_price': _parse_costing_decimal(price, 'price'),
+            'unit_cost': _parse_costing_decimal(unit_cost, 'unit_cost'),
+        },
     )
 
 
@@ -233,9 +271,7 @@ def product_update_api(request, product: Product):
     lookup_checks = (
         ('product_class_id', ProductClass),
         ('category_id', Category),
-        ('range_id', Range),
         ('unit_id', Unit),
-        ('sub_range_id', SubRange),
         ('source_container_id', Location),
         ('destination_container_id', Location),
     )
@@ -244,9 +280,6 @@ def product_update_api(request, product: Product):
             continue
         value = body[field]
         if value is None:
-            if field == 'sub_range_id':
-                setattr(product, field, None)
-                continue
             return api_error(f'{field} cannot be null.', status_code=400)
         if not model.objects.filter(pk=value).exists():
             return api_error(f'{field}={value} not found.', status_code=400)
@@ -282,10 +315,15 @@ def product_update_api(request, product: Product):
             return api_error(str(exc), status_code=400)
 
     try:
-        product.save()
+        with transaction.atomic():
+            product.save()
+            _apply_nested_costing(product, body)
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
         return api_error(f'Could not update product: {exc}', status_code=400)
 
+    product = _product_qs().get(pk=product.pk)
     after_data = product_detail_dict(product)
     capture_product_audit(
         request,
@@ -311,7 +349,6 @@ def product_create_api(request):
         'name',
         'product_class_id',
         'category_id',
-        'range_id',
         'unit_id',
         'source_container_id',
         'destination_container_id',
@@ -326,19 +363,13 @@ def product_create_api(request):
     try:
         ProductClass.objects.get(pk=body['product_class_id'])
         Category.objects.get(pk=body['category_id'])
-        Range.objects.get(pk=body['range_id'])
         Unit.objects.get(pk=body['unit_id'])
     except (
         ProductClass.DoesNotExist,
         Category.DoesNotExist,
-        Range.DoesNotExist,
         Unit.DoesNotExist,
     ) as exc:
         return api_error(f'Invalid lookup reference: {exc}', status_code=400)
-
-    sub_range_id = body.get('sub_range_id')
-    if sub_range_id is not None and not SubRange.objects.filter(pk=sub_range_id).exists():
-        return api_error(f'sub_range_id={sub_range_id} not found.', status_code=400)
 
     for field in ('source_container_id', 'destination_container_id'):
         if not Location.objects.filter(pk=body[field]).exists():
@@ -351,34 +382,35 @@ def product_create_api(request):
 
     purchase = _purchase_details_from_body(body) or {}
     try:
-        product = Product(
-            name=body['name'],
-            alternate_name=body.get('alternate_name'),
-            recipe_code=body.get('recipe_code'),
-            alternate_recipe_code=body.get('alternate_recipe_code'),
-            gff_code=body.get('gff_code'),
-            secondary_gff_recipe=body.get('secondary_gff_recipe'),
-            external_barcode=body.get('external_barcode'),
-            label_mode=label_mode,
-            is_active=body.get('is_active', True),
-            is_downtime=body.get('is_downtime', False),
-            ingredient_count=body.get('ingredient_count'),
-            remarks=body.get('remarks'),
-            product_class_id=body['product_class_id'],
-            category_id=body['category_id'],
-            range_id=body['range_id'],
-            sub_range_id=sub_range_id,
-            unit_id=body['unit_id'],
-            source_container_id=body['source_container_id'],
-            destination_container_id=body['destination_container_id'],
-        )
-        _apply_purchase_details(product, purchase)
-        product.save()
+        with transaction.atomic():
+            product = Product(
+                name=body['name'],
+                alternate_name=body.get('alternate_name'),
+                recipe_code=body.get('recipe_code'),
+                alternate_recipe_code=body.get('alternate_recipe_code'),
+                gff_code=body.get('gff_code'),
+                secondary_gff_recipe=body.get('secondary_gff_recipe'),
+                external_barcode=body.get('external_barcode'),
+                label_mode=label_mode,
+                is_active=body.get('is_active', True),
+                is_downtime=body.get('is_downtime', False),
+                ingredient_count=body.get('ingredient_count'),
+                remarks=body.get('remarks'),
+                product_class_id=body['product_class_id'],
+                category_id=body['category_id'],
+                unit_id=body['unit_id'],
+                source_container_id=body['source_container_id'],
+                destination_container_id=body['destination_container_id'],
+            )
+            _apply_purchase_details(product, purchase)
+            product.save()
+            _apply_nested_costing(product, body)
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
         return api_error(f'Could not create product: {exc}', status_code=400)
 
+    product = _product_qs().get(pk=product.pk)
     after_data = product_detail_dict(product)
     capture_product_audit(
         request,

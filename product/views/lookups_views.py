@@ -1,12 +1,12 @@
 import json
-from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from locations.utils.api_response import api_error, api_success
+from product.category_images import category_image_url, upload_category_image
 from product.models import (
     AllergenCode,
     Category,
@@ -48,24 +48,11 @@ def _category_dict(row: Category, *, include_children: bool = True) -> dict:
         'id': row.id,
         'name': row.name,
         'parent_id': row.parent_id,
-        'is_default': row.is_default,
-        'is_container': row.is_container,
-        'purchase_unit_id': row.purchase_unit_id,
-        'multiplier': str(row.multiplier) if row.multiplier is not None else None,
         'path': row.path,
-        'path_nodes': row.path_nodes,
         'code_generator': row.code_generator,
-        'code_generator_path': row.code_generator_path,
-        'last_increment_auto_code': row.last_increment_auto_code,
-        'item_flag': row.item_flag,
-        'is_range': row.is_range,
-        'is_resource': row.is_resource,
-        'is_container_flag': row.is_container_flag,
-        'is_other': row.is_other,
-        'is_locked': row.is_locked,
-        'is_locked_assigned': row.is_locked_assigned,
-        'is_locked_path': row.is_locked_path,
         'remarks': row.remarks,
+        'image_key': row.image_key,
+        'image_url': category_image_url(row),
     }
     if include_children:
         data['children'] = []
@@ -120,13 +107,27 @@ def _is_descendant(ancestor_id: int, maybe_child_id: int) -> bool:
     return False
 
 
+def _derive_category_path(name: str, parent_id) -> str:
+    if parent_id is None:
+        return name
+    parent = Category.objects.filter(pk=parent_id).only('path', 'name').first()
+    if not parent:
+        return name
+    base = (parent.path or parent.name or '').strip()
+    return f'{base} / {name}' if base else name
+
+
 def _apply_category_fields(row: Category, body: dict, *, creating: bool):
-    """Apply writable fields from body. Returns error response or None."""
+    """Apply writable public fields from body. Returns error response or None."""
+    name_changed = False
+    parent_changed = False
+
     if 'name' in body or creating:
         name = (body.get('name') or '').strip()
         if not name:
             return api_error('name cannot be empty.', status_code=400)
         row.name = name
+        name_changed = True
 
     if 'parent_id' in body or creating:
         parent_id, ok = _parse_optional_int(body, 'parent_id') if 'parent_id' in body else (None, True)
@@ -142,67 +143,18 @@ def _apply_category_fields(row: Category, body: dict, *, creating: bool):
             if row.id and _is_descendant(row.id, parent_id):
                 return api_error('Cannot set parent to a descendant category.', status_code=400)
         row.parent_id = parent_id
+        parent_changed = True
 
-    if 'purchase_unit_id' in body:
-        unit_id, ok = _parse_optional_int(body, 'purchase_unit_id')
-        if not ok:
-            return api_error('purchase_unit_id must be an integer or null.', status_code=400)
-        if unit_id is not None and not Unit.objects.filter(pk=unit_id).exists():
-            return api_error(f'Unit id={unit_id} not found.', status_code=400)
-        row.purchase_unit_id = unit_id
-
-    if 'multiplier' in body:
-        raw = body.get('multiplier')
-        if raw in (None, '', 'null'):
-            row.multiplier = None
-        else:
-            try:
-                row.multiplier = Decimal(str(raw))
-            except (InvalidOperation, ValueError):
-                return api_error('multiplier must be a decimal number.', status_code=400)
-
-    str_fields = (
-        'path',
-        'path_nodes',
-        'code_generator',
-        'code_generator_path',
-        'remarks',
-    )
-    for field in str_fields:
+    for field in ('code_generator', 'remarks'):
         if field in body:
             value = body.get(field)
             setattr(row, field, None if value in (None, '') else str(value))
 
-    bool_fields = (
-        'is_default',
-        'is_container',
-        'is_range',
-        'is_resource',
-        'is_container_flag',
-        'is_other',
-        'is_locked',
-        'is_locked_assigned',
-        'is_locked_path',
-    )
-    for field in bool_fields:
-        if field in body:
-            value = body.get(field)
-            if field == 'is_container' and value is None:
-                row.is_container = None
-            else:
-                setattr(row, field, bool(value))
-
-    if 'item_flag' in body:
-        try:
-            row.item_flag = int(body.get('item_flag'))
-        except (TypeError, ValueError):
-            return api_error('item_flag must be an integer.', status_code=400)
-
-    if 'last_increment_auto_code' in body:
-        try:
-            row.last_increment_auto_code = int(body.get('last_increment_auto_code'))
-        except (TypeError, ValueError):
-            return api_error('last_increment_auto_code must be an integer.', status_code=400)
+    if 'path' in body:
+        value = body.get('path')
+        row.path = None if value in (None, '') else str(value)
+    elif creating or name_changed or parent_changed:
+        row.path = _derive_category_path(row.name, row.parent_id)
 
     return None
 
@@ -227,11 +179,12 @@ def product_category_list_api(request):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
-    category_id = body.get('id')
-    if category_id in (None, ''):
-        return api_error('Missing required fields: id, name', status_code=400)
+    missing = [f for f in ('id', 'name') if body.get(f) in (None, '')]
+    if missing:
+        return api_error(f'Missing required fields: {", ".join(missing)}', status_code=400)
+
     try:
-        category_id = int(category_id)
+        category_id = int(body.get('id'))
     except (TypeError, ValueError):
         return api_error('id must be an integer.', status_code=400)
 
@@ -255,6 +208,28 @@ def product_category_list_api(request):
     )
 
 
+def _category_in_use_by(category: Category) -> list:
+    """Hard blockers: child categories and active products."""
+    usages = []
+    for child in category.children.all()[:50]:
+        usages.append({
+            'type': 'child_category',
+            'field': 'parent_id',
+            'id': child.id,
+            'name': child.name,
+            'path': child.path,
+        })
+    for p in category.products.filter(is_active=True)[:50]:
+        usages.append({
+            'type': 'product',
+            'field': 'category_id',
+            'id': p.id,
+            'name': p.name,
+            'is_active': True,
+        })
+    return usages
+
+
 @require_http_methods(['GET', 'PATCH', 'DELETE'])
 @csrf_exempt
 def product_category_detail_api(request, pk: int):
@@ -270,13 +245,16 @@ def product_category_detail_api(request, pk: int):
         )
 
     if request.method == 'DELETE':
-        try:
-            row.delete()
-        except ProtectedError:
+        blockers = _category_in_use_by(row)
+        if blockers:
             return api_error(
                 'Category is in use (products or child categories) and cannot be deleted.',
+                data={'in_use_by': blockers},
                 status_code=409,
             )
+        # Inactive products keep their row; clear FK so PROTECT allows delete.
+        row.products.filter(is_active=False).update(category_id=None)
+        row.delete()
         return api_success('Product category deleted successfully.', data=None)
 
     body = _parse_json_body(request)
@@ -296,6 +274,28 @@ def product_category_detail_api(request, pk: int):
 
     return api_success(
         'Product category updated successfully.',
+        _category_dict(row, include_children=False),
+    )
+
+
+@require_POST
+@csrf_exempt
+def product_category_image_api(request, pk: int):
+    try:
+        row = Category.objects.get(pk=pk)
+    except Category.DoesNotExist:
+        return api_error('Product category not found.', status_code=404)
+
+    uploaded = request.FILES.get('file') or request.FILES.get('image')
+    if not uploaded:
+        return api_error('Image file is required.', status_code=400)
+    try:
+        upload_category_image(row, uploaded)
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+
+    return api_success(
+        'Product category image updated successfully.',
         _category_dict(row, include_children=False),
     )
 

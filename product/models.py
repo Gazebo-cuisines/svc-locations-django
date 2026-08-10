@@ -53,6 +53,7 @@ class Category(models.Model):
     is_locked_assigned = models.BooleanField(default=False)
     is_locked_path = models.BooleanField(default=False)
     remarks = models.TextField(null=True, blank=True)
+    image_key = models.CharField(max_length=512, null=True, blank=True)
 
     class Meta:
         db_table = 'product_category'
@@ -162,11 +163,15 @@ class Product(models.Model):
         Category,
         on_delete=models.PROTECT,
         related_name='products',
+        null=True,
+        blank=True,
     )
     range = models.ForeignKey(
         Range,
         on_delete=models.PROTECT,
         related_name='products',
+        null=True,
+        blank=True,
     )
     sub_range = models.ForeignKey(
         SubRange,
