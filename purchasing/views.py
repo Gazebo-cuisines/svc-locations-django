@@ -289,3 +289,12 @@ def legacy_csv_import_api(request):
         else 'Legacy CSV imported successfully.'
     )
     return api_success(message, data, status_code=200 if dry_run else 201)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def po_print_api(request, po_id: int):
+    try:
+        return pdf_http_response(po_id)
+    except GoodsInFormError as exc:
+        return api_error(str(exc), status_code=404)

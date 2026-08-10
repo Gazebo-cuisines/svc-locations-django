@@ -43,7 +43,7 @@ todos:
     status: pending
   - id: chunk-14
     content: "Chunk 14: Printable PDF matching GFF001F"
-    status: pending
+    status: completed
   - id: chunk-15
     content: "Chunk 15: Postman docs for all purchasing endpoints"
     status: pending
