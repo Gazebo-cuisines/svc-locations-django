@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from locations.models import Location
 from planning.models import Resource
-from product.models import Category, ProductClass, Range, Unit
+from product.models import Category, ProductClass, Unit
 
 
 class ProductApiTests(TestCase):
@@ -22,7 +22,6 @@ class ProductApiTests(TestCase):
     def _seed_lookups(self):
         ProductClass.objects.create(id=1, name='Finished')
         Category.objects.create(id=1, name='Meals')
-        Range.objects.create(id=1, name='Main')
         Unit.objects.create(id=1, name='Each')
 
     def _seed_locations(self):
@@ -34,7 +33,6 @@ class ProductApiTests(TestCase):
             'name': name,
             'product_class_id': 1,
             'category_id': 1,
-            'range_id': 1,
             'unit_id': 1,
             'source_container_id': 1,
             'destination_container_id': 2,
