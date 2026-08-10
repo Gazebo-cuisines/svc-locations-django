@@ -5,12 +5,20 @@ from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from purchasing.serialize import po_detail_dict, po_list_dict
+from purchasing.services.attachments import (
+    AttachmentError,
+    delete_attachment,
+    list_attachments,
+    upload_attachment,
+)
 from purchasing.services.goods_in_form import (
     GoodsInFormError,
     resolve_goods_in_form,
 )
 from purchasing.services.header_qc import HeaderQcError, submit_header_qc
+from purchasing.services.legacy_csv import LegacyCsvError, import_legacy_csv
 from purchasing.services.line_qc import LineQcError, submit_line_qc
+from purchasing.services.print_pdf import pdf_http_response
 from purchasing.services.receive import ReceiveError, receive_purchase_order
 from purchasing.services.release import ReleaseError, release_from_quarantine
 from purchasing.services.po import (
@@ -20,7 +28,7 @@ from purchasing.services.po import (
     list_purchase_orders,
     update_purchase_order,
 )
-from purchasing.models import PurchaseOrder
+from purchasing.models import GoodsInAttachmentKind, PurchaseOrder, PurchaseOrderStatus
 
 
 def _parse_json_body(request):
@@ -183,3 +191,101 @@ def po_release_api(request, po_id: int):
         status = 404 if msg == 'Purchase order not found.' else 400
         return api_error(msg, status_code=status)
     return api_success('Quarantine stock released successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def po_attachments_api(request, po_id: int):
+    if request.method == 'GET':
+        try:
+            data = list_attachments(po_id)
+        except AttachmentError as exc:
+            msg = str(exc)
+            status = 404 if msg == 'Purchase order not found.' else 400
+            return api_error(msg, status_code=status)
+        return api_success(
+            'Attachments fetched successfully.',
+            {'count': len(data), 'results': data},
+        )
+
+    uploaded = request.FILES.get('file') or request.FILES.get('image')
+    if not uploaded:
+        return api_error('File is required (multipart field: file).', status_code=400)
+
+    kind = request.POST.get('kind') or GoodsInAttachmentKind.PHOTO
+    uploaded_by = request.POST.get('uploaded_by_user_id')
+    if uploaded_by not in (None, ''):
+        try:
+            uploaded_by = int(uploaded_by)
+        except (TypeError, ValueError):
+            return api_error('uploaded_by_user_id must be an integer.', status_code=400)
+    else:
+        uploaded_by = None
+
+    try:
+        data = upload_attachment(
+            po_id,
+            uploaded_file=uploaded,
+            kind=kind,
+            line_id=request.POST.get('line_id'),
+            history_id=request.POST.get('history_id'),
+            uploaded_by_user_id=uploaded_by,
+        )
+    except AttachmentError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Attachment uploaded successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['DELETE'])
+def po_attachment_detail_api(request, po_id: int, attachment_id: int):
+    try:
+        delete_attachment(po_id, attachment_id)
+    except AttachmentError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Attachment deleted successfully.', data=None)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def legacy_csv_import_api(request):
+    uploaded = request.FILES.get('file') or request.FILES.get('csv')
+    if not uploaded:
+        return api_error(
+            'CSV file is required (multipart field: file).',
+            status_code=400,
+        )
+    dry_run = str(request.POST.get('dry_run') or request.GET.get('dry_run') or '')
+    dry_run = dry_run.lower() in ('1', 'true', 'yes')
+    status = request.POST.get('status') or PurchaseOrderStatus.ORDERED
+    created_by = request.POST.get('created_by_user_id')
+    if created_by not in (None, ''):
+        try:
+            created_by = int(created_by)
+        except (TypeError, ValueError):
+            return api_error('created_by_user_id must be an integer.', status_code=400)
+    else:
+        created_by = None
+
+    try:
+        data = import_legacy_csv(
+            file_bytes=uploaded.read(),
+            dry_run=dry_run,
+            status=status,
+            created_by_user_id=created_by,
+        )
+    except LegacyCsvError as exc:
+        return api_error(str(exc), status_code=400)
+    except PoValidationError as exc:
+        return api_error(str(exc), status_code=400)
+
+    message = (
+        'Legacy CSV validated successfully (dry run).'
+        if dry_run
+        else 'Legacy CSV imported successfully.'
+    )
+    return api_success(message, data, status_code=200 if dry_run else 201)

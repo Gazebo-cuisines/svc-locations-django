@@ -34,10 +34,10 @@ todos:
     status: completed
   - id: chunk-11
     content: "Chunk 11: Attachments (COA/delivery note/photos)"
-    status: pending
+    status: completed
   - id: chunk-12
     content: "Chunk 12: Legacy 10-col CSV import"
-    status: pending
+    status: completed
   - id: chunk-13
     content: "Chunk 13: Sage file import adapter (needs sample)"
     status: pending

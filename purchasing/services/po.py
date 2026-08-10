@@ -168,11 +168,29 @@ def create_purchase_order(
     remarks=None,
     created_by_user_id=None,
     status: str = PurchaseOrderStatus.DRAFT,
+    source: str = PurchaseOrderSource.MANUAL,
+    external_number: str | None = None,
 ) -> PurchaseOrder:
     supplier = _require_supplier(supplier_id)
     ship_to = _optional_location(ship_to_location_id, 'ship_to_location_id')
     if status not in (PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.ORDERED):
         raise PoValidationError('Create status must be draft or ordered.')
+    if source not in PurchaseOrderSource.values:
+        raise PoValidationError(
+            f'Invalid source. Use one of: {", ".join(PurchaseOrderSource.values)}.',
+        )
+    if external_number in ('',):
+        external_number = None
+    if external_number is not None:
+        external_number = str(external_number).strip()[:64]
+        exists = PurchaseOrder.objects.filter(
+            source=source, external_number=external_number,
+        ).exists()
+        if exists:
+            raise PoValidationError(
+                f'PO already imported for source={source} '
+                f'external_number={external_number}.',
+            )
 
     line_rows = _build_line_rows(supplier.id, lines)
     po = PurchaseOrder.objects.create(
@@ -183,7 +201,8 @@ def create_purchase_order(
         or (date.today() if status == PurchaseOrderStatus.ORDERED else None),
         expected_at=_parse_optional_date(expected_at, 'expected_at'),
         remarks=remarks,
-        source=PurchaseOrderSource.MANUAL,
+        source=source,
+        external_number=external_number,
         created_by_user_id=created_by_user_id,
     )
     assign_po_number(po)

@@ -7,6 +7,7 @@ from purchasing.models import (
     PurchaseOrder,
 )
 from purchasing.services.julian import julian_trace_number
+from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
 
 
@@ -198,4 +199,5 @@ def resolve_goods_in_form(po_id: int) -> dict:
         'saved_header_answers': po.header_checks or {},
         'header': _template_block(header_template),
         'lines': line_blocks,
+        'attachments': list_attachments(po.id),
     }

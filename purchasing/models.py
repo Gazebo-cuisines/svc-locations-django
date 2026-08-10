@@ -240,6 +240,58 @@ class PurchaseOrderHistory(models.Model):
         return f'po_history:{self.purchase_order_id}:{self.event_type}'
 
 
+class GoodsInAttachmentKind(models.TextChoices):
+    PHOTO = 'photo', 'Photo'
+    COA = 'coa', 'COA/COC'
+    DELIVERY_NOTE = 'delivery_note', 'Delivery note'
+    OTHER = 'other', 'Other'
+
+
+class GoodsInAttachment(models.Model):
+    purchase_order = models.ForeignKey(
+        PurchaseOrder,
+        on_delete=models.CASCADE,
+        related_name='attachments',
+    )
+    line = models.ForeignKey(
+        PurchaseOrderLine,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attachments',
+    )
+    history = models.ForeignKey(
+        PurchaseOrderHistory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attachments',
+    )
+    kind = models.CharField(
+        max_length=32,
+        choices=GoodsInAttachmentKind.choices,
+        default=GoodsInAttachmentKind.PHOTO,
+    )
+    s3_key = models.CharField(max_length=512)
+    content_type = models.CharField(max_length=64, null=True, blank=True)
+    original_filename = models.CharField(max_length=255, null=True, blank=True)
+    uploaded_by_user_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'po_goods_in_attachment'
+        ordering = ['-id']
+        indexes = [
+            models.Index(
+                fields=['purchase_order', 'kind'],
+                name='idx_po_attachment_po_kind',
+            ),
+        ]
+
+    def __str__(self):
+        return f'po_attach:{self.purchase_order_id}:{self.kind}:{self.id}'
+
+
 class GoodsInCheckScope(models.TextChoices):
     HEADER = 'header', 'Header'
     LINE = 'line', 'Line'

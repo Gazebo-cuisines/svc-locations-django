@@ -1,6 +1,9 @@
 from django.urls import path
 
 from purchasing.views import (
+    legacy_csv_import_api,
+    po_attachment_detail_api,
+    po_attachments_api,
     po_collection_api,
     po_detail_api,
     po_goods_in_form_api,
@@ -37,5 +40,20 @@ urlpatterns = [
         'pos/<int:po_id>/release/',
         po_release_api,
         name='purchasing-po-release',
+    ),
+    path(
+        'pos/<int:po_id>/attachments/',
+        po_attachments_api,
+        name='purchasing-po-attachments',
+    ),
+    path(
+        'pos/<int:po_id>/attachments/<int:attachment_id>/',
+        po_attachment_detail_api,
+        name='purchasing-po-attachment-detail',
+    ),
+    path(
+        'imports/legacy-csv/',
+        legacy_csv_import_api,
+        name='purchasing-legacy-csv-import',
     ),
 ]

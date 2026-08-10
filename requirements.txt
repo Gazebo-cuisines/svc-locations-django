@@ -6,3 +6,4 @@ PyJWT[crypto]>=2.8
 certifi>=2024.0
 django-cors-headers>=4.4
 gunicorn>=22.0
+reportlab>=4.0
