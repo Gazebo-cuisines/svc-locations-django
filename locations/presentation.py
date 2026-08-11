@@ -1,3 +1,4 @@
+from locations.location_images import location_image_url
 from locations.models import Location
 from locations.services.hierarchy import (
     get_subordinate_children,
@@ -29,6 +30,8 @@ def location_list_dict(location: Location) -> dict:
         'locked': location.locked,
         'roles': list(location.roles.values_list('role', flat=True)),
         'features': list(location.features.values_list('feature', flat=True)),
+        'image_key': location.image_key,
+        'image_url': location_image_url(location),
     }
 
 
