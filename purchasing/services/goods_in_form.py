@@ -1,5 +1,6 @@
 from datetime import date
 
+from product.goods_in import effective_goods_in_type
 from product.models import ProductGoodsInType, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
@@ -104,13 +105,13 @@ def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
         return ProductGoodsInType.OTHER, None
 
     for line in lines:
-        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
+        gin_type = effective_goods_in_type(line.product)
         if gin_type == ProductGoodsInType.PACKAGING:
             tech = tech_by_product.get(line.product_id)
             return gin_type, tech.storage_regime if tech else None
 
     first = lines[0]
-    gin_type = first.product.goods_in_type or ProductGoodsInType.OTHER
+    gin_type = effective_goods_in_type(first.product)
     tech = tech_by_product.get(first.product_id)
     return gin_type, tech.storage_regime if tech else None
 
@@ -138,7 +139,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
 
     line_blocks = []
     for line in lines:
-        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
+        gin_type = effective_goods_in_type(line.product)
         tech = tech_by_product.get(line.product_id)
         regime = tech.storage_regime if tech is not None else None
         line_template = resolve_template(

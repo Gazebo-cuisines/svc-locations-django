@@ -67,7 +67,7 @@ def seed_goods_in_templates():
             'code': 'vehicle_temperature',
             'label': 'Vehicle Temp (°C)',
             'input_type': GoodsInInputType.DECIMAL,
-            'required': True,
+            'required': False,
             'is_critical': True,
             'fail_when': GoodsInFailWhen.OUT_OF_RANGE,
             'source': 'regime.vehicle_temp',

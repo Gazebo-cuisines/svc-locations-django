@@ -39,5 +39,6 @@ urlpatterns = [
     
     # PO Attachment Detail API
     path('pos/<int:po_id>/attachments/<int:attachment_id>/', po_attachment_detail_api, name='purchasing-po-attachment-detail'),
-    path('pos/<int:po_id>/print/', po_print_api, name='purchasing-po-print'),    path('imports/legacy-csv/', legacy_csv_import_api, name='purchasing-legacy-csv-import'),
+    path('pos/<int:po_id>/print/', po_print_api, name='purchasing-po-print'),
+    path('imports/legacy-csv/', legacy_csv_import_api, name='purchasing-legacy-csv-import'),
 ]
