@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from purchasing.models import PurchaseOrder, PurchaseOrderLine
 
 
@@ -9,6 +11,16 @@ def _iso_dt(value):
     return value.isoformat() if value else None
 
 
+def _qty_str(value) -> str | None:
+    """2.000000 → '2', 2.500000 → '2.5' (no trailing zeros)."""
+    if value is None:
+        return None
+    text = f'{Decimal(str(value)):f}'
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text or '0'
+
+
 def line_dict(line: PurchaseOrderLine) -> dict:
     return {
         'id': line.id,
@@ -16,21 +28,18 @@ def line_dict(line: PurchaseOrderLine) -> dict:
         'product_id': line.product_id,
         'product_name': line.product.name if line.product_id else None,
         'product_supplier_id': line.product_supplier_id,
-        'qty_ordered': str(line.qty_ordered),
-        'qty_received': str(line.qty_received),
-        'qty_balance': str(line.qty_balance),
+        'qty_ordered': _qty_str(line.qty_ordered),
+        'qty_received': _qty_str(line.qty_received),
+        'qty_balance': _qty_str(line.qty_balance),
         'unit_id': line.unit_id,
         'unit_name': line.unit.name if line.unit_id else None,
-        'unit_cost': str(line.unit_cost) if line.unit_cost is not None else None,
-        'multiplier': str(line.multiplier) if line.multiplier is not None else None,
+        'unit_cost': _qty_str(line.unit_cost),
+        'multiplier': _qty_str(line.multiplier),
         'shape_format_label': line.shape_format_label,
         'production_date': _iso_date(line.production_date),
         'use_by': _iso_date(line.use_by),
         'trace_number': line.trace_number,
-        'product_temperature': (
-            str(line.product_temperature)
-            if line.product_temperature is not None else None
-        ),
+        'product_temperature': _qty_str(line.product_temperature),
         'line_check_ok': line.line_check_ok,
         'line_closed': line.line_closed,
         'stock_in_done': line.stock_in_done,
@@ -66,7 +75,7 @@ def po_detail_dict(po: PurchaseOrder) -> dict:
         'remarks': po.remarks,
         'delivery_trace_number': po.delivery_trace_number,
         'vehicle_temperature': (
-            str(po.vehicle_temperature)
+            _qty_str(po.vehicle_temperature)
             if po.vehicle_temperature is not None else None
         ),
         'header_checks': po.header_checks,
@@ -75,7 +84,7 @@ def po_detail_dict(po: PurchaseOrder) -> dict:
         'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
         'qc_tl_checked_at': _iso_dt(po.qc_tl_checked_at),
         'qc_tl_comment': po.qc_tl_comment,
-        'total_net': str(po.total_net) if po.total_net is not None else None,
+        'total_net': _qty_str(po.total_net),
         'created_by_user_id': po.created_by_user_id,
         'lines': [line_dict(line) for line in po.lines.all()],
     })
