@@ -66,11 +66,12 @@ jobs:
             git reset --hard "origin/$BRANCH"
             git clean -fdq || true
 
-            # Apply any pending Django migrations before restarting the app
+            # Install deps then migrate before restarting the app
             if [ -f "venv/bin/activate" ]; then
               # shellcheck disable=SC1091
               . venv/bin/activate
             fi
+            pip install -r requirements.txt
             python manage.py migrate --noinput
 
             if systemctl list-unit-files | grep -q "gunicorn-locations.service"; then
