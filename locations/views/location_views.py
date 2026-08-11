@@ -2,8 +2,10 @@ import json
 
 from django.core.exceptions import ValidationError
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 
+from locations.location_images import upload_location_image
+from locations.models import Location
 from locations.presentation import location_detail_dict, location_list_dict
 from locations.services.location_service import (
     create_location,
@@ -146,3 +148,26 @@ def location_detail_api(request, location_id: int):
 
     location = location_queryset().get(pk=location_id)
     return api_success('Location updated successfully.', location_detail_dict(location))
+
+
+@csrf_exempt
+@require_POST
+def location_image_api(request, location_id: int):
+    try:
+        location = Location.objects.get(pk=location_id)
+    except Location.DoesNotExist:
+        return api_error('Location not found.', status_code=404)
+
+    uploaded = request.FILES.get('file') or request.FILES.get('image')
+    if not uploaded:
+        return api_error('Image file is required (multipart field: file).', status_code=400)
+    try:
+        upload_location_image(location, uploaded)
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+
+    location = location_queryset().get(pk=location.id)
+    return api_success(
+        'Location image updated successfully.',
+        location_detail_dict(location),
+    )

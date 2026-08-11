@@ -9,7 +9,11 @@ from locations.views.container_views import container_index_api, global_containe
 from locations.views.courier_views import courier_detail_api, courier_list_api
 from locations.views.customer_views import customer_detail_api, customer_list_api
 from locations.views.department_views import create_department, department_detail_api, department_list_api
-from locations.views.location_views import location_detail_api, location_list_api
+from locations.views.location_views import (
+    location_detail_api,
+    location_image_api,
+    location_list_api,
+)
 from locations.views.storage_views import (
     storage_location_detail_api, storage_location_list_api )
  
@@ -39,6 +43,11 @@ container_urlpatterns = [
         'locations/<int:location_id>/',
         csrf_exempt(auth_middleware(location_detail_api)),
         name='location-detail',
+    ),
+    path(
+        'locations/<int:location_id>/image/',
+        csrf_exempt(auth_middleware(location_image_api)),
+        name='location-image',
     ),
     path('suppliers/', csrf_exempt(auth_middleware(supplier_list_api)), name='supplier-list'),
     path(

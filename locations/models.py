@@ -36,6 +36,7 @@ class Location(models.Model):
     locked = models.BooleanField(default=False)
     remarks = models.TextField(null=True, blank=True)
     po_remarks = models.TextField(null=True, blank=True)
+    image_key = models.CharField(max_length=512, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
