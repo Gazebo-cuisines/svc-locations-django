@@ -5,6 +5,10 @@ from django.http import JsonResponse
 from django.urls import include, path
 from django.views.decorators.csrf import csrf_exempt
 
+from locations.views.address_views import (
+    location_postal_address_detail_api,
+    location_postal_addresses_api,
+)
 from locations.views.contact_views import (
     location_contact_detail_api,
     location_contacts_api,
@@ -85,6 +89,16 @@ container_urlpatterns = [
         csrf_exempt(auth_middleware(location_contact_detail_api)),
         name='location-contact-detail',
     ),
+    path(
+        'locations/<int:location_id>/postal-address/',
+        csrf_exempt(auth_middleware(location_postal_addresses_api)),
+        name='location-postal-addresses',
+    ),
+    path(
+        'locations/<int:location_id>/postal-address/<int:address_id>/',
+        csrf_exempt(auth_middleware(location_postal_address_detail_api)),
+        name='location-postal-address-detail',
+    ),
     path('suppliers/', csrf_exempt(auth_middleware(supplier_list_api)), name='supplier-list'),
     path(
         'suppliers/<int:location_id>/',
@@ -100,6 +114,16 @@ container_urlpatterns = [
         'suppliers/<int:location_id>/contacts/<int:contact_id>/',
         csrf_exempt(auth_middleware(location_contact_detail_api)),
         name='supplier-contact-detail',
+    ),
+    path(
+        'suppliers/<int:location_id>/postal-address/',
+        csrf_exempt(auth_middleware(location_postal_addresses_api)),
+        name='supplier-postal-addresses',
+    ),
+    path(
+        'suppliers/<int:location_id>/postal-address/<int:address_id>/',
+        csrf_exempt(auth_middleware(location_postal_address_detail_api)),
+        name='supplier-postal-address-detail',
     ),
     path('couriers/', auth_middleware(courier_list_api), name='courier-list'),
     path('couriers/<int:location_id>/', auth_middleware(courier_detail_api), name='courier-detail'),
