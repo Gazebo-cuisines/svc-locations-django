@@ -32,11 +32,14 @@ DEFAULT_AUDIT_LIMIT = 50
 
 
 def _require_admin(request):
-    """Mutations need Cognito admin (send X-API-Token + Authorization: Bearer <jwt>)."""
+    """Mutations need Cognito IT/admin user (Authorization: Bearer <jwt>)."""
     denied = attach_user(request)
     if denied:
         return denied
-    return require_any_admin(request)
+    denied = require_any_admin(request)
+    if denied:
+        return denied
+    return None
 
 
 def _parse_json_body(request):

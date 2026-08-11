@@ -33,11 +33,21 @@ def auth_middleware(view_func):
     def _wrapped(request, *args, **kwargs):
         api_token = request.headers.get('X-API-Token')
         auth_header = request.headers.get('Authorization', '')
-        bearer_token = auth_header[7:].strip() if auth_header.startswith('Bearer ') else None
-        token = api_token or bearer_token
-        if token != STATIC_CONTAINER_TOKEN:
-            return JsonResponse({'status': 'error', 'message': 'Unauthorized'}, status=401)
-        return view_func(request, *args, **kwargs)
+        bearer_token = (
+            auth_header[7:].strip() if auth_header.startswith('Bearer ') else None
+        )
+        if api_token == STATIC_CONTAINER_TOKEN or bearer_token == STATIC_CONTAINER_TOKEN:
+            return view_func(request, *args, **kwargs)
+
+        # Cognito JWT also opens the gate (mutations still need IT/admin via view).
+        if bearer_token:
+            from users_rbac.auth import attach_user
+
+            attach_user(request, missing='ok', invalid='ok')
+            if getattr(request, 'rbac_user', None) is not None:
+                return view_func(request, *args, **kwargs)
+
+        return JsonResponse({'status': 'error', 'message': 'Unauthorized'}, status=401)
 
     return _wrapped
 
