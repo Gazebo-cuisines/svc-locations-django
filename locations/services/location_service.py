@@ -19,6 +19,22 @@ from locations.services.hierarchy import remove_parent_edge, set_parent_edge
 # product/stock tables are owned by new services.
 
 
+def _ensure_unique_external_code(
+    external_code: str | None,
+    *,
+    exclude_id: int | None = None,
+) -> None:
+    if external_code in (None, ''):
+        return
+    qs = Location.objects.filter(external_code=external_code)
+    if exclude_id is not None:
+        qs = qs.exclude(pk=exclude_id)
+    if qs.exists():
+        raise ValidationError(
+            f'Account reference "{external_code}" is already used by another location.',
+        )
+
+
 def _set_roles(location: Location, roles: list[str]) -> None:
     invalid = [role for role in roles if role not in LocationRole.values]
     if invalid:
@@ -108,6 +124,8 @@ def create_location(
     elif Location.objects.filter(id=location_id).exists():
         raise ValidationError(f'Location id {location_id} already exists.')
 
+    _ensure_unique_external_code(external_code or None)
+
     location = Location.objects.create(
         id=location_id,
         name=name,
@@ -193,7 +211,9 @@ def update_location(
     if name is not None:
         location.name = name
     if external_code is not None:
-        location.external_code = external_code or None
+        code = external_code or None
+        _ensure_unique_external_code(code, exclude_id=location.id)
+        location.external_code = code
     if visible is not None:
         location.visible = visible
     if static is not None:
