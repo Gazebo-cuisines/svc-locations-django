@@ -12,6 +12,12 @@ def _iso_datetime(value):
     return value.isoformat()
 
 
+def _iso_date(value):
+    if value is None:
+        return None
+    return value.isoformat()
+
+
 def location_list_dict(location: Location) -> dict:
     return {
         'container_id': location.id,
@@ -29,6 +35,7 @@ def location_list_dict(location: Location) -> dict:
 def location_detail_dict(location: Location) -> dict:
     data = location_list_dict(location)
     profile = getattr(location, 'stock_profile', None)
+    supplier = getattr(location, 'supplier_profile', None)
     data.update(
         {
             'remarks': location.remarks,
@@ -54,6 +61,13 @@ def location_detail_dict(location: Location) -> dict:
                 'metric_unit': profile.metric_unit,
                 'document_header': profile.document_header,
                 'default_report': profile.default_report,
+                'is_quarantine': profile.is_quarantine,
+            },
+            'supplier_profile': None
+            if supplier is None
+            else {
+                'approval_status': supplier.approval_status,
+                'approval_expires_on': _iso_date(supplier.approval_expires_on),
             },
             'addresses': [
                 {

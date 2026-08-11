@@ -72,6 +72,7 @@ def location_list_api(request):
             roles=body.get('roles'),
             features=body.get('features'),
             stock_profile=body.get('stock_profile'),
+            supplier_profile=body.get('supplier_profile'),
             zone_parent_id=body.get('zone_parent_id'),
             subordinate_parent_id=body.get('subordinate_parent_id'),
         )
@@ -133,6 +134,9 @@ def location_detail_api(request, location_id: int):
             roles=body.get('roles') if 'roles' in body else None,
             features=body.get('features') if 'features' in body else None,
             stock_profile=body.get('stock_profile') if 'stock_profile' in body else None,
+            supplier_profile=(
+                body.get('supplier_profile') if 'supplier_profile' in body else None
+            ),
             hierarchy=hierarchy,
         )
     except ValidationError as exc:

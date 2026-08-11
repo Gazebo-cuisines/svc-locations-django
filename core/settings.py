@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'recipe',
     'stock_ledger',
     'planning',
+    'purchasing',
     'users_rbac',
 ]
 

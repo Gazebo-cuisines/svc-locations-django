@@ -10,6 +10,8 @@ from locations.models import (
     LocationRole,
     LocationRoleAssignment,
     LocationStockProfile,
+    LocationSupplierProfile,
+    SupplierApprovalStatus,
 )
 from locations.services.hierarchy import remove_parent_edge, set_parent_edge
 
@@ -48,6 +50,32 @@ def _sync_features(location: Location, legacy_row: dict) -> None:
     _set_features(location, features_from_row(legacy_row))
 
 
+def _normalize_supplier_profile(profile: dict) -> dict:
+    status = profile.get('approval_status')
+    if status in (None, ''):
+        status = None
+    elif status not in SupplierApprovalStatus.values:
+        raise ValidationError(
+            f'Invalid approval_status. Use one of: '
+            f'{", ".join(SupplierApprovalStatus.values)}.',
+        )
+    expires = profile.get('approval_expires_on')
+    if expires in (None, ''):
+        expires = None
+    return {
+        'approval_status': status,
+        'approval_expires_on': expires,
+    }
+
+
+def _apply_supplier_profile(location: Location, profile: dict) -> None:
+    defaults = _normalize_supplier_profile(profile)
+    LocationSupplierProfile.objects.update_or_create(
+        location=location,
+        defaults=defaults,
+    )
+
+
 @transaction.atomic
 def create_location(
     *,
@@ -64,6 +92,7 @@ def create_location(
     role_flags: dict | None = None,
     feature_flags: dict | None = None,
     stock_profile: dict | None = None,
+    supplier_profile: dict | None = None,
     zone_parent_id: int | None = None,
     subordinate_parent_id: int | None = None,
 ) -> Location:
@@ -115,7 +144,11 @@ def create_location(
         metric_unit=profile.get('metric_unit'),
         document_header=profile.get('document_header'),
         default_report=profile.get('default_report'),
+        is_quarantine=bool(profile.get('is_quarantine', False)),
     )
+
+    if supplier_profile is not None:
+        _apply_supplier_profile(location, supplier_profile)
 
     if zone_parent_id is not None:
         set_parent_edge(
@@ -149,6 +182,7 @@ def update_location(
     role_flags: dict | None = None,
     feature_flags: dict | None = None,
     stock_profile: dict | None = None,
+    supplier_profile: dict | None = None,
     hierarchy: dict | None = None,
 ) -> Location:
     try:
@@ -186,6 +220,9 @@ def update_location(
             location=location,
             defaults=stock_profile,
         )
+
+    if supplier_profile is not None:
+        _apply_supplier_profile(location, supplier_profile)
 
     if hierarchy is not None:
         if 'zone_parent_id' in hierarchy:

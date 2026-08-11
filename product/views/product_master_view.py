@@ -15,7 +15,10 @@ from product.models import (
     Product,
     ProductClass,
     ProductCosting,
+    ProductGoodsInType,
     ProductLabelMode,
+    ProductStorageRegime,
+    ProductTechnical,
     PurchaseShapeFormat,
     Unit,
 )
@@ -24,9 +27,24 @@ from recipe.models import RecipeVersion
 from recipe.utils import active_or_latest_version
 
 
+_ROOT_GOODS_IN_TYPE = {
+    'raw materials': ProductGoodsInType.RAW_MATERIAL,
+    'packaging materials': ProductGoodsInType.PACKAGING,
+}
+
+_STORAGE_REGIME_ALIASES = {
+    'ambient': ProductStorageRegime.AMBIENT,
+    'chilled': ProductStorageRegime.CHILLED,
+    'frozen': ProductStorageRegime.FROZEN,
+    'non_food': ProductStorageRegime.NON_FOOD,
+    'nonfood': ProductStorageRegime.NON_FOOD,
+    'non-food': ProductStorageRegime.NON_FOOD,
+}
+
+
 def _product_qs():
     return Product.objects.select_related(
-        'category', 'unit', 'shelf_life', 'recipe', 'costing',
+        'category', 'unit', 'shelf_life', 'recipe', 'costing', 'technical',
     ).prefetch_related(
         Prefetch(
             'recipe__versions',
@@ -83,6 +101,8 @@ def product_detail_dict(product: Product) -> dict:
         'secondary_gff_recipe': product.secondary_gff_recipe,
         'external_barcode': product.external_barcode,
         'label_mode': product.label_mode,
+        'goods_in_type': product.goods_in_type,
+        'storage_regime': _storage_regime_of(product),
         'is_downtime': product.is_downtime,
         'ingredient_count': product.ingredient_count,
         'remarks': product.remarks,
@@ -110,6 +130,96 @@ def _label_mode_error(value) -> str | None:
         return None
     return (
         f'Invalid label_mode. Use one of: {", ".join(ProductLabelMode.values)}.'
+    )
+
+
+def _goods_in_type_error(value) -> str | None:
+    if value is None or value == '':
+        return None
+    if value in ProductGoodsInType.values:
+        return None
+    return (
+        f'Invalid goods_in_type. Use one of: '
+        f'{", ".join(ProductGoodsInType.values)}.'
+    )
+
+
+def _normalize_goods_in_type(value):
+    if value is None or value == '':
+        return None
+    return value
+
+
+def _category_root(category: Category) -> Category:
+    current = category
+    seen = {current.id}
+    while current.parent_id is not None and current.parent_id not in seen:
+        parent = Category.objects.filter(pk=current.parent_id).first()
+        if parent is None:
+            break
+        seen.add(parent.id)
+        current = parent
+    return current
+
+
+def goods_in_type_from_category(category: Category) -> str:
+    root_name = (_category_root(category).name or '').strip().lower()
+    return _ROOT_GOODS_IN_TYPE.get(root_name, ProductGoodsInType.OTHER)
+
+
+def _storage_regime_of(product: Product):
+    try:
+        return product.technical.storage_regime
+    except ProductTechnical.DoesNotExist:
+        return None
+
+
+def _normalize_storage_regime(value):
+    if value is None or value == '':
+        return None
+    key = str(value).strip().lower().replace(' ', '_')
+    mapped = _STORAGE_REGIME_ALIASES.get(key) or _STORAGE_REGIME_ALIASES.get(
+        key.replace('-', '_'),
+    )
+    if mapped is None:
+        raise ValueError(
+            f'Invalid storage_regime. Use one of: '
+            f'{", ".join(ProductStorageRegime.values)} '
+            f'(or Ambient / Chilled / Frozen).',
+        )
+    return mapped
+
+
+def _storage_regime_from_body(body: dict, *, required: bool = False):
+    if 'storage_regime' in body:
+        raw = body.get('storage_regime')
+    elif 'storage_type' in body:
+        raw = body.get('storage_type')
+    else:
+        raw = None
+    if raw in (None, '') and required:
+        raise ValueError(
+            'Missing required fields: storage_regime '
+            '(or storage_type). Use ambient, chilled, frozen, or non_food.',
+        )
+    if raw in (None, '') and not required:
+        return None
+    return _normalize_storage_regime(raw)
+
+
+def _apply_storage_regime(product: Product, body: dict, *, required: bool = False) -> None:
+    if (
+        not required
+        and 'storage_regime' not in body
+        and 'storage_type' not in body
+    ):
+        return
+    regime = _storage_regime_from_body(body, required=required)
+    if regime is None and not required:
+        return
+    ProductTechnical.objects.update_or_create(
+        product_id=product.id,
+        defaults={'storage_regime': regime},
     )
 
 
@@ -290,6 +400,15 @@ def product_update_api(request, product: Product):
         if error is not None:
             return api_error(error, status_code=400)
 
+    if 'goods_in_type' in body:
+        error = _goods_in_type_error(body['goods_in_type'])
+        if error is not None:
+            return api_error(error, status_code=400)
+        product.goods_in_type = _normalize_goods_in_type(body['goods_in_type'])
+    elif 'category_id' in body:
+        category = Category.objects.select_related('parent').get(pk=product.category_id)
+        product.goods_in_type = goods_in_type_from_category(category)
+
     for field in (
         'name',
         'alternate_name',
@@ -318,6 +437,7 @@ def product_update_api(request, product: Product):
         with transaction.atomic():
             product.save()
             _apply_nested_costing(product, body)
+            _apply_storage_regime(product, body)
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
@@ -362,7 +482,7 @@ def product_create_api(request):
 
     try:
         ProductClass.objects.get(pk=body['product_class_id'])
-        Category.objects.get(pk=body['category_id'])
+        category = Category.objects.select_related('parent').get(pk=body['category_id'])
         Unit.objects.get(pk=body['unit_id'])
     except (
         ProductClass.DoesNotExist,
@@ -380,6 +500,19 @@ def product_create_api(request):
     if label_mode_error is not None:
         return api_error(label_mode_error, status_code=400)
 
+    if 'goods_in_type' in body and body.get('goods_in_type') not in (None, ''):
+        goods_in_type = _normalize_goods_in_type(body.get('goods_in_type'))
+        goods_in_type_error = _goods_in_type_error(goods_in_type)
+        if goods_in_type_error is not None:
+            return api_error(goods_in_type_error, status_code=400)
+    else:
+        goods_in_type = goods_in_type_from_category(category)
+
+    try:
+        _storage_regime_from_body(body, required=True)
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+
     purchase = _purchase_details_from_body(body) or {}
     try:
         with transaction.atomic():
@@ -392,6 +525,7 @@ def product_create_api(request):
                 secondary_gff_recipe=body.get('secondary_gff_recipe'),
                 external_barcode=body.get('external_barcode'),
                 label_mode=label_mode,
+                goods_in_type=goods_in_type,
                 is_active=body.get('is_active', True),
                 is_downtime=body.get('is_downtime', False),
                 ingredient_count=body.get('ingredient_count'),
@@ -405,6 +539,7 @@ def product_create_api(request):
             _apply_purchase_details(product, purchase)
             product.save()
             _apply_nested_costing(product, body)
+            _apply_storage_regime(product, body, required=True)
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
