@@ -29,6 +29,7 @@ from purchasing.services.po import (
     update_purchase_order,
 )
 from purchasing.models import GoodsInAttachmentKind, PurchaseOrder, PurchaseOrderStatus
+from users_rbac.auth import attach_user
 
 
 def _parse_json_body(request):
@@ -221,6 +222,11 @@ def po_attachments_api(request, po_id: int):
             return api_error('uploaded_by_user_id must be an integer.', status_code=400)
     else:
         uploaded_by = None
+        # Prefer Cognito actor when FE sends Authorization Bearer JWT
+        attach_user(request, missing='ok', invalid='ok')
+        actor = getattr(request, 'rbac_user', None)
+        if actor is not None:
+            uploaded_by = actor.id
 
     try:
         data = upload_attachment(

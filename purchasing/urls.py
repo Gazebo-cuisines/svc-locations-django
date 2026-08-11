@@ -15,51 +15,29 @@ from purchasing.views import (
 )
 
 urlpatterns = [
+    # PO API
     path('pos/', po_collection_api, name='purchasing-po-list'),
     path('pos/<int:po_id>/', po_detail_api, name='purchasing-po-detail'),
-    path(
-        'pos/<int:po_id>/goods-in-form/',
-        po_goods_in_form_api,
-        name='purchasing-po-goods-in-form',
-    ),
-    path(
-        'pos/<int:po_id>/qc/header/',
-        po_header_qc_api,
-        name='purchasing-po-header-qc',
-    ),
-    path(
-        'pos/<int:po_id>/lines/<int:line_id>/qc/',
-        po_line_qc_api,
-        name='purchasing-po-line-qc',
-    ),
-    path(
-        'pos/<int:po_id>/receive/',
-        po_receive_api,
-        name='purchasing-po-receive',
-    ),
-    path(
-        'pos/<int:po_id>/release/',
-        po_release_api,
-        name='purchasing-po-release',
-    ),
-    path(
-        'pos/<int:po_id>/attachments/',
-        po_attachments_api,
-        name='purchasing-po-attachments',
-    ),
-    path(
-        'pos/<int:po_id>/attachments/<int:attachment_id>/',
-        po_attachment_detail_api,
-        name='purchasing-po-attachment-detail',
-    ),
-    path(
-        'pos/<int:po_id>/print/',
-        po_print_api,
-        name='purchasing-po-print',
-    ),
-    path(
-        'imports/legacy-csv/',
-        legacy_csv_import_api,
-        name='purchasing-legacy-csv-import',
-    ),
+    
+    # PO Goods In Form API
+    path('pos/<int:po_id>/goods-in-form/', po_goods_in_form_api, name='purchasing-po-goods-in-form'),
+    
+    # PO Header QC API
+    path('pos/<int:po_id>/qc/header/', po_header_qc_api, name='purchasing-po-header-qc'),
+    
+    # PO Line QC API
+    path('pos/<int:po_id>/lines/<int:line_id>/qc/', po_line_qc_api, name='purchasing-po-line-qc'),
+    
+    # PO Receive API
+    path('pos/<int:po_id>/receive/', po_receive_api, name='purchasing-po-receive'),
+    
+    # PO Release API
+    path('pos/<int:po_id>/release/', po_release_api, name='purchasing-po-release'),
+    
+    # PO Attachments API
+    path('pos/<int:po_id>/attachments/', po_attachments_api, name='purchasing-po-attachments'),
+    
+    # PO Attachment Detail API
+    path('pos/<int:po_id>/attachments/<int:attachment_id>/', po_attachment_detail_api, name='purchasing-po-attachment-detail'),
+    path('pos/<int:po_id>/print/', po_print_api, name='purchasing-po-print'),    path('imports/legacy-csv/', legacy_csv_import_api, name='purchasing-legacy-csv-import'),
 ]

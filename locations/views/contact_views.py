@@ -1,6 +1,7 @@
 """Location contact CRUD."""
 
 from django.core.exceptions import ValidationError
+from django.db import DataError
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -35,7 +36,20 @@ def _apply_fields(row: LocationContact, body: dict) -> None:
                 value = int(value)
             except (TypeError, ValueError) as exc:
                 raise ValidationError('contact_type must be an integer.') from exc
+        if key == 'phone' and value is not None and len(str(value)) > 64:
+            raise ValidationError('phone must be 64 characters or fewer.')
+        if key == 'email' and value is not None and len(str(value)) > 128:
+            raise ValidationError('email must be 128 characters or fewer.')
         setattr(row, key, value)
+
+
+def _save(row: LocationContact) -> None:
+    try:
+        row.save()
+    except DataError as exc:
+        raise ValidationError(
+            'Contact phone/email is too long for this field.',
+        ) from exc
 
 
 @csrf_exempt
@@ -65,9 +79,9 @@ def location_contacts_api(request, location_id: int):
     row = LocationContact(location_id=location_id)
     try:
         _apply_fields(row, body)
+        _save(row)
     except ValidationError as exc:
         return api_error('; '.join(exc.messages), status_code=400)
-    row.save()
     return api_success('Contact created successfully.', _contact_dict(row), status_code=201)
 
 
@@ -95,7 +109,7 @@ def location_contact_detail_api(request, location_id: int, contact_id: int):
         return api_error('Invalid JSON body.', status_code=400)
     try:
         _apply_fields(row, body)
+        _save(row)
     except ValidationError as exc:
         return api_error('; '.join(exc.messages), status_code=400)
-    row.save()
     return api_success('Contact updated successfully.', _contact_dict(row))
