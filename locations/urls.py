@@ -5,11 +5,17 @@ from django.http import JsonResponse
 from django.urls import include, path
 from django.views.decorators.csrf import csrf_exempt
 
+from locations.views.contact_views import (
+    location_contact_detail_api,
+    location_contacts_api,
+)
 from locations.views.container_views import container_index_api, global_container_index_api
 from locations.views.courier_views import courier_detail_api, courier_list_api
 from locations.views.customer_views import customer_detail_api, customer_list_api
 from locations.views.department_views import create_department, department_detail_api, department_list_api
 from locations.views.location_views import (
+    location_audit_api,
+    location_audit_list_api,
     location_detail_api,
     location_image_api,
     location_list_api,
@@ -40,6 +46,11 @@ container_urlpatterns = [
     path('', auth_middleware(container_index_api), name='container-index'),
     path('locations/', csrf_exempt(auth_middleware(location_list_api)), name='location-list'),
     path(
+        'locations/audit/',
+        auth_middleware(location_audit_list_api),
+        name='location-audit-list',
+    ),
+    path(
         'locations/<int:location_id>/',
         csrf_exempt(auth_middleware(location_detail_api)),
         name='location-detail',
@@ -49,11 +60,36 @@ container_urlpatterns = [
         csrf_exempt(auth_middleware(location_image_api)),
         name='location-image',
     ),
+    path(
+        'locations/<int:location_id>/audit/',
+        auth_middleware(location_audit_api),
+        name='location-audit',
+    ),
+    path(
+        'locations/<int:location_id>/contacts/',
+        csrf_exempt(auth_middleware(location_contacts_api)),
+        name='location-contacts',
+    ),
+    path(
+        'locations/<int:location_id>/contacts/<int:contact_id>/',
+        csrf_exempt(auth_middleware(location_contact_detail_api)),
+        name='location-contact-detail',
+    ),
     path('suppliers/', csrf_exempt(auth_middleware(supplier_list_api)), name='supplier-list'),
     path(
         'suppliers/<int:location_id>/',
         csrf_exempt(auth_middleware(supplier_detail_api)),
         name='supplier-detail',
+    ),
+    path(
+        'suppliers/<int:location_id>/contacts/',
+        csrf_exempt(auth_middleware(location_contacts_api)),
+        name='supplier-contacts',
+    ),
+    path(
+        'suppliers/<int:location_id>/contacts/<int:contact_id>/',
+        csrf_exempt(auth_middleware(location_contact_detail_api)),
+        name='supplier-contact-detail',
     ),
     path('couriers/', auth_middleware(courier_list_api), name='courier-list'),
     path('couriers/<int:location_id>/', auth_middleware(courier_detail_api), name='courier-detail'),

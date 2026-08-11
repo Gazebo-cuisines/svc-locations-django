@@ -237,3 +237,41 @@ class LocationContact(models.Model):
 
     def __str__(self):
         return f'contact:{self.location_id}:{self.name or self.id}'
+
+
+class LocationAuditAction(models.TextChoices):
+    CREATE = 'create', 'Create'
+    UPDATE = 'update', 'Update'
+    DELETE = 'delete', 'Delete'
+    IMAGE_UPDATE = 'image_update', 'Image update'
+
+
+class LocationAuditEvent(models.Model):
+    """Append-only location change log (survives location delete)."""
+
+    at = models.DateTimeField(auto_now_add=True)
+    action = models.CharField(max_length=32, choices=LocationAuditAction.choices)
+    location_id = models.IntegerField(db_index=True)
+    location_name = models.CharField(max_length=64, null=True, blank=True)
+    actor_sub = models.CharField(max_length=128, null=True, blank=True)
+    actor_username = models.CharField(max_length=128, null=True, blank=True)
+    actor_display_name = models.CharField(max_length=128, null=True, blank=True)
+    actor_email = models.CharField(max_length=128, null=True, blank=True)
+    request_method = models.CharField(max_length=8, null=True, blank=True)
+    request_path = models.CharField(max_length=512, null=True, blank=True)
+    source_ip = models.CharField(max_length=64, null=True, blank=True)
+    user_agent = models.TextField(null=True, blank=True)
+    before_json = models.JSONField(null=True, blank=True)
+    after_json = models.JSONField(null=True, blank=True)
+    changed_fields = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'loc_audit_event'
+        ordering = ['-at']
+        indexes = [
+            models.Index(fields=['location_id', '-at'], name='idx_loc_audit_loc_at'),
+            models.Index(fields=['actor_sub', '-at'], name='idx_loc_audit_actor_at'),
+        ]
+
+    def __str__(self):
+        return f'{self.action}:loc:{self.location_id}'
