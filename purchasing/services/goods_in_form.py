@@ -1,5 +1,6 @@
 from datetime import date
 
+from product.goods_in import effective_goods_in_type
 from product.models import ProductGoodsInType, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
@@ -9,6 +10,7 @@ from purchasing.models import (
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
+from purchasing.serialize import _qty_str
 
 
 class GoodsInFormError(ValueError):
@@ -103,13 +105,13 @@ def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
         return ProductGoodsInType.OTHER, None
 
     for line in lines:
-        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
+        gin_type = effective_goods_in_type(line.product)
         if gin_type == ProductGoodsInType.PACKAGING:
             tech = tech_by_product.get(line.product_id)
             return gin_type, tech.storage_regime if tech else None
 
     first = lines[0]
-    gin_type = first.product.goods_in_type or ProductGoodsInType.OTHER
+    gin_type = effective_goods_in_type(first.product)
     tech = tech_by_product.get(first.product_id)
     return gin_type, tech.storage_regime if tech else None
 
@@ -137,7 +139,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
 
     line_blocks = []
     for line in lines:
-        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
+        gin_type = effective_goods_in_type(line.product)
         tech = tech_by_product.get(line.product_id)
         regime = tech.storage_regime if tech is not None else None
         line_template = resolve_template(
@@ -152,9 +154,9 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'product_name': line.product.name,
             'goods_in_type': gin_type,
             'storage_regime': regime,
-            'qty_ordered': str(line.qty_ordered),
-            'qty_received': str(line.qty_received),
-            'qty_balance': str(line.qty_balance),
+            'qty_ordered': _qty_str(line.qty_ordered),
+            'qty_received': _qty_str(line.qty_received),
+            'qty_balance': _qty_str(line.qty_balance),
             'pack_size': line.shape_format_label,
             'unit_id': line.unit_id,
             'unit_name': line.unit.name if line.unit_id else None,

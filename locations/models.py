@@ -207,7 +207,7 @@ class LocationAddress(models.Model):
     )
     name = models.CharField(max_length=64, null=True, blank=True)
     contact_point_name = models.CharField(max_length=64, null=True, blank=True)
-    contact_point_phone = models.CharField(max_length=16, null=True, blank=True)
+    contact_point_phone = models.CharField(max_length=64, null=True, blank=True)
     address = models.TextField(null=True, blank=True)
     is_primary = models.BooleanField(default=False)
 
@@ -226,8 +226,8 @@ class LocationContact(models.Model):
         db_column='location_id',
     )
     name = models.CharField(max_length=64, null=True, blank=True)
-    phone = models.CharField(max_length=16, null=True, blank=True)
-    email = models.CharField(max_length=64, null=True, blank=True)
+    phone = models.CharField(max_length=64, null=True, blank=True)
+    email = models.CharField(max_length=128, null=True, blank=True)
     contact_type = models.IntegerField(null=True, blank=True)
     contact_value = models.CharField(max_length=64, null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)

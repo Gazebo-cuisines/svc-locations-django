@@ -271,7 +271,7 @@ def get_purchase_order(po_id: int) -> PurchaseOrder:
             Prefetch(
                 'lines',
                 queryset=PurchaseOrderLine.objects.select_related(
-                    'product', 'unit', 'product_supplier',
+                    'product', 'product__category', 'unit', 'product_supplier',
                 ).order_by('line_no'),
             ),
         )

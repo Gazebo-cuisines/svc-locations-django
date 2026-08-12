@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 
+from product.goods_in import effective_goods_in_type
 from product.models import ProductStorageRegime, ProductTechnical
 from purchasing.models import (
     PurchaseOrder,
@@ -98,7 +99,7 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
     storage_regime = technical.storage_regime if technical else None
 
     template = resolve_template(
-        goods_in_type=line.product.goods_in_type,
+        goods_in_type=effective_goods_in_type(line.product),
         storage_regime=storage_regime,
         scope='line',
     )

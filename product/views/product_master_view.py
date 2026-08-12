@@ -10,6 +10,7 @@ from django.views.decorators.http import require_http_methods
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
+from product.goods_in import category_root, goods_in_type_from_category
 from product.models import (
     Category,
     Product,
@@ -25,12 +26,6 @@ from product.models import (
 from product.query import active_products
 from recipe.models import RecipeVersion
 from recipe.utils import active_or_latest_version
-
-
-_ROOT_GOODS_IN_TYPE = {
-    'raw materials': ProductGoodsInType.RAW_MATERIAL,
-    'packaging materials': ProductGoodsInType.PACKAGING,
-}
 
 _STORAGE_REGIME_ALIASES = {
     'ambient': ProductStorageRegime.AMBIENT,
@@ -148,23 +143,6 @@ def _normalize_goods_in_type(value):
     if value is None or value == '':
         return None
     return value
-
-
-def _category_root(category: Category) -> Category:
-    current = category
-    seen = {current.id}
-    while current.parent_id is not None and current.parent_id not in seen:
-        parent = Category.objects.filter(pk=current.parent_id).first()
-        if parent is None:
-            break
-        seen.add(parent.id)
-        current = parent
-    return current
-
-
-def goods_in_type_from_category(category: Category) -> str:
-    root_name = (_category_root(category).name or '').strip().lower()
-    return _ROOT_GOODS_IN_TYPE.get(root_name, ProductGoodsInType.OTHER)
 
 
 def _storage_regime_of(product: Product):

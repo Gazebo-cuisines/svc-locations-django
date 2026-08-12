@@ -11,6 +11,7 @@ from purchasing.models import (
     PurchaseOrderStatus,
 )
 from purchasing.services.goods_in_form import resolve_goods_in_form
+from purchasing.serialize import _qty_str
 from purchasing.services.release import is_quarantine_location
 from stock_ledger.models import StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
@@ -232,10 +233,10 @@ def receive_purchase_order(po_id: int, *, body: dict) -> dict:
         results.append({
             'line_id': line.id,
             'line_no': line.line_no,
-            'quantity_ordered_units': str(purchase_qty),
-            'quantity_stock': str(stock_qty),
-            'qty_received': str(line.qty_received),
-            'qty_balance': str(line.qty_balance),
+            'quantity_ordered_units': _qty_str(purchase_qty),
+            'quantity_stock': _qty_str(stock_qty),
+            'qty_received': _qty_str(line.qty_received),
+            'qty_balance': _qty_str(line.qty_balance),
             'stock_entry_id': entry.id,
             'lot_id': lot.id,
             'stock_in_done': line.stock_in_done,
