@@ -30,6 +30,7 @@ from purchasing.services.po import (
 )
 from purchasing.models import GoodsInAttachmentKind, PurchaseOrder, PurchaseOrderStatus
 from users_rbac.auth import attach_user
+from users_rbac.permissions import gate_warehouse_write
 
 
 def _parse_json_body(request):
@@ -166,12 +167,17 @@ def po_line_qc_api(request, po_id: int, line_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
 def po_receive_api(request, po_id: int):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = receive_purchase_order(po_id, body=body)
+        # Reuse stock receipt audit helpers (JWT / workstation / IP).
+        from stock_ledger.views import _common_write_kwargs
+
+        audit = _common_write_kwargs(request, body)
+        data = receive_purchase_order(po_id, body=body, audit=audit)
     except ReceiveError as exc:
         msg = str(exc)
         status = 404 if msg == 'Purchase order not found.' else 400

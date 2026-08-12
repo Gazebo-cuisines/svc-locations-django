@@ -13,9 +13,10 @@ from purchasing.models import (
 from purchasing.services.goods_in_form import resolve_goods_in_form
 from purchasing.serialize import _qty_str
 from purchasing.services.release import is_quarantine_location
-from stock_ledger.models import StockLotOrigin
+from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util import services as stock_services
+from stock_ledger.util import stock_units
 
 
 class ReceiveError(ValueError):
@@ -32,8 +33,6 @@ def _parse_decimal(value, field_name: str) -> Decimal:
     return qty
 
 
-
-
 def _optional_date(value, field_name: str) -> date | None:
     if value in (None, ''):
         return None
@@ -46,8 +45,9 @@ def _optional_date(value, field_name: str) -> date | None:
             f'Invalid date for {field_name}. Use YYYY-MM-DD.',
         ) from exc
 
+
 def _stock_quantity(line: PurchaseOrderLine, purchase_qty: Decimal) -> Decimal:
-    """Purchase qty × pack multiplier → stock qty (legacy MappingSupplier.multiplier)."""
+    """Purchase qty × pack multiplier → stock qty (when no product_supplier)."""
     multiplier = line.multiplier if line.multiplier is not None else Decimal('1')
     if multiplier <= 0:
         raise ReceiveError(f'line {line.line_no} has invalid multiplier.')
@@ -65,8 +65,68 @@ def _recompute_po_status(po: PurchaseOrder) -> None:
     po.save(update_fields=['status', 'updated_at'])
 
 
+def _entry_payload(entry: StockEntry) -> dict:
+    # Lazy: avoid import cycle at module load (views → … → receive).
+    from stock_ledger.views import entry_dict
+
+    entry = (
+        StockEntry.objects
+        .select_related(
+            'counterparty_location',
+            'location',
+            'unit',
+            'lot__product',
+            'lot__shape_format',
+        )
+        .get(pk=entry.pk)
+    )
+    return entry_dict(entry)
+
+
+def _print_units_for_line(
+    *,
+    raw: dict,
+    index: int,
+    entry: StockEntry,
+    idempotency_key: str,
+    audit: dict,
+) -> list:
+    from stock_ledger.views import stock_unit_dict
+
+    print_count = raw.get('print_unit_count')
+    print_qty = raw.get('print_quantity_per_unit')
+    if print_count in (None, '') and print_qty in (None, ''):
+        return []
+    if print_count in (None, '') or print_qty in (None, ''):
+        raise ReceiveError(
+            f'lines[{index}]: print_unit_count and print_quantity_per_unit '
+            f'are both required to print labels.',
+        )
+    prefix = raw.get('print_idempotency_key_prefix')
+    if prefix in (None, ''):
+        prefix = f'{idempotency_key}:print'
+    units = stock_units.create_units_for_entry(
+        source_entry=entry,
+        unit_count=int(print_count),
+        quantity_per_unit=_parse_decimal(
+            print_qty, f'lines[{index}].print_quantity_per_unit',
+        ),
+        idempotency_key_prefix=str(prefix),
+        actor_user_id=audit.get('actor_user_id'),
+        lan_username=audit.get('lan_username'),
+        source_workstation=audit.get('source_workstation'),
+    )
+    return [stock_unit_dict(u) for u in units]
+
+
 @transaction.atomic
-def receive_purchase_order(po_id: int, *, body: dict) -> dict:
+def receive_purchase_order(
+    po_id: int,
+    *,
+    body: dict,
+    audit: dict | None = None,
+) -> dict:
+    audit = dict(audit or {})
     try:
         po = (
             PurchaseOrder.objects.select_for_update()
@@ -121,7 +181,13 @@ def receive_purchase_order(po_id: int, *, body: dict) -> dict:
         try:
             line = (
                 PurchaseOrderLine.objects.select_for_update()
-                .select_related('product', 'product_supplier')
+                .select_related(
+                    'product',
+                    'product_supplier',
+                    'product_supplier__outer_unit',
+                    'product_supplier__inner_unit',
+                    'product_supplier__purchase_shape_format',
+                )
                 .get(pk=int(line_id), purchase_order_id=po.id)
             )
         except (PurchaseOrderLine.DoesNotExist, TypeError, ValueError) as exc:
@@ -148,6 +214,10 @@ def receive_purchase_order(po_id: int, *, body: dict) -> dict:
         idempotency_key = raw.get('idempotency_key')
         if idempotency_key in (None, ''):
             raise ReceiveError(f'lines[{index}].idempotency_key is required.')
+        idempotency_key = str(idempotency_key)
+        prior_entry = StockEntry.objects.filter(
+            idempotency_key=idempotency_key,
+        ).first()
 
         lot_body = raw.get('lot') if isinstance(raw.get('lot'), dict) else {}
         use_by = _optional_date(
@@ -181,60 +251,94 @@ def receive_purchase_order(po_id: int, *, body: dict) -> dict:
         except StockValidationError as exc:
             raise ReceiveError(str(exc)) from exc
 
-        stock_qty = _stock_quantity(line, purchase_qty)
-        unit_id = line.product.unit_id
         unit_cost = line.unit_cost
         if raw.get('unit_cost') not in (None, ''):
-            unit_cost = _parse_decimal(raw.get('unit_cost'), f'lines[{index}].unit_cost')
+            unit_cost = _parse_decimal(
+                raw.get('unit_cost'), f'lines[{index}].unit_cost',
+            )
+
+        mapping = line.product_supplier if line.product_supplier_id else None
+        if mapping is not None:
+            receipt_qty = purchase_qty
+            product_supplier = mapping
+            unit_id = None
+        else:
+            receipt_qty = _stock_quantity(line, purchase_qty)
+            product_supplier = None
+            unit_id = line.product.unit_id
+
+        receipt_audit = {
+            'actor_user_id': (
+                audit.get('actor_user_id')
+                or body.get('actor_user_id')
+                or body.get('checked_by_user_id')
+            ),
+            'lan_username': audit.get('lan_username') or body.get('lan_username'),
+            'source_workstation': audit.get('source_workstation'),
+            'source_workstation_ip': audit.get('source_workstation_ip'),
+            'remarks': raw.get('remarks') or body.get('remarks') or audit.get('remarks'),
+            'override_reason': audit.get('override_reason'),
+            'authorised_by_user_id': audit.get('authorised_by_user_id'),
+        }
+        receipt_audit = {k: v for k, v in receipt_audit.items() if v is not None}
 
         try:
             entry = stock_services.receipt(
-                idempotency_key=str(idempotency_key),
+                idempotency_key=idempotency_key,
                 lot=lot,
                 location_id=location_id,
-                quantity=stock_qty,
+                quantity=receipt_qty,
                 unit_id=unit_id,
                 effective_at=body.get('effective_at') or timezone.now(),
                 unit_cost=unit_cost,
+                product_supplier=product_supplier,
                 counterparty_location_id=po.supplier_id,
                 source_document_type='po',
                 source_document_id=po.id,
                 source_document_line=line.line_no,
                 po_number=po.number,
-                actor_user_id=body.get('actor_user_id') or body.get('checked_by_user_id'),
-                lan_username=body.get('lan_username'),
-                remarks=raw.get('remarks') or body.get('remarks'),
+                **receipt_audit,
             )
         except StockValidationError as exc:
             raise ReceiveError(str(exc)) from exc
 
-        line.qty_received = (line.qty_received + purchase_qty).quantize(
-            Decimal('0.000001'),
+        # Reused key: return existing stock, do not advance PO qty again.
+        if prior_entry is None:
+            line.qty_received = (line.qty_received + purchase_qty).quantize(
+                Decimal('0.000001'),
+            )
+            line.qty_balance = (line.qty_ordered - line.qty_received).quantize(
+                Decimal('0.000001'),
+            )
+            if line.qty_balance < 0:
+                raise ReceiveError(f'Line {line.line_no} balance went negative.')
+            line.last_receipt_entry_id = entry.id
+            if line.qty_balance == 0:
+                line.line_closed = True
+                line.stock_in_done = True
+            line.save(
+                update_fields=[
+                    'qty_received',
+                    'qty_balance',
+                    'line_closed',
+                    'stock_in_done',
+                    'last_receipt_entry_id',
+                    'updated_at',
+                ],
+            )
+
+        units_payload = _print_units_for_line(
+            raw=raw,
+            index=index,
+            entry=entry,
+            idempotency_key=idempotency_key,
+            audit=receipt_audit,
         )
-        line.qty_balance = (line.qty_ordered - line.qty_received).quantize(
-            Decimal('0.000001'),
-        )
-        if line.qty_balance < 0:
-            raise ReceiveError(f'Line {line.line_no} balance went negative.')
-        line.last_receipt_entry_id = entry.id
-        if line.qty_balance == 0:
-            line.line_closed = True
-            line.stock_in_done = True
-        line.save(
-            update_fields=[
-                'qty_received',
-                'qty_balance',
-                'line_closed',
-                'stock_in_done',
-                'last_receipt_entry_id',
-                'updated_at',
-            ],
-        )
-        results.append({
+        row = {
             'line_id': line.id,
             'line_no': line.line_no,
             'quantity_ordered_units': _qty_str(purchase_qty),
-            'quantity_stock': _qty_str(stock_qty),
+            'quantity_stock': _qty_str(entry.quantity),
             'qty_received': _qty_str(line.qty_received),
             'qty_balance': _qty_str(line.qty_balance),
             'stock_entry_id': entry.id,
@@ -242,7 +346,12 @@ def receive_purchase_order(po_id: int, *, body: dict) -> dict:
             'stock_in_done': line.stock_in_done,
             'location_id': location_id,
             'quarantine': quarantine,
-        })
+            'idempotent_replay': prior_entry is not None,
+            'entry': _entry_payload(entry),
+        }
+        if units_payload:
+            row['units'] = units_payload
+        results.append(row)
 
     _recompute_po_status(po)
     form = resolve_goods_in_form(po.id)

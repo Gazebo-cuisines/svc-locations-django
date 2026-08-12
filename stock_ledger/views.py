@@ -65,7 +65,12 @@ def _parse_json_body(request):
 
 
 def _dec(value):
-    return str(value) if value is not None else None
+    if value is None:
+        return None
+    text = format(Decimal(str(value)), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text or '0'
 
 
 def _parse_decimal(value, field_name: str) -> Decimal:
@@ -157,28 +162,116 @@ def unit_conversion_dict(row: StockUnitConversion) -> dict:
 
 def entry_dict(entry: StockEntry) -> dict:
     counterparty = entry.counterparty_location
+    location = entry.location
+    lot = entry.lot
+    product = lot.product if lot is not None else None
+    unit = entry.unit
+    # transfer_out / issue: location → counterparty; transfer_in: counterparty → location;
+    # receipt: supplier (counterparty) → location
+    if entry.entry_type == StockEntryType.TRANSFER_IN:
+        from_loc, to_loc = counterparty, location
+    elif entry.entry_type in (
+        StockEntryType.TRANSFER_OUT,
+        StockEntryType.ISSUE,
+        StockEntryType.DISPOSAL,
+    ):
+        from_loc, to_loc = location, counterparty
+    else:
+        from_loc, to_loc = counterparty, location
+    mapping = _product_supplier_for_entry(entry)
+    pack_quantity = None
+    pack_unit_name = None
+    shape_format_label = None
+    shape_format_id = lot.shape_format_id if lot is not None else None
+    shape_format_name = (
+        lot.shape_format.name
+        if lot is not None and lot.shape_format_id and getattr(lot, 'shape_format', None)
+        else None
+    )
+    outer_qty = None
+    outer_unit_name = None
+    inner_qty = None
+    inner_unit_name = None
+    multiplier = None
+    if mapping is not None:
+        shape_format_label = mapping.shape_format_label
+        if mapping.purchase_shape_format_id:
+            shape_format_id = mapping.purchase_shape_format_id
+            if mapping.purchase_shape_format is not None:
+                shape_format_name = mapping.purchase_shape_format.name
+        outer_qty = _dec(mapping.outer_qty)
+        outer_unit_name = mapping.outer_unit.name if mapping.outer_unit_id else None
+        inner_qty = _dec(mapping.inner_qty)
+        inner_unit_name = mapping.inner_unit.name if mapping.inner_unit_id else None
+        multiplier = _dec(mapping.multiplier)
+        pack_unit_name = outer_unit_name
+        # New receipts store stock kg with base_unit_factor = multiplier.
+        if (
+            entry.base_unit_factor is not None
+            and entry.base_unit_factor == mapping.multiplier
+            and mapping.multiplier != 0
+        ):
+            pack_quantity = _dec(entry.quantity / mapping.multiplier)
     return {
         'id': entry.id,
         'idempotency_key': entry.idempotency_key,
         'entry_type': entry.entry_type,
         'lot_id': entry.lot_id,
+        'trace_number': lot.trace_number if lot is not None else None,
+        'supplier_lot_code': lot.supplier_lot_code if lot is not None else None,
+        'use_by': lot.use_by.isoformat() if lot is not None and lot.use_by else None,
+        'production_date': (
+            lot.production_date.isoformat()
+            if lot is not None and lot.production_date
+            else None
+        ),
+        'product_id': product.id if product is not None else None,
+        'product_name': product.name if product is not None else None,
         'location_id': entry.location_id,
+        'location_name': location.name if location is not None else None,
         'counterparty_location_id': entry.counterparty_location_id,
+        'counterparty_location_name': (
+            counterparty.name if counterparty is not None else None
+        ),
+        'from_location_id': from_loc.id if from_loc is not None else None,
+        'from_location_name': from_loc.name if from_loc is not None else None,
+        'to_location_id': to_loc.id if to_loc is not None else None,
+        'to_location_name': to_loc.name if to_loc is not None else None,
         'supplier_id': entry.counterparty_location_id,
         'supplier_name': counterparty.name if counterparty is not None else None,
         'transfer_group_id': entry.transfer_group_id,
         'quantity': _dec(entry.quantity),
         'unit_id': entry.unit_id,
+        'unit_name': unit.name if unit is not None else None,
+        'pack_quantity': pack_quantity,
+        'pack_unit_name': pack_unit_name,
+        'shape_format_id': shape_format_id,
+        'shape_format_name': shape_format_name,
+        'shape_format_label': shape_format_label,
+        'shape_outer_qty': outer_qty,
+        'shape_outer_unit_name': outer_unit_name,
+        'shape_inner_qty': inner_qty,
+        'shape_inner_unit_name': inner_unit_name,
+        'shape_multiplier': multiplier,
+        'product_supplier_id': mapping.id if mapping is not None else None,
         'base_unit_factor': _dec(entry.base_unit_factor),
         'quantity_base': _dec(entry.quantity_base),
+        'unit_cost': _dec(entry.unit_cost),
+        'line_cost': _dec(entry.line_cost),
         'period_id': entry.period_id,
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'recorded_at': entry.recorded_at.isoformat() if entry.recorded_at else None,
         'reverses_entry_id': entry.reverses_entry_id,
+        'override_reason': entry.override_reason,
+        'authorised_by_user_id': entry.authorised_by_user_id,
         'po_number': entry.po_number,
         'source_document_type': entry.source_document_type,
         'source_document_id': entry.source_document_id,
         'source_document_line': entry.source_document_line,
+        'actor_user_id': entry.actor_user_id,
+        'lan_username': entry.lan_username,
+        'source_workstation': entry.source_workstation,
+        'source_workstation_ip': entry.source_workstation_ip,
         'remarks': entry.remarks,
         'entry_hash': entry.entry_hash,
         'prev_hash': entry.prev_hash,
@@ -567,21 +660,33 @@ def _optional_unit_id(body: dict) -> int | None:
     return int(raw)
 
 
+def _receipt_product_supplier(body: dict, lot: StockLot):
+    """Resolve optional product_supplier mapping for goods-in shape/packs."""
+    ps_id = body.get('product_supplier_id')
+    if ps_id in (None, ''):
+        return None
+    try:
+        row = (
+            ProductSupplier.objects
+            .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
+            .get(pk=int(ps_id), is_active=True)
+        )
+    except (ProductSupplier.DoesNotExist, TypeError, ValueError) as exc:
+        raise StockValidationError(
+            f'product_supplier_id={ps_id} not found or inactive',
+        ) from exc
+    if row.product_id != lot.product_id:
+        raise StockValidationError(
+            f'product_supplier_id={ps_id} is for product_id={row.product_id}, '
+            f'lot is product_id={lot.product_id}',
+        )
+    return row
+
+
 def _receipt_supplier_location_id(body: dict, lot: StockLot) -> int | None:
     """Supplier comes from product_supplier (shape-format row) when given."""
-    ps_id = body.get('product_supplier_id')
-    if ps_id not in (None, ''):
-        try:
-            row = ProductSupplier.objects.get(pk=int(ps_id), is_active=True)
-        except (ProductSupplier.DoesNotExist, TypeError, ValueError) as exc:
-            raise StockValidationError(
-                f'product_supplier_id={ps_id} not found or inactive',
-            ) from exc
-        if row.product_id != lot.product_id:
-            raise StockValidationError(
-                f'product_supplier_id={ps_id} is for product_id={row.product_id}, '
-                f'lot is product_id={lot.product_id}',
-            )
+    row = _receipt_product_supplier(body, lot)
+    if row is not None:
         return row.supplier_id
 
     for key in ('counterparty_location_id', 'supplier_id'):
@@ -589,6 +694,30 @@ def _receipt_supplier_location_id(body: dict, lot: StockLot) -> int | None:
         if raw not in (None, ''):
             return int(raw)
     return None
+
+
+def _product_supplier_for_entry(entry: StockEntry):
+    """Best-effort shape mapping for a receipt (product + supplier)."""
+    if entry.entry_type != StockEntryType.RECEIPT:
+        return None
+    lot = entry.lot
+    if lot is None or entry.counterparty_location_id is None:
+        return None
+    qs = (
+        ProductSupplier.objects
+        .filter(
+            product_id=lot.product_id,
+            supplier_id=entry.counterparty_location_id,
+            is_active=True,
+        )
+        .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
+    )
+    if lot.shape_format_id:
+        hit = qs.filter(purchase_shape_format_id=lot.shape_format_id).first()
+        if hit is not None:
+            return hit
+    hit = qs.filter(is_default=True).first()
+    return hit or qs.order_by('-id').first()
 
 
 def _decode_bearer_claims(request) -> dict:
@@ -1001,9 +1130,21 @@ def receipt_api(request):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        if (
+            body.get('po_number') not in (None, '')
+            or str(body.get('source_document_type') or '').lower() == 'po'
+        ):
+            return api_error(
+                'PO goods-in must use POST /purchasing/pos/<po_id>/receive/. '
+                'Do not pass po_number or source_document_type=po to /stock/receipt/.',
+            )
         audit = _common_write_kwargs(request, body)
         lot = _resolve_lot(body)
-        supplier_location_id = _receipt_supplier_location_id(body, lot)
+        mapping = _receipt_product_supplier(body, lot)
+        supplier_location_id = (
+            mapping.supplier_id if mapping is not None
+            else _receipt_supplier_location_id(body, lot)
+        )
         if (
             lot.origin == StockLotOrigin.PURCHASE
             and supplier_location_id is None
@@ -1023,6 +1164,7 @@ def receipt_api(request):
                 if body.get('unit_cost') not in (None, '')
                 else None
             ),
+            product_supplier=mapping,
             counterparty_location_id=supplier_location_id,
             **audit,
         )
@@ -1030,7 +1172,12 @@ def receipt_api(request):
         if supplier_location_id is not None and entry.counterparty_location_id:
             entry = (
                 StockEntry.objects
-                .select_related('counterparty_location')
+                .select_related(
+                    'counterparty_location',
+                    'location',
+                    'unit',
+                    'lot__product',
+                )
                 .get(pk=entry.pk)
             )
         data = entry_dict(entry)
@@ -1231,11 +1378,28 @@ def reversal_api(request):
 @csrf_exempt
 @require_GET
 def entry_detail_api(request, pk: int):
+    related = (
+        'lot__product',
+        'lot__shape_format',
+        'unit',
+        'location',
+        'counterparty_location',
+    )
     try:
-        entry = StockEntry.objects.get(pk=pk)
+        entry = StockEntry.objects.select_related(*related).get(pk=pk)
     except StockEntry.DoesNotExist:
         return api_error('Entry not found.', status_code=404)
-    return api_success('Entry fetched.', entry_dict(entry))
+    data = entry_dict(entry)
+    if entry.transfer_group_id:
+        siblings = (
+            StockEntry.objects
+            .select_related(*related)
+            .filter(transfer_group_id=entry.transfer_group_id)
+            .exclude(pk=entry.pk)
+            .order_by('id')
+        )
+        data['related_entries'] = [entry_dict(s) for s in siblings]
+    return api_success('Entry fetched.', data)
 
 
 @csrf_exempt

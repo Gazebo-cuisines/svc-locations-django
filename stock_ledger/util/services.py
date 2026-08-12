@@ -287,6 +287,8 @@ def _insert_entry(
     source_workstation_ip: str | None = None,
     remarks: str | None = None,
     project_balance: bool = True,
+    mass_factor: Decimal | None = None,
+    mass_qty_base: Decimal | None = None,
 ) -> StockEntry:
     if quantity == 0 and entry_type != StockEntryType.DOWNTIME:
         raise StockValidationError('quantity must be non-zero')
@@ -299,6 +301,11 @@ def _insert_entry(
     if entry_type == StockEntryType.DOWNTIME:
         factor, qty_base = None, None
         project_balance = False
+    elif mass_factor is not None or mass_qty_base is not None:
+        # Caller supplies pack→kg (or other) mass pair; both required together.
+        if mass_factor is None or mass_qty_base is None:
+            raise StockValidationError('mass_factor and mass_qty_base must both be set')
+        factor, qty_base = mass_factor, mass_qty_base
     else:
         factor, qty_base = _mass_fields(
             product_id=lot.product_id, unit_id=unit_id, quantity=quantity,
@@ -360,27 +367,41 @@ def receipt(
     unit_id: int | None = None,
     effective_at=None,
     unit_cost: Decimal | None = None,
+    product_supplier=None,
     **kwargs,
 ) -> StockEntry:
     if quantity <= 0:
         raise StockValidationError('receipt quantity must be positive')
-    unit_id = _resolve_unit_id(lot, unit_id)
     effective_at = effective_at or timezone.now()
+    mass_factor = None
+    mass_qty_base = None
+    stock_qty = quantity
+    if product_supplier is not None:
+        # quantity = pack count of this supplier shape; stock in inner unit (usually KG).
+        multiplier = product_supplier.multiplier
+        stock_qty = (quantity * multiplier).quantize(Decimal('0.000001'))
+        unit_id = product_supplier.inner_unit_id
+        mass_factor = multiplier
+        mass_qty_base = stock_qty
+    else:
+        unit_id = _resolve_unit_id(lot, unit_id)
     if unit_cost is None:
         costing = ProductCosting.objects.filter(product_id=lot.product_id).first()
         if costing is not None:
             unit_cost = costing.unit_cost
-    line_cost = (unit_cost * quantity) if unit_cost is not None else None
+    line_cost = (unit_cost * stock_qty) if unit_cost is not None else None
     return _insert_entry(
         idempotency_key=idempotency_key,
         entry_type=StockEntryType.RECEIPT,
         lot=lot,
         location_id=location_id,
-        quantity=quantity,
+        quantity=stock_qty,
         unit_id=unit_id,
         effective_at=effective_at,
         unit_cost=unit_cost,
         line_cost=line_cost,
+        mass_factor=mass_factor,
+        mass_qty_base=mass_qty_base,
         **kwargs,
     )
 
