@@ -15,9 +15,9 @@ from purchasing.serialize import _qty_str
 from purchasing.services.release import is_quarantine_location
 from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util import entry_labels
 from stock_ledger.util import services as stock_services
 from stock_ledger.util import stock_units
-
 
 class ReceiveError(ValueError):
     pass
@@ -342,6 +342,7 @@ def receive_purchase_order(
             'qty_received': _qty_str(line.qty_received),
             'qty_balance': _qty_str(line.qty_balance),
             'stock_entry_id': entry.id,
+            'entry_code': entry_labels.entry_code(entry.id),
             'lot_id': lot.id,
             'stock_in_done': line.stock_in_done,
             'location_id': location_id,
@@ -351,8 +352,23 @@ def receive_purchase_order(
         }
         if units_payload:
             row['units'] = units_payload
+        if raw.get('label_format') not in (None, ''):
+            try:
+                label = entry_labels.create_entry_label(
+                    entry=entry,
+                    label_format=raw.get('label_format'),
+                    label_count=raw.get('label_count'),
+                    actor_user_id=receipt_audit.get('actor_user_id'),
+                    lan_username=receipt_audit.get('lan_username'),
+                    source_workstation=receipt_audit.get('source_workstation'),
+                )
+            except StockValidationError as exc:
+                raise ReceiveError(
+                    f'lines[{index}]: {exc}',
+                ) from exc
+            row['label'] = entry_labels.label_state_dict(label)
+            row['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
         results.append(row)
-
     _recompute_po_status(po)
     form = resolve_goods_in_form(po.id)
     form['receive_results'] = results

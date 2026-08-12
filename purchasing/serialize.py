@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from purchasing.models import PurchaseOrder, PurchaseOrderLine
+from users_rbac.models import RbacUser
 
 
 def _iso_date(value):
@@ -19,6 +20,16 @@ def _qty_str(value) -> str | None:
     if '.' in text:
         text = text.rstrip('0').rstrip('.')
     return text or '0'
+
+
+def rbac_names(user_ids: set[int | None]) -> dict[int, str]:
+    ids = {uid for uid in user_ids if uid is not None}
+    if not ids:
+        return {}
+    return {
+        u.id: (u.display_name or u.username)
+        for u in RbacUser.objects.filter(pk__in=ids).only('id', 'display_name', 'username')
+    }
 
 
 def line_dict(line: PurchaseOrderLine) -> dict:
@@ -70,6 +81,11 @@ def po_list_dict(po: PurchaseOrder) -> dict:
 
 
 def po_detail_dict(po: PurchaseOrder) -> dict:
+    names = rbac_names({
+        po.checked_by_user_id,
+        po.qc_tl_checked_by_user_id,
+        po.created_by_user_id,
+    })
     data = po_list_dict(po)
     data.update({
         'remarks': po.remarks,
@@ -80,12 +96,15 @@ def po_detail_dict(po: PurchaseOrder) -> dict:
         ),
         'header_checks': po.header_checks,
         'checked_by_user_id': po.checked_by_user_id,
+        'checked_by_name': names.get(po.checked_by_user_id),
         'checked_at': _iso_dt(po.checked_at),
         'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
+        'qc_tl_checked_by_name': names.get(po.qc_tl_checked_by_user_id),
         'qc_tl_checked_at': _iso_dt(po.qc_tl_checked_at),
         'qc_tl_comment': po.qc_tl_comment,
         'total_net': _qty_str(po.total_net),
         'created_by_user_id': po.created_by_user_id,
+        'created_by_name': names.get(po.created_by_user_id),
         'lines': [line_dict(line) for line in po.lines.all()],
     })
     return data

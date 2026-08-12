@@ -10,7 +10,7 @@ from purchasing.models import (
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
-from purchasing.serialize import _qty_str
+from purchasing.serialize import _qty_str, rbac_names
 
 
 class GoodsInFormError(ValueError):
@@ -172,6 +172,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
         po.delivery_trace_number
         or julian_trace_number(suggested_delivery_date)
     )
+    names = rbac_names({po.checked_by_user_id, po.qc_tl_checked_by_user_id})
 
     return {
         'purchase_order_id': po.id,
@@ -192,8 +193,10 @@ def resolve_goods_in_form(po_id: int) -> dict:
             if po.vehicle_temperature is not None else None
         ),
         'checked_by_user_id': po.checked_by_user_id,
+        'checked_by_name': names.get(po.checked_by_user_id),
         'checked_at': po.checked_at.isoformat() if po.checked_at else None,
         'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
+        'qc_tl_checked_by_name': names.get(po.qc_tl_checked_by_user_id),
         'qc_tl_checked_at': (
             po.qc_tl_checked_at.isoformat() if po.qc_tl_checked_at else None
         ),

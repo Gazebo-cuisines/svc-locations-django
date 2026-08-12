@@ -840,3 +840,74 @@ class StockUnitPrintEvent(models.Model):
 
     def __str__(self):
         return f'stock_unit_print_event:{self.id}:{self.reason}'
+
+
+class StockEntryLabelFormat(models.TextChoices):
+    PALLET = 'pallet', 'Pallet'
+    BOX = 'box', 'Box'
+
+
+class StockEntryLabelStatus(models.TextChoices):
+    PENDING = 'pending', 'Pending'
+    PRINTED = 'printed', 'Printed'
+    VERIFIED = 'verified', 'Verified'
+
+
+class StockEntryLabel(models.Model):
+    """Mutable label state for an immutable stock_entry (Goods IN barcode = E{id})."""
+
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='label',
+    )
+    label_format = models.CharField(
+        max_length=16,
+        choices=StockEntryLabelFormat.choices,
+    )
+    label_count = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=StockEntryLabelStatus.choices,
+        default=StockEntryLabelStatus.PENDING,
+    )
+    verified_count = models.PositiveIntegerField(default=0)
+    printed_at = models.DateTimeField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+
+    class Meta:
+        db_table = 'stock_entry_label'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    label_format__in=[
+                        StockEntryLabelFormat.PALLET,
+                        StockEntryLabelFormat.BOX,
+                    ]
+                ),
+                name='chk_stock_entry_label_format',
+            ),
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        StockEntryLabelStatus.PENDING,
+                        StockEntryLabelStatus.PRINTED,
+                        StockEntryLabelStatus.VERIFIED,
+                    ]
+                ),
+                name='chk_stock_entry_label_status',
+            ),
+            models.CheckConstraint(
+                check=models.Q(label_count__gte=1),
+                name='chk_stock_entry_label_count',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_entry_label:{self.stock_entry_id}:'
+            f'{self.label_format}:{self.status}'
+        )

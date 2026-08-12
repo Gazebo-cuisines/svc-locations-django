@@ -27,7 +27,7 @@ from stock_ledger.models import (
     StockUnitConversion,
 )
 from stock_ledger.stream import iter_sse, subscribe
-from stock_ledger.util import reservations, scan, services, stock_units
+from stock_ledger.util import entry_labels, reservations, scan, services, stock_units
 from stock_ledger.util.allocation_status import (
     STATUS_COMPLETE,
     STATUS_INCOMPLETE,
@@ -214,6 +214,7 @@ def entry_dict(entry: StockEntry) -> dict:
             pack_quantity = _dec(entry.quantity / mapping.multiplier)
     return {
         'id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
         'idempotency_key': entry.idempotency_key,
         'entry_type': entry.entry_type,
         'lot_id': entry.lot_id,
@@ -1204,12 +1205,22 @@ def receipt_api(request):
                 source_workstation=audit.get('source_workstation'),
             )
             data['units'] = [stock_unit_dict(u) for u in units]
+        if body.get('label_format') not in (None, ''):
+            label = entry_labels.create_entry_label(
+                entry=entry,
+                label_format=body.get('label_format'),
+                label_count=body.get('label_count'),
+                actor_user_id=audit.get('actor_user_id'),
+                lan_username=audit.get('lan_username'),
+                source_workstation=audit.get('source_workstation'),
+            )
+            data['label'] = entry_labels.label_state_dict(label)
+            data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
         return api_error(str(exc))
     return api_success('Receipt posted.', data, status_code=201)
-
 
 @csrf_exempt
 @require_http_methods(['POST'])
@@ -1219,21 +1230,49 @@ def issue_api(request):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        source_entry = None
+        source_raw = body.get('source_entry_id')
+        if source_raw in (None, '') and body.get('source_entry_code') not in (None, ''):
+            source_raw = entry_labels.parse_entry_code(str(body['source_entry_code']))
+            if source_raw is None:
+                raise StockValidationError('source_entry_code must look like E123.')
+        if source_raw not in (None, ''):
+            source_entry = entry_labels.get_entry_for_label(int(source_raw))
+            entry_labels.require_receipt_entry(source_entry)
+            lot = source_entry.lot
+            location_id = (
+                int(body['location_id'])
+                if body.get('location_id') not in (None, '')
+                else source_entry.location_id
+            )
+        else:
+            lot = _resolve_lot(body)
+            location_id = int(body['location_id'])
         entry = services.issue(
             idempotency_key=body['idempotency_key'],
-            lot=_resolve_lot(body),
-            location_id=int(body['location_id']),
+            lot=lot,
+            location_id=location_id,
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             **_common_write_kwargs(request, body),
         )
+        data = entry_dict(entry)
+        if source_entry is not None:
+            data['source_entry_id'] = source_entry.id
+            data['source_entry_code'] = entry_labels.entry_code(source_entry.id)
+        copies = body.get('goods_out_label_count')
+        if copies not in (None, ''):
+            data['goods_out_label'] = entry_labels.build_goods_out_label(
+                issue_entry=entry,
+                source_entry=source_entry,
+                copies=int(copies),
+            )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
         return api_error(str(exc))
-    return api_success('Issue posted.', entry_dict(entry), status_code=201)
-
+    return api_success('Issue posted.', data, status_code=201)
 
 def _parse_unit_moves(body: dict) -> list | None:
     raw = body.get('unit_moves')
@@ -1384,12 +1423,17 @@ def entry_detail_api(request, pk: int):
         'unit',
         'location',
         'counterparty_location',
+        'label',
     )
     try:
         entry = StockEntry.objects.select_related(*related).get(pk=pk)
     except StockEntry.DoesNotExist:
         return api_error('Entry not found.', status_code=404)
     data = entry_dict(entry)
+    label = entry_labels.get_label(entry)
+    if label is not None:
+        data['label'] = entry_labels.label_state_dict(label)
+        data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
     if entry.transfer_group_id:
         siblings = (
             StockEntry.objects
@@ -1401,6 +1445,83 @@ def entry_detail_api(request, pk: int):
         data['related_entries'] = [entry_dict(s) for s in siblings]
     return api_success('Entry fetched.', data)
 
+
+@csrf_exempt
+@require_GET
+def entry_label_api(request, entry_id: int):
+    """Goods IN label payload for an entry (barcode E{id})."""
+    try:
+        entry = entry_labels.get_entry_for_label(entry_id)
+    except StockValidationError as exc:
+        return api_error(str(exc), status_code=404)
+    label = entry_labels.get_label(entry)
+    data = {
+        'goods_in_label': entry_labels.build_goods_in_label(entry, label),
+    }
+    if label is not None:
+        data['label'] = entry_labels.label_state_dict(label)
+    return api_success('Entry label ready.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
+def entry_label_print_api(request, entry_id: int):
+    """Mark Goods IN labels printed; returns print payload."""
+    body = _parse_json_body(request)
+    if body is None:
+        body = {}
+    try:
+        audit = _common_write_kwargs(request, body)
+        if body.get('label_format') not in (None, ''):
+            entry = entry_labels.get_entry_for_label(entry_id)
+            entry_labels.create_entry_label(
+                entry=entry,
+                label_format=body.get('label_format'),
+                label_count=body.get('label_count'),
+                actor_user_id=audit.get('actor_user_id'),
+                lan_username=audit.get('lan_username'),
+                source_workstation=audit.get('source_workstation'),
+            )
+        label = entry_labels.mark_printed(
+            entry_id=entry_id,
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+    return api_success(
+        'Entry labels marked printed.',
+        {
+            'label': entry_labels.label_state_dict(label),
+            'goods_in_label': entry_labels.build_goods_in_label(
+                label.stock_entry, label,
+            ),
+        },
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
+def entry_label_verify_api(request, entry_id: int):
+    """Scan applied sticker to confirm it matches E{entry_id}."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        result = entry_labels.verify_label(
+            entry_id=entry_id,
+            code=str(body['code']),
+        )
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+    return api_success('Label verified.', result)
 
 @csrf_exempt
 @require_GET
@@ -1754,7 +1875,7 @@ def _fifo_batch_rows(
 @csrf_exempt
 @require_GET
 def scan_resolve_api(request):
-    """Scan or type a product code, get its stock detail with FIFO batches."""
+    """Scan or type a product / entry / unit code, get stock detail."""
     code = request.GET.get('code')
     location_id = request.GET.get('location_id')
     try:
@@ -1779,7 +1900,7 @@ def scan_resolve_api(request):
     )
     total = sum(Decimal(row['quantity']) for row in batches) if batches else Decimal('0')
 
-    return api_success('Scan resolved.', {
+    data = {
         'scanned_code': (code or '').strip(),
         'match_type': match['match_type'],
         'selected_lot_id': match['lot'].id if match['lot'] is not None else None,
@@ -1799,8 +1920,15 @@ def scan_resolve_api(request):
         'total_quantity': str(total),
         'batch_count': len(batches),
         'batches': batches,
-    })
-
+    }
+    entry = match.get('entry')
+    if entry is not None:
+        data['entry'] = entry_dict(entry)
+        label = entry_labels.get_label(entry)
+        data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
+        if label is not None:
+            data['label'] = entry_labels.label_state_dict(label)
+    return api_success('Scan resolved.', data)
 
 @csrf_exempt
 @require_GET

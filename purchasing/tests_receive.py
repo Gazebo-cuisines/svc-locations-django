@@ -146,7 +146,28 @@ class PoReceiveParityTests(TestCase):
         )
         row = data['receive_results'][0]
         self.assertEqual(len(row['units']), 2)
-        self.assertEqual(StockUnit.objects.filter(source_entry_id=row['stock_entry_id']).count(), 2)
+        self.assertEqual(StockUnit.objects.filter(created_by_entry_id=row['stock_entry_id']).count(), 2)
+
+    def test_receive_goods_in_entry_label(self):
+        key = f'po-elabel-{uuid4()}'
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '2',
+                    'idempotency_key': key,
+                    'label_format': 'box',
+                    'label_count': 2,
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['entry_code'], f"E{row['stock_entry_id']}")
+        self.assertEqual(row['goods_in_label']['barcode'], row['entry_code'])
+        self.assertEqual(row['goods_in_label']['copies'], 2)
+        self.assertEqual(row['label']['label_format'], 'box')
 
     def test_idempotent_replay_does_not_double_qty(self):
         key = f'po-idem-{uuid4()}'
