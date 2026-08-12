@@ -368,6 +368,7 @@ def receipt(
     effective_at=None,
     unit_cost: Decimal | None = None,
     product_supplier=None,
+    defer_balance: bool = False,
     **kwargs,
 ) -> StockEntry:
     if quantity <= 0:
@@ -402,6 +403,7 @@ def receipt(
         line_cost=line_cost,
         mass_factor=mass_factor,
         mass_qty_base=mass_qty_base,
+        project_balance=not defer_balance,
         **kwargs,
     )
 

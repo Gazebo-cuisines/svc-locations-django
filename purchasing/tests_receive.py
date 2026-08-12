@@ -164,10 +164,44 @@ class PoReceiveParityTests(TestCase):
             },
         )
         row = data['receive_results'][0]
-        self.assertEqual(row['entry_code'], f"E{row['stock_entry_id']}")
-        self.assertEqual(row['goods_in_label']['barcode'], row['entry_code'])
-        self.assertEqual(row['goods_in_label']['copies'], 2)
-        self.assertEqual(row['label']['label_format'], 'box')
+        self.assertEqual(row['transaction_count'], 2)
+        self.assertEqual(len(row['transactions']), 2)
+        codes = {t['entry_code'] for t in row['transactions']}
+        self.assertEqual(len(codes), 2)
+        for tx in row['transactions']:
+            self.assertEqual(tx['goods_in_label']['copies'], 1)
+            self.assertEqual(tx['label']['label_format'], 'box')
+            self.assertEqual(tx['posting_status'], 'queued')
+        self.assertEqual(row['entry_code'], row['transactions'][0]['entry_code'])
+
+    def test_admin_line_label_drives_receive_split(self):
+        self.line.label_format = 'box'
+        self.line.label_count = 2
+        self.line.qty_ordered = Decimal('2')
+        self.line.qty_balance = Decimal('2')
+        self.line.save(
+            update_fields=[
+                'label_format', 'label_count', 'qty_ordered', 'qty_balance', 'updated_at',
+            ],
+        )
+        key = f'po-admin-label-{uuid4()}'
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '2',
+                    'idempotency_key': key,
+                    # warehouse must not override admin plan
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['label_format'], 'box')
+        self.assertEqual(row['transaction_count'], 2)
 
     def test_idempotent_replay_does_not_double_qty(self):
         key = f'po-idem-{uuid4()}'

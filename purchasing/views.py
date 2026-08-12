@@ -48,6 +48,10 @@ def po_collection_api(request):
             rows = list_purchase_orders(
                 status=request.GET.get('status'),
                 supplier_id=request.GET.get('supplier_id'),
+                sage_po_number=(
+                    request.GET.get('sage_po_number')
+                    or request.GET.get('external_number')
+                ),
             )
         except (TypeError, ValueError) as exc:
             return api_error(str(exc), status_code=400)
@@ -77,6 +81,9 @@ def po_collection_api(request):
             remarks=body.get('remarks'),
             created_by_user_id=body.get('created_by_user_id'),
             status=body.get('status') or 'draft',
+            sage_po_number=body.get('sage_po_number'),
+            external_number=body.get('external_number'),
+            require_sage_po_number=True,
         )
     except PoValidationError as exc:
         return api_error(str(exc), status_code=400)

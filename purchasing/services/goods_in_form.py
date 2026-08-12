@@ -162,6 +162,8 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'unit_name': line.unit.name if line.unit_id else None,
             'saved_answers': line.line_checks or {},
             'line_check_ok': line.line_check_ok,
+            'label_format': line.label_format,
+            'label_count': line.label_count,
             'template': _template_block(line_template),
         })
 
@@ -176,7 +178,9 @@ def resolve_goods_in_form(po_id: int) -> dict:
 
     return {
         'purchase_order_id': po.id,
-        'number': po.number,
+        'number': po.external_number or po.number,
+        'sage_po_number': po.external_number,
+        'system_number': po.number,
         'status': po.status,
         'supplier_id': po.supplier_id,
         'supplier_name': po.supplier.name if po.supplier_id else None,

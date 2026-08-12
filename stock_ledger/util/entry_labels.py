@@ -10,11 +10,13 @@ from stock_ledger.models import (
     StockEntry,
     StockEntryLabel,
     StockEntryLabelFormat,
+    StockEntryLabelScan,
+    StockEntryLabelScanResult,
     StockEntryLabelStatus,
     StockEntryType,
 )
 from stock_ledger.util.conversions import StockValidationError
-
+from users_rbac.models import RbacUser
 _ENTRY_CODE = re.compile(r'^E(\d+)$', re.IGNORECASE)
 
 LABEL_SIZES_MM = {
@@ -114,6 +116,7 @@ def build_goods_out_label(
 
 
 def label_state_dict(label: StockEntryLabel) -> dict:
+    ok_scans = label.scans.filter(result=StockEntryLabelScanResult.OK).count()
     return {
         'entry_id': label.stock_entry_id,
         'entry_code': entry_code(label.stock_entry_id),
@@ -121,10 +124,52 @@ def label_state_dict(label: StockEntryLabel) -> dict:
         'label_count': label.label_count,
         'status': label.status,
         'verified_count': label.verified_count,
+        'scan_count': label.scans.count(),
+        'ok_scan_count': ok_scans,
         'printed_at': label.printed_at.isoformat() if label.printed_at else None,
         'verified_at': label.verified_at.isoformat() if label.verified_at else None,
+        'meta': label.meta or {},
     }
 
+
+def scan_event_dict(scan: StockEntryLabelScan, *, names: dict[int, str] | None = None) -> dict:
+    names = names or {}
+    return {
+        'id': scan.id,
+        'entry_id': scan.stock_entry_id,
+        'label_id': scan.label_id,
+        'scanned_at': scan.scanned_at.isoformat() if scan.scanned_at else None,
+        'code': scan.code,
+        'result': scan.result,
+        'actor_user_id': scan.actor_user_id,
+        'actor_name': names.get(scan.actor_user_id) if scan.actor_user_id else None,
+        'lan_username': scan.lan_username,
+        'source_workstation': scan.source_workstation,
+        'meta': scan.meta or {},
+    }
+
+
+def _record_scan(
+    *,
+    label: StockEntryLabel,
+    code: str,
+    result: str,
+    actor_user_id=None,
+    lan_username=None,
+    source_workstation=None,
+    meta=None,
+) -> StockEntryLabelScan:
+    return StockEntryLabelScan.objects.create(
+        label=label,
+        stock_entry_id=label.stock_entry_id,
+        scanned_at=timezone.now(),
+        code=(code or '')[:64],
+        result=result,
+        actor_user_id=actor_user_id,
+        lan_username=lan_username,
+        source_workstation=source_workstation,
+        meta=meta or {},
+    )
 
 def create_entry_label(
     *,
@@ -213,7 +258,15 @@ def mark_printed(
     return label
 
 
-def verify_label(*, entry_id: int, code: str) -> dict:
+def verify_label(
+    *,
+    entry_id: int,
+    code: str,
+    actor_user_id=None,
+    lan_username=None,
+    source_workstation=None,
+    meta=None,
+) -> dict:
     label = (
         StockEntryLabel.objects
         .select_related('stock_entry__lot__product', 'stock_entry__unit')
@@ -226,11 +279,32 @@ def verify_label(*, entry_id: int, code: str) -> dict:
         )
     expected = entry_code(entry_id)
     scanned = (code or '').strip().upper()
+    actor_kwargs = {
+        'actor_user_id': actor_user_id,
+        'lan_username': lan_username,
+        'source_workstation': source_workstation,
+        'meta': meta if isinstance(meta, dict) else {},
+    }
     if scanned != expected.upper():
-        raise StockValidationError(
-            f'Label mismatch: expected {expected}, got {code!r}.',
+        scan = _record_scan(
+            label=label,
+            code=code,
+            result=StockEntryLabelScanResult.MISMATCH,
+            **actor_kwargs,
         )
-    label.verified_count = min(label.label_count, label.verified_count + 1)
+        raise StockValidationError(
+            f'Label mismatch: expected {expected}, got {code!r}. '
+            f'scan_id={scan.id}',
+        )
+
+    scan = _record_scan(
+        label=label,
+        code=code,
+        result=StockEntryLabelScanResult.OK,
+        **actor_kwargs,
+    )
+    # Count every successful scan (re-scans included); gate still uses label_count.
+    label.verified_count = label.verified_count + 1
     update_fields = ['verified_count']
     if label.verified_count >= label.label_count:
         label.status = StockEntryLabelStatus.VERIFIED
@@ -246,8 +320,46 @@ def verify_label(*, entry_id: int, code: str) -> dict:
     return {
         'matched': True,
         'expected_code': expected,
+        'scan': scan_event_dict(scan),
         'label': label_state_dict(label),
         'goods_in_label': build_goods_in_label(label.stock_entry, label),
+    }
+
+
+def list_label_activity(entry_id: int) -> dict:
+    label = (
+        StockEntryLabel.objects
+        .filter(stock_entry_id=entry_id)
+        .first()
+    )
+    if label is None:
+        raise StockValidationError(
+            f'No label record for entry_id={entry_id}.',
+        )
+    scans = list(
+        StockEntryLabelScan.objects
+        .filter(stock_entry_id=entry_id)
+        .order_by('-scanned_at', '-id')
+    )
+    user_ids = {s.actor_user_id for s in scans if s.actor_user_id is not None}
+    names = {
+        u.id: (u.display_name or u.username)
+        for u in RbacUser.objects.filter(pk__in=user_ids).only(
+            'id', 'display_name', 'username',
+        )
+    }
+    return {
+        'entry_id': entry_id,
+        'entry_code': entry_code(entry_id),
+        'label': label_state_dict(label),
+        'scan_count': len(scans),
+        'ok_scan_count': sum(
+            1 for s in scans if s.result == StockEntryLabelScanResult.OK
+        ),
+        'mismatch_count': sum(
+            1 for s in scans if s.result == StockEntryLabelScanResult.MISMATCH
+        ),
+        'scans': [scan_event_dict(s, names=names) for s in scans],
     }
 
 

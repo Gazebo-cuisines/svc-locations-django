@@ -19,8 +19,8 @@ class PoDetailCheckedByNameTests(TestCase):
             username='checker01',
             display_name='Alex Checker',
         )
-        wh = Location.objects.create(name='WH', visible=True)
-        supplier = Location.objects.create(name='Supplier', visible=True)
+        wh = Location.objects.create(id=901, name='WH', visible=True)
+        supplier = Location.objects.create(id=902, name='Supplier', visible=True)
         LocationRoleAssignment.objects.create(
             location=supplier, role=LocationRole.SUPPLIER,
         )
@@ -32,11 +32,13 @@ class PoDetailCheckedByNameTests(TestCase):
             ordered_at=date.today(),
             checked_by_user_id=user.id,
             checked_at=timezone.now(),
+            external_number='SAGE-TEST-1',
         )
 
         data = po_detail_dict(po)
 
         self.assertEqual(data['checked_by_user_id'], user.id)
         self.assertEqual(data['checked_by_name'], 'Alex Checker')
+        self.assertEqual(data['sage_po_number'], 'SAGE-TEST-1')
         self.assertIsNone(data['qc_tl_checked_by_name'])
         self.assertIsNone(data['created_by_name'])

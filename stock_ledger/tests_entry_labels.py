@@ -113,6 +113,17 @@ class EntryLabelTests(TestCase):
             StockEntryLabelStatus.VERIFIED,
         )
 
+        activity = self.client.get(
+            f'/stock/entries/{self.entry.id}/labels/activity/',
+        )
+        self.assertEqual(activity.status_code, 200)
+        act = activity.json()['data']
+        self.assertEqual(act['scan_count'], 2)
+        self.assertEqual(act['ok_scan_count'], 1)
+        self.assertEqual(act['mismatch_count'], 1)
+        self.assertEqual(act['scans'][0]['result'], 'ok')
+        self.assertEqual(act['scans'][1]['result'], 'mismatch')
+
     def test_box_requires_count_and_multi_verify(self):
         with self.assertRaises(Exception):
             entry_labels.create_entry_label(

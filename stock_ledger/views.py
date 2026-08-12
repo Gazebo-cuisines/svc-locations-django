@@ -27,7 +27,14 @@ from stock_ledger.models import (
     StockUnitConversion,
 )
 from stock_ledger.stream import iter_sse, subscribe
-from stock_ledger.util import entry_labels, reservations, scan, services, stock_units
+from stock_ledger.util import (
+    entry_labels,
+    entry_posting,
+    reservations,
+    scan,
+    services,
+    stock_units,
+)
 from stock_ledger.util.allocation_status import (
     STATUS_COMPLETE,
     STATUS_INCOMPLETE,
@@ -1153,69 +1160,138 @@ def receipt_api(request):
             raise StockValidationError(
                 'supplier_id or product_supplier_id is required for purchase goods-in.',
             )
-        entry = services.receipt(
-            idempotency_key=body['idempotency_key'],
-            lot=lot,
-            location_id=int(body['location_id']),
-            quantity=_parse_decimal(body['quantity'], 'quantity'),
-            unit_id=_optional_unit_id(body),
-            effective_at=_parse_effective_at(body.get('effective_at')),
-            unit_cost=(
-                _parse_decimal(body['unit_cost'], 'unit_cost')
-                if body.get('unit_cost') not in (None, '')
-                else None
-            ),
-            product_supplier=mapping,
-            counterparty_location_id=supplier_location_id,
-            **audit,
-        )
-        # Ensure supplier name is available without extra query when FK loaded.
-        if supplier_location_id is not None and entry.counterparty_location_id:
-            entry = (
-                StockEntry.objects
-                .select_related(
-                    'counterparty_location',
-                    'location',
-                    'unit',
-                    'lot__product',
+        queue_stock = body.get('queue_stock') in (True, 'true', '1', 'yes', 'True')
+        label_format = body.get('label_format')
+        label_count = 1
+        if label_format not in (None, ''):
+            label_format = str(label_format).strip().lower()
+            if label_format not in ('pallet', 'box'):
+                raise StockValidationError('label_format must be pallet or box.')
+            if body.get('label_count') in (None, ''):
+                label_count = 1 if label_format == 'pallet' else 0
+            else:
+                label_count = int(body['label_count'])
+            if label_count < 1:
+                raise StockValidationError(
+                    'label_count is required when label_format is set.',
                 )
-                .get(pk=entry.pk)
-            )
-        data = entry_dict(entry)
-        print_count = body.get('print_unit_count')
-        print_qty = body.get('print_quantity_per_unit')
-        if print_count not in (None, '') or print_qty not in (None, ''):
-            if print_count in (None, '') or print_qty in (None, ''):
-                return api_error(
-                    'print_unit_count and print_quantity_per_unit are both required to print labels.',
+            if label_format == 'pallet' and label_count != 1:
+                raise StockValidationError(
+                    'label_format=pallet requires label_count=1.',
                 )
-            units = stock_units.create_units_for_entry(
-                source_entry=entry,
-                unit_count=int(print_count),
-                quantity_per_unit=_parse_decimal(
-                    print_qty, 'print_quantity_per_unit',
-                ),
-                idempotency_key_prefix=(
-                    str(body['print_idempotency_key_prefix'])
-                    if body.get('print_idempotency_key_prefix') not in (None, '')
-                    else f"{body['idempotency_key']}:print"
-                ),
-                actor_user_id=audit.get('actor_user_id'),
-                lan_username=audit.get('lan_username'),
-                source_workstation=audit.get('source_workstation'),
+            if body.get('queue_stock') not in (
+                False, 'false', '0', 'no', 'False',
+            ):
+                queue_stock = True
+
+        total_qty = _parse_decimal(body['quantity'], 'quantity')
+        if label_count == 1:
+            qty_parts = [total_qty]
+            unit_keys = [body['idempotency_key']]
+        else:
+            base = (total_qty / label_count).quantize(Decimal('0.000001'))
+            qty_parts = [base] * (label_count - 1)
+            qty_parts.append(
+                (total_qty - sum(qty_parts)).quantize(Decimal('0.000001')),
             )
-            data['units'] = [stock_unit_dict(u) for u in units]
-        if body.get('label_format') not in (None, ''):
-            label = entry_labels.create_entry_label(
-                entry=entry,
-                label_format=body.get('label_format'),
-                label_count=body.get('label_count'),
-                actor_user_id=audit.get('actor_user_id'),
-                lan_username=audit.get('lan_username'),
-                source_workstation=audit.get('source_workstation'),
+            if qty_parts[-1] <= 0:
+                raise StockValidationError(
+                    f'Cannot split quantity {total_qty} into {label_count}.',
+                )
+            unit_keys = [
+                f"{body['idempotency_key']}:u:{i}"
+                for i in range(1, label_count + 1)
+            ]
+
+        transactions = []
+        data = None
+        for unit_index, (unit_key, part_qty) in enumerate(
+            zip(unit_keys, qty_parts), start=1,
+        ):
+            entry = services.receipt(
+                idempotency_key=unit_key,
+                lot=lot,
+                location_id=int(body['location_id']),
+                quantity=part_qty,
+                unit_id=_optional_unit_id(body),
+                effective_at=_parse_effective_at(body.get('effective_at')),
+                unit_cost=(
+                    _parse_decimal(body['unit_cost'], 'unit_cost')
+                    if body.get('unit_cost') not in (None, '')
+                    else None
+                ),
+                product_supplier=mapping,
+                counterparty_location_id=supplier_location_id,
+                defer_balance=queue_stock,
+                **audit,
             )
-            data['label'] = entry_labels.label_state_dict(label)
-            data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
+            if supplier_location_id is not None and entry.counterparty_location_id:
+                entry = (
+                    StockEntry.objects
+                    .select_related(
+                        'counterparty_location',
+                        'location',
+                        'unit',
+                        'lot__product',
+                    )
+                    .get(pk=entry.pk)
+                )
+            tx = entry_dict(entry)
+            tx['unit_index'] = unit_index
+            tx['entry_code'] = entry_labels.entry_code(entry.id)
+            if queue_stock:
+                posting = entry_posting.queue_entry(
+                    entry=entry,
+                    actor_user_id=audit.get('actor_user_id'),
+                    lan_username=audit.get('lan_username'),
+                    source_workstation=audit.get('source_workstation'),
+                )
+                tx['posting'] = entry_posting.posting_dict(posting)
+                tx['posting_status'] = posting.status
+            if label_format not in (None, ''):
+                label = entry_labels.create_entry_label(
+                    entry=entry,
+                    label_format=label_format,
+                    label_count=1,
+                    actor_user_id=audit.get('actor_user_id'),
+                    lan_username=audit.get('lan_username'),
+                    source_workstation=audit.get('source_workstation'),
+                )
+                tx['label'] = entry_labels.label_state_dict(label)
+                tx['goods_in_label'] = entry_labels.build_goods_in_label(
+                    entry, label,
+                )
+            if unit_index == 1:
+                print_count = body.get('print_unit_count')
+                print_qty = body.get('print_quantity_per_unit')
+                if print_count not in (None, '') or print_qty not in (None, ''):
+                    if print_count in (None, '') or print_qty in (None, ''):
+                        return api_error(
+                            'print_unit_count and print_quantity_per_unit are both required to print labels.',
+                        )
+                    units = stock_units.create_units_for_entry(
+                        source_entry=entry,
+                        unit_count=int(print_count),
+                        quantity_per_unit=_parse_decimal(
+                            print_qty, 'print_quantity_per_unit',
+                        ),
+                        idempotency_key_prefix=(
+                            str(body['print_idempotency_key_prefix'])
+                            if body.get('print_idempotency_key_prefix') not in (None, '')
+                            else f"{unit_key}:print"
+                        ),
+                        actor_user_id=audit.get('actor_user_id'),
+                        lan_username=audit.get('lan_username'),
+                        source_workstation=audit.get('source_workstation'),
+                    )
+                    tx['units'] = [stock_unit_dict(u) for u in units]
+                data = dict(tx)
+            transactions.append(tx)
+
+        data['label_format'] = label_format
+        data['label_count'] = label_count
+        data['transaction_count'] = len(transactions)
+        data['transactions'] = transactions
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, StockValidationError, TypeError) as exc:
@@ -1424,6 +1500,7 @@ def entry_detail_api(request, pk: int):
         'location',
         'counterparty_location',
         'label',
+        'posting',
     )
     try:
         entry = StockEntry.objects.select_related(*related).get(pk=pk)
@@ -1434,6 +1511,10 @@ def entry_detail_api(request, pk: int):
     if label is not None:
         data['label'] = entry_labels.label_state_dict(label)
         data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
+    posting = entry_posting.get_posting(entry)
+    if posting is not None:
+        data['posting'] = entry_posting.posting_dict(posting)
+        data['posting_status'] = posting.status
     if entry.transfer_group_id:
         siblings = (
             StockEntry.objects
@@ -1512,16 +1593,115 @@ def entry_label_verify_api(request, entry_id: int):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
+        audit = _common_write_kwargs(request, body)
         result = entry_labels.verify_label(
             entry_id=entry_id,
             code=str(body['code']),
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+            meta=body.get('meta') if isinstance(body.get('meta'), dict) else None,
         )
+        post_flag = body.get('post_stock') in (True, 'true', '1', 'yes', 'True')
+        if post_flag and result.get('label', {}).get('status') == 'verified':
+            posted = entry_posting.post_entry(
+                entry_id=entry_id,
+                require_label_verified=True,
+                actor_user_id=audit.get('actor_user_id'),
+                lan_username=audit.get('lan_username'),
+                source_workstation=audit.get('source_workstation'),
+            )
+            result['posting'] = posted.get('posting')
+            result['posting_status'] = posted.get('status')
+            result['stock_posted'] = not posted.get('already_live', False) or (
+                posted.get('status') == 'posted'
+            )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except StockValidationError as exc:
         msg = str(exc)
         return api_error(msg, status_code=404 if 'not found' in msg else 400)
     return api_success('Label verified.', result)
+
+
+@csrf_exempt
+@require_GET
+def entry_label_activity_api(request, entry_id: int):
+    """Label scan timeline for a goods-in entry."""
+    try:
+        data = entry_labels.list_label_activity(entry_id)
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+    return api_success('Label activity fetched.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
+def entry_post_api(request, entry_id: int):
+    """Apply queued receipt to stock_balance after label verify (hard gate)."""
+    body = _parse_json_body(request)
+    if body is None:
+        body = {}
+    try:
+        audit = _common_write_kwargs(request, body)
+        # Optional scan-in-the-same-call before post.
+        if body.get('code') not in (None, ''):
+            entry_labels.verify_label(
+                entry_id=entry_id,
+                code=str(body['code']),
+                actor_user_id=audit.get('actor_user_id'),
+                lan_username=audit.get('lan_username'),
+                source_workstation=audit.get('source_workstation'),
+            )
+        result = entry_posting.post_entry(
+            entry_id=entry_id,
+            require_label_verified=body.get('require_label_verified', True) is not False,
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+        entry = (
+            StockEntry.objects
+            .select_related(
+                'lot__product', 'lot__shape_format', 'unit', 'location',
+                'counterparty_location', 'label', 'posting',
+            )
+            .get(pk=entry_id)
+        )
+        result['entry'] = entry_dict(entry)
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+    return api_success('Entry posted to stock.', result)
+
+
+@csrf_exempt
+@require_GET
+def entry_queued_list_api(request):
+    """Goods-in inbox: receipts waiting for label confirm + stock post."""
+    try:
+        limit = int(request.GET.get('limit') or 100)
+    except (TypeError, ValueError):
+        return api_error('limit must be an integer.')
+    rows = entry_posting.list_queued_receipts(limit=limit)
+    results = []
+    for entry in rows:
+        row = entry_dict(entry)
+        posting = entry_posting.get_posting(entry)
+        if posting is not None:
+            row['posting'] = entry_posting.posting_dict(posting)
+            row['posting_status'] = posting.status
+        label = entry_labels.get_label(entry)
+        if label is not None:
+            row['label'] = entry_labels.label_state_dict(label)
+            row['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
+        results.append(row)
+    return api_success(
+        'Queued receipts fetched.',
+        {'count': len(results), 'results': results},
+    )
 
 @csrf_exempt
 @require_GET

@@ -54,6 +54,8 @@ def line_dict(line: PurchaseOrderLine) -> dict:
         'line_check_ok': line.line_check_ok,
         'line_closed': line.line_closed,
         'stock_in_done': line.stock_in_done,
+        'label_format': line.label_format,
+        'label_count': line.label_count,
         'remarks': line.remarks,
     }
 
@@ -61,7 +63,10 @@ def line_dict(line: PurchaseOrderLine) -> dict:
 def po_list_dict(po: PurchaseOrder) -> dict:
     return {
         'id': po.id,
+        # Internal system number (PO{id}). Prefer sage_po_number on UI.
         'number': po.number,
+        'sage_po_number': po.external_number,
+        'external_number': po.external_number,
         'status': po.status,
         'supplier_id': po.supplier_id,
         'supplier_name': po.supplier.name if po.supplier_id else None,
@@ -73,7 +78,6 @@ def po_list_dict(po: PurchaseOrder) -> dict:
         'expected_at': _iso_date(po.expected_at),
         'delivery_at': _iso_date(po.delivery_at),
         'source': po.source,
-        'external_number': po.external_number,
         'reject_delivery': po.reject_delivery,
         'created_at': _iso_dt(po.created_at),
         'updated_at': _iso_dt(po.updated_at),

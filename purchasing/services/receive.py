@@ -16,6 +16,7 @@ from purchasing.services.release import is_quarantine_location
 from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util import entry_labels
+from stock_ledger.util import entry_posting
 from stock_ledger.util import services as stock_services
 from stock_ledger.util import stock_units
 
@@ -81,6 +82,65 @@ def _entry_payload(entry: StockEntry) -> dict:
         .get(pk=entry.pk)
     )
     return entry_dict(entry)
+
+
+def _wants_queued_stock(raw: dict, *, label_format: str | None) -> bool:
+    flag = raw.get('queue_stock')
+    if flag in (True, 'true', '1', 'yes', 'True'):
+        return True
+    if flag in (False, 'false', '0', 'no', 'False'):
+        return False
+    return label_format not in (None, '')
+
+
+def _split_quantities(total: Decimal, parts: int) -> list[Decimal]:
+    if parts < 1:
+        raise ReceiveError('label_count must be >= 1.')
+    if parts == 1:
+        return [total]
+    base = (total / parts).quantize(Decimal('0.000001'))
+    chunks = [base] * (parts - 1)
+    last = (total - sum(chunks)).quantize(Decimal('0.000001'))
+    if last <= 0:
+        raise ReceiveError(
+            f'Cannot split quantity {total} into {parts} label transactions.',
+        )
+    chunks.append(last)
+    return chunks
+
+
+def _resolve_label_plan(line: PurchaseOrderLine, raw: dict, index: int) -> tuple[str | None, int]:
+    """Admin line wins; warehouse body only used if line has no label plan."""
+    if line.label_format not in (None, ''):
+        fmt = str(line.label_format).strip().lower()
+        count = int(line.label_count or (1 if fmt == 'pallet' else 0))
+    elif raw.get('label_format') not in (None, ''):
+        fmt = str(raw.get('label_format')).strip().lower()
+        if raw.get('label_count') in (None, ''):
+            count = 1 if fmt == 'pallet' else 0
+        else:
+            count = int(raw.get('label_count'))
+    else:
+        return None, 1
+    if fmt not in ('pallet', 'box'):
+        raise ReceiveError(
+            f'lines[{index}].label_format must be pallet or box.',
+        )
+    if count < 1:
+        raise ReceiveError(
+            f'lines[{index}]: label_count is required for label_format={fmt}.',
+        )
+    if fmt == 'pallet' and count != 1:
+        raise ReceiveError(
+            f'lines[{index}]: pallet requires label_count=1.',
+        )
+    return fmt, count
+
+
+def _unit_idempotency_keys(base: str, count: int) -> list[str]:
+    if count == 1:
+        return [base]
+    return [f'{base}:u:{i}' for i in range(1, count + 1)]
 
 
 def _print_units_for_line(
@@ -215,8 +275,11 @@ def receive_purchase_order(
         if idempotency_key in (None, ''):
             raise ReceiveError(f'lines[{index}].idempotency_key is required.')
         idempotency_key = str(idempotency_key)
+
+        label_format, label_count = _resolve_label_plan(line, raw, index)
+        unit_keys = _unit_idempotency_keys(idempotency_key, label_count)
         prior_entry = StockEntry.objects.filter(
-            idempotency_key=idempotency_key,
+            idempotency_key=unit_keys[0],
         ).first()
 
         lot_body = raw.get('lot') if isinstance(raw.get('lot'), dict) else {}
@@ -281,29 +344,92 @@ def receive_purchase_order(
             'authorised_by_user_id': audit.get('authorised_by_user_id'),
         }
         receipt_audit = {k: v for k, v in receipt_audit.items() if v is not None}
+        queue_stock = _wants_queued_stock(raw, label_format=label_format)
+        qty_parts = _split_quantities(receipt_qty, label_count)
 
-        try:
-            entry = stock_services.receipt(
-                idempotency_key=idempotency_key,
-                lot=lot,
-                location_id=location_id,
-                quantity=receipt_qty,
-                unit_id=unit_id,
-                effective_at=body.get('effective_at') or timezone.now(),
-                unit_cost=unit_cost,
-                product_supplier=product_supplier,
-                counterparty_location_id=po.supplier_id,
-                source_document_type='po',
-                source_document_id=po.id,
-                source_document_line=line.line_no,
-                po_number=po.number,
-                **receipt_audit,
-            )
-        except StockValidationError as exc:
-            raise ReceiveError(str(exc)) from exc
+        transactions = []
+        last_entry = None
+        for unit_index, (unit_key, part_qty) in enumerate(
+            zip(unit_keys, qty_parts), start=1,
+        ):
+            try:
+                entry = stock_services.receipt(
+                    idempotency_key=unit_key,
+                    lot=lot,
+                    location_id=location_id,
+                    quantity=part_qty,
+                    unit_id=unit_id,
+                    effective_at=body.get('effective_at') or timezone.now(),
+                    unit_cost=unit_cost,
+                    product_supplier=product_supplier,
+                    counterparty_location_id=po.supplier_id,
+                    source_document_type='po',
+                    source_document_id=po.id,
+                    source_document_line=line.line_no,
+                    po_number=po.external_number or po.number,
+                    defer_balance=queue_stock,
+                    **receipt_audit,
+                )
+            except StockValidationError as exc:
+                raise ReceiveError(str(exc)) from exc
+
+            last_entry = entry
+            posting = None
+            if queue_stock:
+                posting = entry_posting.queue_entry(
+                    entry=entry,
+                    actor_user_id=receipt_audit.get('actor_user_id'),
+                    lan_username=receipt_audit.get('lan_username'),
+                    source_workstation=receipt_audit.get('source_workstation'),
+                )
+            else:
+                posting = entry_posting.get_posting(entry)
+
+            tx = {
+                'unit_index': unit_index,
+                'stock_entry_id': entry.id,
+                'entry_code': entry_labels.entry_code(entry.id),
+                'quantity_stock': _qty_str(entry.quantity),
+                'lot_id': lot.id,
+                'idempotency_key': unit_key,
+                'entry': _entry_payload(entry),
+            }
+            if posting is not None:
+                tx['posting'] = entry_posting.posting_dict(posting)
+                tx['posting_status'] = posting.status
+            if label_format is not None:
+                try:
+                    label = entry_labels.create_entry_label(
+                        entry=entry,
+                        label_format=label_format,
+                        label_count=1,
+                        actor_user_id=receipt_audit.get('actor_user_id'),
+                        lan_username=receipt_audit.get('lan_username'),
+                        source_workstation=receipt_audit.get('source_workstation'),
+                    )
+                except StockValidationError as exc:
+                    raise ReceiveError(
+                        f'lines[{index}]: {exc}',
+                    ) from exc
+                tx['label'] = entry_labels.label_state_dict(label)
+                tx['goods_in_label'] = entry_labels.build_goods_in_label(
+                    entry, label,
+                )
+            # Optional unit serials only on first physical unit when requested.
+            if unit_index == 1:
+                units_payload = _print_units_for_line(
+                    raw=raw,
+                    index=index,
+                    entry=entry,
+                    idempotency_key=unit_key,
+                    audit=receipt_audit,
+                )
+                if units_payload:
+                    tx['units'] = units_payload
+            transactions.append(tx)
 
         # Reused key: return existing stock, do not advance PO qty again.
-        if prior_entry is None:
+        if prior_entry is None and last_entry is not None:
             line.qty_received = (line.qty_received + purchase_qty).quantize(
                 Decimal('0.000001'),
             )
@@ -312,7 +438,7 @@ def receive_purchase_order(
             )
             if line.qty_balance < 0:
                 raise ReceiveError(f'Line {line.line_no} balance went negative.')
-            line.last_receipt_entry_id = entry.id
+            line.last_receipt_entry_id = last_entry.id
             if line.qty_balance == 0:
                 line.line_closed = True
                 line.stock_in_done = True
@@ -327,48 +453,39 @@ def receive_purchase_order(
                 ],
             )
 
-        units_payload = _print_units_for_line(
-            raw=raw,
-            index=index,
-            entry=entry,
-            idempotency_key=idempotency_key,
-            audit=receipt_audit,
-        )
+        first = transactions[0]
         row = {
             'line_id': line.id,
             'line_no': line.line_no,
             'quantity_ordered_units': _qty_str(purchase_qty),
-            'quantity_stock': _qty_str(entry.quantity),
+            'quantity_stock': _qty_str(
+                sum((Decimal(t['quantity_stock']) for t in transactions), Decimal('0')),
+            ),
             'qty_received': _qty_str(line.qty_received),
             'qty_balance': _qty_str(line.qty_balance),
-            'stock_entry_id': entry.id,
-            'entry_code': entry_labels.entry_code(entry.id),
+            'stock_entry_id': first['stock_entry_id'],
+            'entry_code': first['entry_code'],
             'lot_id': lot.id,
             'stock_in_done': line.stock_in_done,
             'location_id': location_id,
             'quarantine': quarantine,
             'idempotent_replay': prior_entry is not None,
-            'entry': _entry_payload(entry),
+            'label_format': label_format,
+            'label_count': label_count,
+            'transaction_count': len(transactions),
+            'transactions': transactions,
+            'entry': first['entry'],
         }
-        if units_payload:
-            row['units'] = units_payload
-        if raw.get('label_format') not in (None, ''):
-            try:
-                label = entry_labels.create_entry_label(
-                    entry=entry,
-                    label_format=raw.get('label_format'),
-                    label_count=raw.get('label_count'),
-                    actor_user_id=receipt_audit.get('actor_user_id'),
-                    lan_username=receipt_audit.get('lan_username'),
-                    source_workstation=receipt_audit.get('source_workstation'),
-                )
-            except StockValidationError as exc:
-                raise ReceiveError(
-                    f'lines[{index}]: {exc}',
-                ) from exc
-            row['label'] = entry_labels.label_state_dict(label)
-            row['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
+        if first.get('units'):
+            row['units'] = first['units']
+        if first.get('posting') is not None:
+            row['posting'] = first['posting']
+            row['posting_status'] = first['posting_status']
+        if first.get('goods_in_label') is not None:
+            row['label'] = first['label']
+            row['goods_in_label'] = first['goods_in_label']
         results.append(row)
+
     _recompute_po_status(po)
     form = resolve_goods_in_form(po.id)
     form['receive_results'] = results

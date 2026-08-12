@@ -877,6 +877,7 @@ class StockEntryLabel(models.Model):
     actor_user_id = models.IntegerField(null=True, blank=True)
     lan_username = models.CharField(max_length=64, null=True, blank=True)
     source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = 'stock_entry_label'
@@ -910,4 +911,122 @@ class StockEntryLabel(models.Model):
         return (
             f'stock_entry_label:{self.stock_entry_id}:'
             f'{self.label_format}:{self.status}'
+        )
+
+
+class StockEntryLabelScanResult(models.TextChoices):
+    OK = 'ok', 'Ok'
+    MISMATCH = 'mismatch', 'Mismatch'
+
+
+class StockEntryLabelScan(models.Model):
+    """Append-only scan activity for a Goods IN entry label."""
+
+    label = models.ForeignKey(
+        StockEntryLabel,
+        on_delete=models.PROTECT,
+        related_name='scans',
+    )
+    stock_entry = models.ForeignKey(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='label_scans',
+    )
+    scanned_at = models.DateTimeField()
+    code = models.CharField(max_length=64)
+    result = models.CharField(
+        max_length=16,
+        choices=StockEntryLabelScanResult.choices,
+    )
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'stock_entry_label_scan'
+        ordering = ['-scanned_at', '-id']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    result__in=[
+                        StockEntryLabelScanResult.OK,
+                        StockEntryLabelScanResult.MISMATCH,
+                    ]
+                ),
+                name='chk_stock_entry_label_scan_result',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['stock_entry', 'scanned_at'],
+                name='idx_entry_label_scan_entry',
+            ),
+            models.Index(
+                fields=['label', 'scanned_at'],
+                name='idx_entry_label_scan_label',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_entry_label_scan:{self.id}:'
+            f'entry:{self.stock_entry_id}:{self.result}'
+        )
+
+
+class StockEntryPostingStatus(models.TextChoices):
+    QUEUED = 'queued', 'Queued'
+    POSTED = 'posted', 'Posted'
+    CANCELLED = 'cancelled', 'Cancelled'
+
+
+class StockEntryPosting(models.Model):
+    """
+    Mutable posting gate for an immutable receipt.
+    queued = entry exists for barcode, stock_balance not updated yet.
+    """
+
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='posting',
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=StockEntryPostingStatus.choices,
+        default=StockEntryPostingStatus.QUEUED,
+    )
+    queued_at = models.DateTimeField()
+    posted_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'stock_entry_posting'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        StockEntryPostingStatus.QUEUED,
+                        StockEntryPostingStatus.POSTED,
+                        StockEntryPostingStatus.CANCELLED,
+                    ]
+                ),
+                name='chk_stock_entry_posting_status',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'queued_at'],
+                name='idx_stock_entry_posting_status',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_entry_posting:{self.stock_entry_id}:{self.status}'
         )
