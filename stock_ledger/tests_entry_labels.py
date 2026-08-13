@@ -17,6 +17,7 @@ from product.models import (
     Unit,
 )
 from stock_ledger.models import (
+    StockEntry,
     StockEntryLabelStatus,
     StockLot,
     StockLotOrigin,
@@ -123,6 +124,49 @@ class EntryLabelTests(TestCase):
         self.assertEqual(act['mismatch_count'], 1)
         self.assertEqual(act['scans'][0]['result'], 'ok')
         self.assertEqual(act['scans'][1]['result'], 'mismatch')
+
+    def test_verify_accepts_truncated_last_char(self):
+        entry_labels.create_entry_label(entry=self.entry, label_format='pallet')
+        code = f'E{self.entry.id}'
+        if len(code) < 3:
+            self.skipTest('entry id too short to truncate')
+        result = entry_labels.verify_label(
+            entry_id=self.entry.id,
+            code=code[:-1],
+        )
+        self.assertTrue(result['matched'])
+        self.assertEqual(result['scan']['result'], 'ok')
+        self.assertEqual(result['scan']['code'], code[:-1])
+
+    def test_verify_rejects_two_char_truncation(self):
+        entry_labels.create_entry_label(entry=self.entry, label_format='pallet')
+        code = f'E{self.entry.id}'
+        if len(code) < 4:
+            self.skipTest('entry id too short')
+        with self.assertRaises(Exception):
+            entry_labels.verify_label(
+                entry_id=self.entry.id,
+                code=code[:-2],
+            )
+
+    def test_scan_matches_entry_code_truncation(self):
+        self.assertTrue(entry_labels.scan_matches_entry_code('E62', 'E625'))
+        self.assertTrue(entry_labels.scan_matches_entry_code('E625', 'E625'))
+        self.assertFalse(entry_labels.scan_matches_entry_code('E6', 'E625'))
+        self.assertFalse(entry_labels.scan_matches_entry_code('E624', 'E625'))
+        self.assertFalse(entry_labels.scan_matches_entry_code('E', 'E625'))
+
+    def test_scan_completes_truncated_entry_code(self):
+        code = f'E{self.entry.id}'
+        if len(code) < 3:
+            self.skipTest('entry id too short to truncate')
+        truncated = code[:-1]
+        short_id = entry_labels.parse_entry_code(truncated)
+        if StockEntry.objects.filter(pk=short_id).exists():
+            self.skipTest('short id already exists')
+        scan = self.client.get(f'/stock/scan/?code={truncated}')
+        self.assertEqual(scan.status_code, 200)
+        self.assertEqual(scan.json()['data']['entry']['id'], self.entry.id)
 
     def test_box_requires_count_and_multi_verify(self):
         with self.assertRaises(Exception):

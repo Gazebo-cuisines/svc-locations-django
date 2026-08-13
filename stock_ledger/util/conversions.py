@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from product.models import ProductPackaging, Unit
+from product.models import Product, ProductPackaging, ProductSupplier, Unit
 
 from stock_ledger.models import StockUnitConversion
 
@@ -97,3 +97,64 @@ def sync_product_unit_conversions_from_packaging() -> int:
             )
             written += 1
     return written
+
+
+Q6 = Decimal('0.000001')
+
+
+def to_product_unit(
+    qty: Decimal,
+    from_unit_id: int,
+    product: Product,
+) -> Decimal:
+    """Convert qty in from_unit into product.unit."""
+    dest_id = product.unit_id
+    if dest_id is None:
+        raise StockValidationError(
+            f'product_id={product.id} has no stock unit',
+        )
+    qty = Decimal(qty)
+    if from_unit_id == dest_id:
+        return qty.quantize(Q6)
+    src = resolve_to_kg(unit_id=from_unit_id, product_id=product.id)
+    dest = resolve_to_kg(unit_id=dest_id, product_id=product.id)
+    if dest == 0:
+        raise StockValidationError(
+            f'product_id={product.id} unit_id={dest_id} has to_kg=0',
+        )
+    return (qty * src / dest).quantize(Q6)
+
+
+def packs_to_stock(
+    pack_count: Decimal,
+    mapping: ProductSupplier,
+    product: Product,
+) -> Decimal:
+    """N packs of this supplier shape → quantity in product.unit."""
+    return to_product_unit(
+        Decimal(pack_count) * mapping.multiplier,
+        mapping.inner_unit_id,
+        product,
+    )
+
+
+def stock_to_packs(
+    stock_qty: Decimal,
+    mapping: ProductSupplier,
+    product: Product,
+) -> Decimal:
+    per_pack = packs_to_stock(Decimal('1'), mapping, product)
+    if per_pack == 0:
+        raise StockValidationError('pack size is 0')
+    return (Decimal(stock_qty) / per_pack).quantize(Q6)
+
+
+def stock_to_kg(stock_qty: Decimal, product: Product) -> Decimal | None:
+    """Warehouse KG column. None if product.unit has no kg conversion."""
+    if product.unit_id is None:
+        return None
+    try:
+        factor = resolve_to_kg(unit_id=product.unit_id, product_id=product.id)
+    except StockValidationError:
+        return None
+    return (Decimal(stock_qty) * factor).quantize(Q6)

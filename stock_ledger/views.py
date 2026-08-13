@@ -45,7 +45,11 @@ from stock_ledger.util.allocation_status import (
     exclude_incomplete_lot_ids,
     held_balance_keys,
 )
-from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util.conversions import (
+    StockValidationError,
+    stock_to_kg,
+    stock_to_packs,
+)
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
@@ -128,6 +132,7 @@ def lot_dict(lot: StockLot) -> dict:
         'product_id': lot.product_id,
         'recipe_version_id': lot.recipe_version_id,
         'shape_format_id': lot.shape_format_id,
+        'product_supplier_id': lot.product_supplier_id,
         'trace_number': lot.trace_number,
         'supplier_lot_code': lot.supplier_lot_code,
         'origin': lot.origin,
@@ -213,13 +218,17 @@ def entry_dict(entry: StockEntry) -> dict:
         inner_unit_name = mapping.inner_unit.name if mapping.inner_unit_id else None
         multiplier = _dec(mapping.multiplier)
         pack_unit_name = outer_unit_name
-        # New receipts store stock kg with base_unit_factor = multiplier.
-        if (
-            entry.base_unit_factor is not None
-            and entry.base_unit_factor == mapping.multiplier
-            and mapping.multiplier != 0
-        ):
-            pack_quantity = _dec(entry.quantity / mapping.multiplier)
+        if mapping.multiplier != 0 and product is not None:
+            try:
+                pack_quantity = _dec(
+                    stock_to_packs(abs(entry.quantity), mapping, product),
+                )
+            except StockValidationError:
+                pack_quantity = None
+    display_kg = (
+        _dec(stock_to_kg(abs(entry.quantity), product))
+        if product is not None else None
+    )
     return {
         'id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),
@@ -254,6 +263,7 @@ def entry_dict(entry: StockEntry) -> dict:
         'unit_name': unit.name if unit is not None else None,
         'pack_quantity': pack_quantity,
         'pack_unit_name': pack_unit_name,
+        'display_kg': display_kg,
         'shape_format_id': shape_format_id,
         'shape_format_name': shape_format_name,
         'shape_format_label': shape_format_label,
@@ -656,6 +666,7 @@ def _resolve_lot(body: dict) -> StockLot:
         production_date=_parse_date(body.get('production_date'), 'production_date'),
         recipe_version_id=body.get('recipe_version_id') or None,
         shape_format_id=body.get('shape_format_id') or None,
+        product_supplier_id=body.get('product_supplier_id') or None,
         origin=body.get('origin') or StockLotOrigin.PURCHASE,
         supplier_lot_code=body.get('supplier_lot_code') or None,
     )
@@ -705,11 +716,33 @@ def _receipt_supplier_location_id(body: dict, lot: StockLot) -> int | None:
     return None
 
 
+def _product_supplier_for_lot(lot):
+    if lot is None:
+        return None
+    if lot.product_supplier_id:
+        return (
+            ProductSupplier.objects
+            .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
+            .filter(pk=lot.product_supplier_id)
+            .first()
+        )
+    return (
+        ProductSupplier.objects
+        .filter(product_id=lot.product_id, is_active=True)
+        .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
+        .order_by('-is_default', '-id')
+        .first()
+    )
+
+
 def _product_supplier_for_entry(entry: StockEntry):
-    """Best-effort shape mapping for a receipt (product + supplier)."""
+    """Shape mapping stamped on the lot, else best-effort for receipts."""
+    lot = entry.lot
+    hit = _product_supplier_for_lot(lot)
+    if hit is not None:
+        return hit
     if entry.entry_type != StockEntryType.RECEIPT:
         return None
-    lot = entry.lot
     if lot is None or entry.counterparty_location_id is None:
         return None
     qs = (
@@ -722,11 +755,10 @@ def _product_supplier_for_entry(entry: StockEntry):
         .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
     )
     if lot.shape_format_id:
-        hit = qs.filter(purchase_shape_format_id=lot.shape_format_id).first()
-        if hit is not None:
-            return hit
-    hit = qs.filter(is_default=True).first()
-    return hit or qs.order_by('-id').first()
+        shaped = qs.filter(purchase_shape_format_id=lot.shape_format_id).first()
+        if shaped is not None:
+            return shaped
+    return qs.filter(is_default=True).first() or qs.order_by('-id').first()
 
 
 def _decode_bearer_claims(request) -> dict:
@@ -1360,6 +1392,19 @@ def _parse_unit_moves(body: dict) -> list | None:
     return raw
 
 
+def _parse_requirement_ids(raw) -> list[int] | None:
+    if raw in (None, ''):
+        return None
+    if not isinstance(raw, list):
+        raise StockValidationError('requirement_ids must be a list.')
+    if not raw:
+        return None
+    try:
+        return [int(x) for x in raw]
+    except (TypeError, ValueError) as exc:
+        raise StockValidationError('requirement_ids must be integers.') from exc
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 @gate_warehouse_write()
@@ -1372,6 +1417,10 @@ def transfer_api(request):
         unit_moves = _parse_unit_moves(body)
         queue_stock = body.get('queue_stock') in (True, 'true', '1', 'yes', 'True')
         audit = _common_write_kwargs(request, body)
+        req_ids = _parse_requirement_ids(body.get('requirement_ids'))
+        if req_ids:
+            audit['source_document_type'] = 'plan_requirement'
+            audit['source_document_id'] = req_ids[0]
         lot = _resolve_lot(body)
         from_location_id = int(body['from_location_id'])
         fifo_reason = str(body.get('fifo_override_reason') or '').strip()
@@ -1738,6 +1787,19 @@ def entry_post_api(request, entry_id: int):
         msg = str(exc)
         return api_error(msg, status_code=404 if 'not found' in msg else 400)
     return api_success('Entry posted to stock.', result)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write()
+def entry_cancel_api(request, entry_id: int):
+    """Drop a queued posting so remaining qty is no longer reserved."""
+    try:
+        posting = entry_posting.cancel_entry(entry_id=entry_id)
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+    return api_success('Entry cancelled.', entry_posting.posting_dict(posting))
 
 
 @csrf_exempt
@@ -2242,6 +2304,24 @@ def scan_resolve_api(request):
         'batch_count': len(batches),
         'batches': batches,
     }
+    stock_qty = Decimal(str(total or 0))
+    data['display_kg'] = _dec(stock_to_kg(stock_qty, product))
+    mapping = _product_supplier_for_lot(match.get('lot'))
+    if mapping is not None:
+        try:
+            data['pack_quantity'] = _dec(
+                stock_to_packs(stock_qty, mapping, product),
+            )
+        except StockValidationError:
+            data['pack_quantity'] = None
+        data['pack_unit_name'] = (
+            mapping.outer_unit.name if mapping.outer_unit_id else None
+        )
+        data['shape_format_label'] = mapping.shape_format_label
+    else:
+        data['pack_quantity'] = None
+        data['pack_unit_name'] = None
+        data['shape_format_label'] = None
     if check_fifo and match.get('lot') is not None:
         lot = match['lot']
         data['trace_number'] = lot.trace_number

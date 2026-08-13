@@ -20,7 +20,13 @@ from product.models import (
 from purchasing.management.commands.seed_goods_in_templates import (
     seed_goods_in_templates,
 )
-from purchasing.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
+from purchasing.models import (
+    PurchaseOrder,
+    PurchaseOrderHistory,
+    PurchaseOrderHistoryEvent,
+    PurchaseOrderLine,
+    PurchaseOrderStatus,
+)
 from purchasing.services.receive import ReceiveError, receive_purchase_order
 from stock_ledger.models import (
     StockEntry,
@@ -207,11 +213,12 @@ class PoReceiveParityTests(TestCase):
         key = f'po-idem-{uuid4()}'
         body = {
             'location_id': self.wh.id,
-            'lines': [{
-                'line_id': self.line.id,
-                'quantity': '1',
-                'idempotency_key': key,
-            }],
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'shortfall_reason': 'short_delivery',
+                    'idempotency_key': key,
+                }],
         }
         first = receive_purchase_order(self.po.id, body=body)
         self.line.refresh_from_db()
@@ -231,6 +238,83 @@ class PoReceiveParityTests(TestCase):
             StockEntry.objects.filter(idempotency_key=key).count(),
             1,
         )
+
+    def test_short_receive_requires_reason(self):
+        with self.assertRaises(ReceiveError) as ctx:
+            receive_purchase_order(
+                self.po.id,
+                body={
+                    'location_id': self.wh.id,
+                    'lines': [{
+                        'line_id': self.line.id,
+                        'quantity': '1',
+                        'idempotency_key': f'po-short-{uuid4()}',
+                    }],
+                },
+            )
+        self.assertIn('shortfall_reason', str(ctx.exception))
+
+    def test_short_delivery_leaves_balance(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'shortfall_reason': 'short_delivery',
+                    'idempotency_key': f'po-await-{uuid4()}',
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['qty_received'], '1')
+        self.assertEqual(row['qty_rejected'], '0')
+        self.assertEqual(row['qty_balance'], '1')
+        self.assertFalse(row['needs_credit_note'])
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertFalse(self.line.line_closed)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+        note = PurchaseOrderHistory.objects.get(
+            purchase_order=self.po,
+            event_type=PurchaseOrderHistoryEvent.NOTE,
+        )
+        self.assertEqual(note.payload['shortfall_reason'], 'short_delivery')
+        self.assertFalse(note.payload['needs_credit_note'])
+
+    def test_reject_remainder_closes_for_credit(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'shortfall_reason': 'damaged',
+                    'remarks': '2 boxes crushed',
+                    'idempotency_key': f'po-rej-{uuid4()}',
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['qty_received'], '1')
+        self.assertEqual(row['qty_rejected'], '1')
+        self.assertEqual(row['qty_balance'], '0')
+        self.assertTrue(row['needs_credit_note'])
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertTrue(self.line.line_closed)
+        self.assertEqual(self.line.shortfall_reason, 'damaged')
+        self.assertEqual(self.po.status, PurchaseOrderStatus.RECEIVED)
+        event = PurchaseOrderHistory.objects.get(
+            purchase_order=self.po,
+            event_type=PurchaseOrderHistoryEvent.NON_CONFORMANCE,
+        )
+        self.assertTrue(event.payload['needs_credit_note'])
+        reasons = {item['code'] for item in data['shortfall_reasons']}
+        self.assertIn('short_delivery', reasons)
+        self.assertIn('damaged', reasons)
 
     def test_over_receive_blocked(self):
         with self.assertRaises(ReceiveError):

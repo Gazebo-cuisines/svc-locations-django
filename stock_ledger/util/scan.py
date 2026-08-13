@@ -37,6 +37,22 @@ def _product_by_code(text: str) -> Product | None:
     return _product_by_id(int(match.group(1)))
 
 
+def _entry_by_id(entry_id: int) -> StockEntry | None:
+    return (
+        StockEntry.objects
+        .select_related(
+            'lot__product__unit',
+            'lot__product__product_class',
+            'lot__product__range',
+            'unit',
+            'location',
+            'label',
+        )
+        .filter(pk=entry_id)
+        .first()
+    )
+
+
 def resolve_scan(code: str) -> dict:
     """
     Returns {'match_type', 'product', 'lot', 'unit'[, 'entry']}.
@@ -55,19 +71,10 @@ def resolve_scan(code: str) -> dict:
 
     entry_id = entry_labels.parse_entry_code(text)
     if entry_id is not None:
-        entry = (
-            StockEntry.objects
-            .select_related(
-                'lot__product__unit',
-                'lot__product__product_class',
-                'lot__product__range',
-                'unit',
-                'location',
-                'label',
-            )
-            .filter(pk=entry_id)
-            .first()
-        )
+        entry = _entry_by_id(entry_id)
+        if entry is None:
+            completed = entry_labels.resolve_truncated_entry_id(str(entry_id))
+            entry = _entry_by_id(completed) if completed is not None else None
         if entry is None:
             raise StockValidationError(f'code={text} not found')
         return {

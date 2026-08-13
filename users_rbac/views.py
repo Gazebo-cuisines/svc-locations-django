@@ -7,6 +7,7 @@ from core.api_response import error_response, success_response
 from users_rbac.audit import record_event
 from users_rbac.models import RbacAuditAction, RbacUser
 from users_rbac.services import login as cognito_login
+from users_rbac.services import refresh as cognito_refresh
 
 
 @csrf_exempt
@@ -48,3 +49,25 @@ def login_view(request):
         detail_json={'username': username},
     )
     return success_response("Signed in successfully.", data=tokens)
+
+
+@csrf_exempt
+@require_POST
+def refresh_view(request):
+    try:
+        body = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return error_response("Invalid request body.", status_code=400)
+
+    refresh_token = (body.get("refresh_token") or "").strip()
+    username = (body.get("username") or body.get("email") or "").strip()
+
+    if not refresh_token or not username:
+        return error_response("Refresh token and username are required.", status_code=400)
+
+    try:
+        tokens = cognito_refresh(refresh_token, username)
+    except ValueError as exc:
+        return error_response(str(exc), status_code=401)
+
+    return success_response("Session refreshed.", data=tokens)

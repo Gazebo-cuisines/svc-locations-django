@@ -174,6 +174,72 @@ class EntryPostingQueueTests(TestCase):
             ).exists(),
         )
 
+    def test_queued_transfer_rejects_more_than_lot_balance(self):
+        dest = Location.objects.create(id=78, name='PQ Dest Over', visible=True)
+        services.receipt(
+            idempotency_key=f'pq-over-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('50'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-over-xfer-{uuid4()}",'
+                f'"lot_id":{self.lot.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"128000",'
+                '"queue_stock":true'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn('Only 50', resp.json()['message'])
+
+    def test_cancel_queued_transfer_releases_posting(self):
+        dest = Location.objects.create(id=79, name='PQ Dest Cancel', visible=True)
+        services.receipt(
+            idempotency_key=f'pq-can-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('50'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        queued = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-can-xfer-{uuid4()}",'
+                f'"lot_id":{self.lot.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"10",'
+                '"queue_stock":true'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(queued.status_code, 201, queued.content)
+        out_id = queued.json()['data']['out']['id']
+        cancelled = self.client.post(
+            f'/stock/entries/{out_id}/cancel/',
+            data='{}',
+            content_type='application/json',
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.content)
+        self.assertEqual(
+            cancelled.json()['data']['status'],
+            StockEntryPostingStatus.CANCELLED,
+        )
+
     def test_verify_posts_queued_transfer_pair(self):
         dest = Location.objects.create(id=75, name='PQ Mixers', visible=True)
         services.receipt(
@@ -236,6 +302,37 @@ class EntryPostingQueueTests(TestCase):
             ).quantity,
             Decimal('10'),
         )
+
+    def test_queued_transfer_stamps_plan_requirement(self):
+        dest = Location.objects.create(id=77, name='PQ Mixers 2', visible=True)
+        services.receipt(
+            idempotency_key=f'pq-req-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('50'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-req-xfer-{uuid4()}",'
+                f'"lot_id":{self.lot.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"10",'
+                '"queue_stock":true,'
+                '"requirement_ids":[91, 92]'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        out = resp.json()['data']['out']
+        self.assertEqual(out['source_document_type'], 'plan_requirement')
+        self.assertEqual(out['source_document_id'], 91)
 
     def test_fifo_override_required_and_listed_on_product(self):
         dest = Location.objects.create(id=76, name='PQ Belts 2', visible=True)

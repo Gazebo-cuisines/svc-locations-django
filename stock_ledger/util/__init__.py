@@ -5,6 +5,9 @@ from stock_ledger.util.conversions import (
     resolve_to_kg,
     seed_global_unit_conversions,
     sync_product_unit_conversions_from_packaging,
+    packs_to_stock,
+    stock_to_kg,
+    stock_to_packs,
 )
 
 __all__ = [
@@ -14,4 +17,7 @@ __all__ = [
     'resolve_to_kg',
     'seed_global_unit_conversions',
     'sync_product_unit_conversions_from_packaging',
+    'packs_to_stock',
+    'stock_to_kg',
+    'stock_to_packs',
 ]

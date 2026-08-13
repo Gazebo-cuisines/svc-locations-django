@@ -112,6 +112,43 @@ def login(username: str, password: str) -> dict:
     }
 
 
+def refresh(refresh_token: str, username: str) -> dict:
+    """
+    REFRESH_TOKEN_AUTH against Cognito (needs SECRET_HASH — browser cannot do this).
+    """
+    refresh_token = (refresh_token or '').strip()
+    username = (username or '').strip()
+    if not refresh_token or not username:
+        raise ValueError('Refresh token and username are required.')
+
+    try:
+        resp = _client().initiate_auth(
+            ClientId=_require_env("COGNITO_CLIENT_ID"),
+            AuthFlow="REFRESH_TOKEN_AUTH",
+            AuthParameters={
+                "REFRESH_TOKEN": refresh_token,
+                "USERNAME": username,
+                "SECRET_HASH": _secret_hash(username),
+            },
+        )
+    except ProfileNotFound as exc:
+        raise ValueError(
+            "AWS profile not found. Unset AWS_PROFILE or configure it with aws configure."
+        ) from exc
+    except ClientError as exc:
+        raise ValueError(_cognito_message(exc)) from exc
+
+    result = resp["AuthenticationResult"]
+    return {
+        "access_token": result["AccessToken"],
+        "id_token": result["IdToken"],
+        # Cognito often omits RefreshToken on refresh — caller should keep the old one.
+        "refresh_token": result.get("RefreshToken") or refresh_token,
+        "expires_in": result.get("ExpiresIn"),
+        "token_type": result.get("TokenType", "Bearer"),
+    }
+
+
 def create_identity(
     username: str,
     password: str,

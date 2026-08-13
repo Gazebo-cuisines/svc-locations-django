@@ -1,6 +1,11 @@
 from decimal import Decimal
 
-from purchasing.models import PurchaseOrder, PurchaseOrderLine
+from purchasing.models import (
+    LineShortfallReason,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SHORTFALL_AWAIT_REASONS,
+)
 from users_rbac.models import RbacUser
 
 
@@ -10,6 +15,18 @@ def _iso_date(value):
 
 def _iso_dt(value):
     return value.isoformat() if value else None
+
+
+def shortfall_reason_options() -> list[dict]:
+    return [
+        {
+            'code': code,
+            'label': label,
+            'closes_line': code not in SHORTFALL_AWAIT_REASONS,
+            'needs_credit_note': code not in SHORTFALL_AWAIT_REASONS,
+        }
+        for code, label in LineShortfallReason.choices
+    ]
 
 
 def _qty_str(value) -> str | None:
@@ -41,7 +58,10 @@ def line_dict(line: PurchaseOrderLine) -> dict:
         'product_supplier_id': line.product_supplier_id,
         'qty_ordered': _qty_str(line.qty_ordered),
         'qty_received': _qty_str(line.qty_received),
+        'qty_rejected': _qty_str(line.qty_rejected),
         'qty_balance': _qty_str(line.qty_balance),
+        'shortfall_reason': line.shortfall_reason,
+        'needs_credit_note': line.qty_rejected > 0,
         'unit_id': line.unit_id,
         'unit_name': line.unit.name if line.unit_id else None,
         'unit_cost': _qty_str(line.unit_cost),
