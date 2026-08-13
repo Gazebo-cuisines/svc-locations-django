@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from purchasing.models import PurchaseOrder, PurchaseOrderLine
+from users_rbac.models import RbacUser
 
 
 def _iso_date(value):
@@ -19,6 +20,16 @@ def _qty_str(value) -> str | None:
     if '.' in text:
         text = text.rstrip('0').rstrip('.')
     return text or '0'
+
+
+def rbac_names(user_ids: set[int | None]) -> dict[int, str]:
+    ids = {uid for uid in user_ids if uid is not None}
+    if not ids:
+        return {}
+    return {
+        u.id: (u.display_name or u.username)
+        for u in RbacUser.objects.filter(pk__in=ids).only('id', 'display_name', 'username')
+    }
 
 
 def line_dict(line: PurchaseOrderLine) -> dict:
@@ -43,6 +54,8 @@ def line_dict(line: PurchaseOrderLine) -> dict:
         'line_check_ok': line.line_check_ok,
         'line_closed': line.line_closed,
         'stock_in_done': line.stock_in_done,
+        'label_format': line.label_format,
+        'label_count': line.label_count,
         'remarks': line.remarks,
     }
 
@@ -50,7 +63,10 @@ def line_dict(line: PurchaseOrderLine) -> dict:
 def po_list_dict(po: PurchaseOrder) -> dict:
     return {
         'id': po.id,
+        # Internal system number (PO{id}). Prefer sage_po_number on UI.
         'number': po.number,
+        'sage_po_number': po.external_number,
+        'external_number': po.external_number,
         'status': po.status,
         'supplier_id': po.supplier_id,
         'supplier_name': po.supplier.name if po.supplier_id else None,
@@ -62,7 +78,6 @@ def po_list_dict(po: PurchaseOrder) -> dict:
         'expected_at': _iso_date(po.expected_at),
         'delivery_at': _iso_date(po.delivery_at),
         'source': po.source,
-        'external_number': po.external_number,
         'reject_delivery': po.reject_delivery,
         'created_at': _iso_dt(po.created_at),
         'updated_at': _iso_dt(po.updated_at),
@@ -70,6 +85,11 @@ def po_list_dict(po: PurchaseOrder) -> dict:
 
 
 def po_detail_dict(po: PurchaseOrder) -> dict:
+    names = rbac_names({
+        po.checked_by_user_id,
+        po.qc_tl_checked_by_user_id,
+        po.created_by_user_id,
+    })
     data = po_list_dict(po)
     data.update({
         'remarks': po.remarks,
@@ -80,12 +100,15 @@ def po_detail_dict(po: PurchaseOrder) -> dict:
         ),
         'header_checks': po.header_checks,
         'checked_by_user_id': po.checked_by_user_id,
+        'checked_by_name': names.get(po.checked_by_user_id),
         'checked_at': _iso_dt(po.checked_at),
         'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
+        'qc_tl_checked_by_name': names.get(po.qc_tl_checked_by_user_id),
         'qc_tl_checked_at': _iso_dt(po.qc_tl_checked_at),
         'qc_tl_comment': po.qc_tl_comment,
         'total_net': _qty_str(po.total_net),
         'created_by_user_id': po.created_by_user_id,
+        'created_by_name': names.get(po.created_by_user_id),
         'lines': [line_dict(line) for line in po.lines.all()],
     })
     return data

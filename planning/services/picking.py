@@ -5,11 +5,50 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 
+from django.db.models import Prefetch
+
 from planning.models import PlanRun
+from product.models import ProductSupplier
 
 
 def _dec(value) -> str | None:
     return str(value) if value is not None else None
+
+
+def _category_fields(product) -> dict:
+    cat = product.category if product.category_id else None
+    if cat is None:
+        return {
+            'category_id': None,
+            'category_name': None,
+            'category_path': None,
+            'category_l2': None,
+        }
+    path = cat.path or cat.name
+    parts = [p.strip() for p in path.split('>') if p.strip()]
+    return {
+        'category_id': cat.id,
+        'category_name': cat.name,
+        'category_path': cat.path,
+        'category_l2': parts[1] if len(parts) > 1 else (parts[0] if parts else cat.name),
+    }
+
+
+def _pack_fields(product, net_qty: Decimal) -> dict:
+    mapping = next(iter(product.suppliers.all()), None)
+    if mapping is None or not mapping.multiplier:
+        return {
+            'pack_quantity': None,
+            'pack_unit_name': None,
+            'shape_format_label': None,
+        }
+    return {
+        'pack_quantity': _dec(net_qty / mapping.multiplier),
+        'pack_unit_name': (
+            mapping.outer_unit.name if mapping.outer_unit_id else None
+        ),
+        'shape_format_label': mapping.shape_format_label,
+    }
 
 
 def build_picking_list(
@@ -30,8 +69,20 @@ def build_picking_list(
         .select_related(
             'product',
             'product__unit',
+            'product__category',
             'source_location',
             'destination_location',
+        )
+        .prefetch_related(
+            Prefetch(
+                'product__suppliers',
+                queryset=(
+                    ProductSupplier.objects
+                    .filter(is_active=True)
+                    .select_related('outer_unit')
+                    .order_by('-is_default', '-id')
+                ),
+            ),
         )
         .order_by('id')
     )
@@ -53,6 +104,8 @@ def build_picking_list(
             buckets[key] = {
                 'product_id': req.product_id,
                 'product': req.product.name,
+                '_product': req.product,
+                **_category_fields(req.product),
                 'gross_quantity': Decimal('0'),
                 'net_quantity': Decimal('0'),
                 'unit': req.product.unit.name if req.product.unit_id else None,
@@ -75,10 +128,13 @@ def build_picking_list(
 
     lines = []
     for bucket in buckets.values():
+        product = bucket.pop('_product')
+        net_qty = bucket['net_quantity']
         lines.append({
             **bucket,
+            **_pack_fields(product, net_qty),
             'gross_quantity': _dec(bucket['gross_quantity']),
-            'net_quantity': _dec(bucket['net_quantity']),
+            'net_quantity': _dec(net_qty),
         })
     lines.sort(
         key=lambda row: (

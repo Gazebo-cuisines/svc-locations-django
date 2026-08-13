@@ -248,6 +248,13 @@ class StockUnitTests(TestCase):
         self.assertEqual(data.get('counterparty_location_id'), supplier.id)
         self.assertEqual(data.get('supplier_id'), supplier.id)
         self.assertEqual(data.get('supplier_name'), supplier.name)
+        # quantity body is pack count; stock qty = packs × multiplier (5×20=100 → 100*100)
+        self.assertEqual(entry.quantity, Decimal('10000.000000'))
+        self.assertEqual(entry.unit_id, mapping.inner_unit_id)
+        self.assertEqual(entry.base_unit_factor, mapping.multiplier)
+        self.assertEqual(data.get('pack_quantity'), '100')
+        self.assertEqual(data.get('shape_multiplier'), '100')
+        self.assertEqual(data.get('quantity'), '10000')
 
     def test_purchase_receipt_requires_supplier(self):
         lot = StockLot.objects.create(
@@ -522,6 +529,84 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(self.client.get('/stock/scan/?code=P99999999').status_code, 404)
         self.assertEqual(self.client.get('/stock/scan/?code=NOPE').status_code, 404)
         self.assertEqual(self.client.get('/stock/scan/?code=').status_code, 400)
+        incomplete = self.client.get('/stock/scan/?code=E')
+        self.assertEqual(incomplete.status_code, 400)
+        self.assertIn('incomplete', incomplete.json()['message'].lower())
+
+    def test_scan_wrong_product_returns_clear_409(self):
+        other = self._product(ProductLabelMode.PRODUCT)
+        other.name = 'SALT'
+        other.save(update_fields=['name'])
+        self.product.name = 'SUGAR'
+        self.product.save(update_fields=['name'])
+
+        resp = self.client.get(
+            f'/stock/scan/?code=P{other.id}'
+            f'&expected_product_id={self.product.id}',
+        )
+        self.assertEqual(resp.status_code, 409, resp.content)
+        body = resp.json()
+        self.assertEqual(
+            body['message'],
+            'Please scan the barcode for SUGAR. The one you scanned is for SALT.',
+        )
+        self.assertEqual(body['data']['error'], 'wrong_product')
+        self.assertEqual(body['data']['expected_product_id'], self.product.id)
+        self.assertEqual(body['data']['scanned_product_id'], other.id)
+
+        ok = self.client.get(
+            f'/stock/scan/?code=P{self.product.id}'
+            f'&expected_product_id={self.product.id}',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+
+    def test_scan_check_fifo_hides_batches_and_rejects_newer_lot(self):
+        soon = self._lot(use_by=self.today + timedelta(days=3))
+        later = self._lot(use_by=self.today + timedelta(days=30))
+        soon_entry = self._receipt(soon, '10')
+        later_entry = self._receipt(later, '20')
+        loc = self.wh.id
+        pid = self.product.id
+
+        listed = self.client.get(
+            f'/stock/scan/?code=P{pid}&location_id={loc}',
+        )
+        self.assertEqual(listed.json()['data']['batch_count'], 2)
+
+        ok = self.client.get(
+            f'/stock/scan/?code=E{soon_entry.id}&location_id={loc}'
+            f'&expected_product_id={pid}&check_fifo=1',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+        data = ok.json()['data']
+        self.assertEqual(data['batches'], [])
+        self.assertEqual(data['batch_count'], 0)
+        self.assertEqual(data['selected_lot_id'], soon.id)
+        self.assertEqual(data['trace_number'], soon.trace_number)
+
+        bad = self.client.get(
+            f'/stock/scan/?code=E{later_entry.id}&location_id={loc}'
+            f'&expected_product_id={pid}&check_fifo=1',
+        )
+        self.assertEqual(bad.status_code, 409, bad.content)
+        body = bad.json()
+        self.assertEqual(body['data']['error'], 'fifo_mismatch')
+        self.assertEqual(body['data']['recommended_lot_id'], soon.id)
+        self.assertEqual(body['data']['recommended_trace'], soon.trace_number)
+        self.assertIn('older stock', body['message'].lower())
+
+        self.assertEqual(
+            self.client.get(
+                f'/stock/scan/?code=E{soon_entry.id}&check_fifo=1',
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                f'/stock/scan/?code=P{pid}&location_id={loc}&check_fifo=1',
+            ).status_code,
+            400,
+        )
 
     def test_scan_returns_fifo_batches_with_supplier_and_days_left(self):
         soon = self._lot(use_by=self.today + timedelta(days=3))

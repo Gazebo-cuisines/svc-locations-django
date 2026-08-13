@@ -174,6 +174,10 @@ class PurchaseOrderLine(models.Model):
     stock_in_done = models.BooleanField(default=False)
     last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
 
+    # Admin-chosen physical labels for goods-in (warehouse does not pick these).
+    label_format = models.CharField(max_length=16, null=True, blank=True)
+    label_count = models.PositiveIntegerField(null=True, blank=True)
+
     remarks = models.CharField(max_length=256, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -197,6 +201,13 @@ class PurchaseOrderLine(models.Model):
             models.CheckConstraint(
                 check=models.Q(qty_balance__gte=0),
                 name='chk_po_line_qty_balance_nonneg',
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(label_format__isnull=True)
+                    | models.Q(label_format__in=['pallet', 'box'])
+                ),
+                name='chk_po_line_label_format',
             ),
         ]
         indexes = [

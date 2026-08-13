@@ -129,7 +129,7 @@ def release_from_quarantine(po_id: int, *, body: dict) -> dict:
                 source_document_type='po',
                 source_document_id=po.id,
                 source_document_line=raw.get('line_no') or raw.get('source_document_line'),
-                po_number=po.number,
+                po_number=po.external_number or po.number,
                 actor_user_id=body.get('actor_user_id') or body.get('checked_by_user_id'),
                 lan_username=body.get('lan_username'),
                 remarks=raw.get('remarks') or body.get('remarks') or 'QA release from quarantine',

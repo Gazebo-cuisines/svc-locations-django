@@ -840,3 +840,231 @@ class StockUnitPrintEvent(models.Model):
 
     def __str__(self):
         return f'stock_unit_print_event:{self.id}:{self.reason}'
+
+
+class StockEntryLabelFormat(models.TextChoices):
+    PALLET = 'pallet', 'Pallet'
+    BOX = 'box', 'Box'
+
+
+class StockEntryLabelStatus(models.TextChoices):
+    PENDING = 'pending', 'Pending'
+    PRINTED = 'printed', 'Printed'
+    VERIFIED = 'verified', 'Verified'
+
+
+class StockEntryLabel(models.Model):
+    """Mutable label state for an immutable stock_entry (Goods IN barcode = E{id})."""
+
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='label',
+    )
+    label_format = models.CharField(
+        max_length=16,
+        choices=StockEntryLabelFormat.choices,
+    )
+    label_count = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=StockEntryLabelStatus.choices,
+        default=StockEntryLabelStatus.PENDING,
+    )
+    verified_count = models.PositiveIntegerField(default=0)
+    printed_at = models.DateTimeField(null=True, blank=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'stock_entry_label'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    label_format__in=[
+                        StockEntryLabelFormat.PALLET,
+                        StockEntryLabelFormat.BOX,
+                    ]
+                ),
+                name='chk_stock_entry_label_format',
+            ),
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        StockEntryLabelStatus.PENDING,
+                        StockEntryLabelStatus.PRINTED,
+                        StockEntryLabelStatus.VERIFIED,
+                    ]
+                ),
+                name='chk_stock_entry_label_status',
+            ),
+            models.CheckConstraint(
+                check=models.Q(label_count__gte=1),
+                name='chk_stock_entry_label_count',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_entry_label:{self.stock_entry_id}:'
+            f'{self.label_format}:{self.status}'
+        )
+
+
+class StockEntryLabelScanResult(models.TextChoices):
+    OK = 'ok', 'Ok'
+    MISMATCH = 'mismatch', 'Mismatch'
+
+
+class StockEntryLabelScan(models.Model):
+    """Append-only scan activity for a Goods IN entry label."""
+
+    label = models.ForeignKey(
+        StockEntryLabel,
+        on_delete=models.PROTECT,
+        related_name='scans',
+    )
+    stock_entry = models.ForeignKey(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='label_scans',
+    )
+    scanned_at = models.DateTimeField()
+    code = models.CharField(max_length=64)
+    result = models.CharField(
+        max_length=16,
+        choices=StockEntryLabelScanResult.choices,
+    )
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'stock_entry_label_scan'
+        ordering = ['-scanned_at', '-id']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    result__in=[
+                        StockEntryLabelScanResult.OK,
+                        StockEntryLabelScanResult.MISMATCH,
+                    ]
+                ),
+                name='chk_stock_entry_label_scan_result',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['stock_entry', 'scanned_at'],
+                name='idx_entry_label_scan_entry',
+            ),
+            models.Index(
+                fields=['label', 'scanned_at'],
+                name='idx_entry_label_scan_label',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_entry_label_scan:{self.id}:'
+            f'entry:{self.stock_entry_id}:{self.result}'
+        )
+
+
+class StockEntryPostingStatus(models.TextChoices):
+    QUEUED = 'queued', 'Queued'
+    POSTED = 'posted', 'Posted'
+    CANCELLED = 'cancelled', 'Cancelled'
+
+
+class StockEntryPosting(models.Model):
+    """
+    Mutable posting gate for an immutable receipt.
+    queued = entry exists for barcode, stock_balance not updated yet.
+    """
+
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='posting',
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=StockEntryPostingStatus.choices,
+        default=StockEntryPostingStatus.QUEUED,
+    )
+    queued_at = models.DateTimeField()
+    posted_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    source_workstation = models.CharField(max_length=128, null=True, blank=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'stock_entry_posting'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        StockEntryPostingStatus.QUEUED,
+                        StockEntryPostingStatus.POSTED,
+                        StockEntryPostingStatus.CANCELLED,
+                    ]
+                ),
+                name='chk_stock_entry_posting_status',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'queued_at'],
+                name='idx_stock_entry_posting_status',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'stock_entry_posting:{self.stock_entry_id}:{self.status}'
+        )
+
+
+class StockFifoOverride(models.Model):
+    """Who skipped FIFO on a queued goods-out transfer, and why."""
+
+    product = models.ForeignKey(
+        'product.Product',
+        on_delete=models.PROTECT,
+        related_name='fifo_overrides',
+    )
+    scanned_lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='fifo_overrides_scanned',
+    )
+    recommended_lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='fifo_overrides_recommended',
+    )
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='fifo_override',
+    )
+    reason = models.TextField()
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'stock_fifo_override'
+        indexes = [
+            models.Index(fields=['product', '-created_at'], name='idx_fifo_override_product'),
+        ]
+
+    def __str__(self):
+        return f'stock_fifo_override:{self.id}:product:{self.product_id}'
