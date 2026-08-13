@@ -1,5 +1,6 @@
 from datetime import date
 
+from product.goods_in import effective_goods_in_type
 from product.models import ProductGoodsInType, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
@@ -9,6 +10,7 @@ from purchasing.models import (
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
+from purchasing.serialize import _qty_str, rbac_names
 
 
 class GoodsInFormError(ValueError):
@@ -103,13 +105,13 @@ def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
         return ProductGoodsInType.OTHER, None
 
     for line in lines:
-        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
+        gin_type = effective_goods_in_type(line.product)
         if gin_type == ProductGoodsInType.PACKAGING:
             tech = tech_by_product.get(line.product_id)
             return gin_type, tech.storage_regime if tech else None
 
     first = lines[0]
-    gin_type = first.product.goods_in_type or ProductGoodsInType.OTHER
+    gin_type = effective_goods_in_type(first.product)
     tech = tech_by_product.get(first.product_id)
     return gin_type, tech.storage_regime if tech else None
 
@@ -137,7 +139,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
 
     line_blocks = []
     for line in lines:
-        gin_type = line.product.goods_in_type or ProductGoodsInType.OTHER
+        gin_type = effective_goods_in_type(line.product)
         tech = tech_by_product.get(line.product_id)
         regime = tech.storage_regime if tech is not None else None
         line_template = resolve_template(
@@ -152,14 +154,16 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'product_name': line.product.name,
             'goods_in_type': gin_type,
             'storage_regime': regime,
-            'qty_ordered': str(line.qty_ordered),
-            'qty_received': str(line.qty_received),
-            'qty_balance': str(line.qty_balance),
+            'qty_ordered': _qty_str(line.qty_ordered),
+            'qty_received': _qty_str(line.qty_received),
+            'qty_balance': _qty_str(line.qty_balance),
             'pack_size': line.shape_format_label,
             'unit_id': line.unit_id,
             'unit_name': line.unit.name if line.unit_id else None,
             'saved_answers': line.line_checks or {},
             'line_check_ok': line.line_check_ok,
+            'label_format': line.label_format,
+            'label_count': line.label_count,
             'template': _template_block(line_template),
         })
 
@@ -170,10 +174,13 @@ def resolve_goods_in_form(po_id: int) -> dict:
         po.delivery_trace_number
         or julian_trace_number(suggested_delivery_date)
     )
+    names = rbac_names({po.checked_by_user_id, po.qc_tl_checked_by_user_id})
 
     return {
         'purchase_order_id': po.id,
-        'number': po.number,
+        'number': po.external_number or po.number,
+        'sage_po_number': po.external_number,
+        'system_number': po.number,
         'status': po.status,
         'supplier_id': po.supplier_id,
         'supplier_name': po.supplier.name if po.supplier_id else None,
@@ -190,8 +197,10 @@ def resolve_goods_in_form(po_id: int) -> dict:
             if po.vehicle_temperature is not None else None
         ),
         'checked_by_user_id': po.checked_by_user_id,
+        'checked_by_name': names.get(po.checked_by_user_id),
         'checked_at': po.checked_at.isoformat() if po.checked_at else None,
         'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
+        'qc_tl_checked_by_name': names.get(po.qc_tl_checked_by_user_id),
         'qc_tl_checked_at': (
             po.qc_tl_checked_at.isoformat() if po.qc_tl_checked_at else None
         ),

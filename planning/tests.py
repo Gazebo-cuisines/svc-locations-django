@@ -13,7 +13,7 @@ from planning.models import (
     PlanRunStatus,
     Resource,
 )
-from product.models import Category, Product, ProductClass, Range, Unit
+from product.models import Category, Product, ProductClass, ProductSupplier, Range, Unit
 from stock_ledger.models import (
     ProductionRun,
     StockEntry,
@@ -125,6 +125,13 @@ class PickingListApiTests(TestCase):
         self.assertEqual(box_row['product_id'], self.box.id)
         self.assertEqual(box_row['from_location_id'], self.unit11.id)
         self.assertEqual(box_row['to_location_id'], self.sleeving.id)
+        self.assertEqual(box_row['category_id'], 1)
+        self.assertEqual(box_row['category_name'], 'Meals')
+        self.assertIsNone(box_row['category_path'])
+        self.assertEqual(box_row['category_l2'], 'Meals')
+        self.assertIsNone(box_row['pack_quantity'])
+        self.assertIsNone(box_row['pack_unit_name'])
+        self.assertIsNone(box_row['shape_format_label'])
         self.assertEqual(len(box_row['requirement_ids']), 2)
 
         dept_names = {d['from_location'] for d in data['by_department']}
@@ -165,6 +172,68 @@ class PickingListApiTests(TestCase):
         self.assertTrue(
             all(row['from_location_id'] == self.unit11.id for row in data['lines']),
         )
+
+    def test_picking_list_category_l2_from_path(self):
+        raw = Category.objects.create(
+            id=10, name='Raw Materials', path='Raw Materials',
+        )
+        pastry = Category.objects.create(
+            id=11,
+            name='Pastry Sheets',
+            parent=raw,
+            path='Raw Materials > Pastry > Pastry Sheets',
+        )
+        self.box.category = pastry
+        self.box.save(update_fields=['category_id'])
+        resp = self.client.get(
+            f'/planning/plans/{self.plan.id}/runs/{self.run.id}/picking-list/',
+        )
+        box_row = next(
+            row for row in resp.json()['data']['lines']
+            if row['product_id'] == self.box.id
+        )
+        self.assertEqual(box_row['category_id'], 11)
+        self.assertEqual(box_row['category_name'], 'Pastry Sheets')
+        self.assertEqual(box_row['category_path'], 'Raw Materials > Pastry > Pastry Sheets')
+        self.assertEqual(box_row['category_l2'], 'Pastry')
+        self.assertEqual(box_row['from_location'], 'Unit 11')
+        dept_names = {
+            d['from_location']
+            for d in resp.json()['data']['by_department']
+        }
+        self.assertEqual(dept_names, {'Unit 11', 'Spice Room'})
+
+    def test_picking_list_pack_quantity_from_supplier_multiplier(self):
+        box_uom = Unit.objects.create(id=2, name='Box')
+        supplier = Location.objects.create(id=80, name='Pack Supplier', visible=True)
+        ProductSupplier.objects.create(
+            product=self.box,
+            supplier=supplier,
+            supplier_code='BOX-1X10',
+            supplier_product_name='Grab box 10',
+            outer_qty=Decimal('1'),
+            outer_unit=box_uom,
+            inner_qty=Decimal('10'),
+            inner_unit_id=1,
+            is_default=True,
+            is_active=True,
+        )
+        resp = self.client.get(
+            f'/planning/plans/{self.plan.id}/runs/{self.run.id}/picking-list/',
+        )
+        box_row = next(
+            row for row in resp.json()['data']['lines']
+            if row['product_id'] == self.box.id
+        )
+        self.assertEqual(box_row['net_quantity'], '50.000000')
+        self.assertEqual(box_row['pack_quantity'], '5.000000')
+        self.assertEqual(box_row['pack_unit_name'], 'Box')
+        self.assertIn('BOX', box_row['shape_format_label'].upper())
+        label_row = next(
+            row for row in resp.json()['data']['lines']
+            if row['product_id'] == self.label.id
+        )
+        self.assertIsNone(label_row['pack_quantity'])
 
 
 class PlanPublishApiTests(TestCase):

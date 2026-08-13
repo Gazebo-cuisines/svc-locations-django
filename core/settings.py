@@ -97,6 +97,8 @@ CORS_ALLOWED_ORIGINS = [
     'https://beta.gazeboo.cloud',
     'https://gazeboo.cloud',
     'https://www.gazeboo.cloud',
+    'http://dev.gazeboo.cloud',
+    'https://dev.gazeboo.cloud',
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -105,6 +107,8 @@ CSRF_TRUSTED_ORIGINS = [
     'https://beta.gazeboo.cloud',
     'https://gazeboo.cloud',
     'https://www.gazeboo.cloud',
+    'http://dev.gazeboo.cloud',
+    'https://dev.gazeboo.cloud',
 ]
 
 AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')

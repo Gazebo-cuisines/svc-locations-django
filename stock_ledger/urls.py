@@ -47,6 +47,36 @@ urlpatterns = [
         views.product_label_api,
         name='stock-product-label',
     ),
+    path(
+        'entries/<int:entry_id>/label/',
+        views.entry_label_api,
+        name='stock-entry-label',
+    ),
+    path(
+        'entries/<int:entry_id>/labels/print/',
+        views.entry_label_print_api,
+        name='stock-entry-label-print',
+    ),
+    path(
+        'entries/<int:entry_id>/labels/verify/',
+        views.entry_label_verify_api,
+        name='stock-entry-label-verify',
+    ),
+    path(
+        'entries/<int:entry_id>/labels/activity/',
+        views.entry_label_activity_api,
+        name='stock-entry-label-activity',
+    ),
+    path(
+        'entries/<int:entry_id>/post/',
+        views.entry_post_api,
+        name='stock-entry-post',
+    ),
+    path(
+        'entries/queued/',
+        views.entry_queued_list_api,
+        name='stock-entry-queued',
+    ),
     path('stock-units/print/', views.stock_units_print_api, name='stock-units-print'),
     path(
         'stock-units/<str:unit_serial>/consume/',
