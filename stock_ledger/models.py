@@ -1030,3 +1030,41 @@ class StockEntryPosting(models.Model):
         return (
             f'stock_entry_posting:{self.stock_entry_id}:{self.status}'
         )
+
+
+class StockFifoOverride(models.Model):
+    """Who skipped FIFO on a queued goods-out transfer, and why."""
+
+    product = models.ForeignKey(
+        'product.Product',
+        on_delete=models.PROTECT,
+        related_name='fifo_overrides',
+    )
+    scanned_lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='fifo_overrides_scanned',
+    )
+    recommended_lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='fifo_overrides_recommended',
+    )
+    stock_entry = models.OneToOneField(
+        StockEntry,
+        on_delete=models.PROTECT,
+        related_name='fifo_override',
+    )
+    reason = models.TextField()
+    actor_user_id = models.IntegerField(null=True, blank=True)
+    lan_username = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'stock_fifo_override'
+        indexes = [
+            models.Index(fields=['product', '-created_at'], name='idx_fifo_override_product'),
+        ]
+
+    def __str__(self):
+        return f'stock_fifo_override:{self.id}:product:{self.product_id}'

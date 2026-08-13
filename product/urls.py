@@ -5,7 +5,7 @@ from product.views.allergen_views import (
     product_allergen_detail_api,
     product_allergens_api,
 )
-from product.views.audit_views import product_timeline_api
+from product.views.audit_views import product_stock_overrides_api, product_timeline_api
 from product.views.costing_views import product_costing_api
 from product.views.flags_views import product_flags_api
 from product.views.ingredient_label_views import product_ingredient_label_api
@@ -91,6 +91,11 @@ urlpatterns = [
         name='product-supplier-detail',
     ),
     path('<int:pk>/timeline/', product_timeline_api, name='product-timeline'),
+    path(
+        '<int:pk>/stock-overrides/',
+        product_stock_overrides_api,
+        name='product-stock-overrides',
+    ),
 
     # departement product urls
     path('list/fromcontainer/<int:container_id>/', product_list_fromcontainer_api, name='product-list-fromcontainer'),

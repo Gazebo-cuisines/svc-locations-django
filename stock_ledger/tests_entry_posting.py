@@ -236,3 +236,70 @@ class EntryPostingQueueTests(TestCase):
             ).quantity,
             Decimal('10'),
         )
+
+    def test_fifo_override_required_and_listed_on_product(self):
+        dest = Location.objects.create(id=76, name='PQ Belts 2', visible=True)
+        soon = StockLot.objects.create(
+            product=self.product,
+            trace_number=f'TSOON{uuid4().hex[:6]}',
+            origin=StockLotOrigin.PURCHASE,
+            use_by=date(2026, 9, 1),
+        )
+        later = StockLot.objects.create(
+            product=self.product,
+            trace_number=f'TLATE{uuid4().hex[:6]}',
+            origin=StockLotOrigin.PURCHASE,
+            use_by=date(2026, 12, 1),
+        )
+        for lot in (soon, later):
+            services.receipt(
+                idempotency_key=f'pq-ov-{lot.id}-{uuid4()}',
+                lot=lot,
+                location_id=self.wh.id,
+                quantity=Decimal('20'),
+                unit_id=self.unit.id,
+                effective_at=timezone.now(),
+                counterparty_location_id=self.supplier.id,
+            )
+        denied = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-ov-deny-{uuid4()}",'
+                f'"lot_id":{later.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"5",'
+                '"queue_stock":true'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(denied.status_code, 400, denied.content)
+        self.assertIn('fifo_override_reason', denied.json()['message'])
+
+        ok = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-ov-ok-{uuid4()}",'
+                f'"lot_id":{later.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"5",'
+                '"queue_stock":true,'
+                '"fifo_override_reason":"old stock at the back"'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(ok.status_code, 201, ok.content)
+        listed = self.client.get(
+            f'/product/{self.product.id}/stock-overrides/',
+        )
+        self.assertEqual(listed.status_code, 200, listed.content)
+        items = listed.json()['data']['items']
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['scanned_trace'], later.trace_number)
+        self.assertEqual(items[0]['recommended_trace'], soon.trace_number)
+        self.assertEqual(items[0]['reason'], 'old stock at the back')

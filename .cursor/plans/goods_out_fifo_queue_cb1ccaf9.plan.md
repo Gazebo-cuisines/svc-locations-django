@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: override-tab
     content: stock_fifo_override table + GET /product/<id>/stock-overrides/ (who/what/when/reason)
-    status: pending
+    status: completed
 isProject: false
 ---
 

@@ -25,6 +25,7 @@ from stock_ledger.models import (
     StockReservation,
     StockUnit,
     StockUnitConversion,
+    StockFifoOverride,
 )
 from stock_ledger.stream import iter_sse, subscribe
 from stock_ledger.util import (
@@ -1371,10 +1372,28 @@ def transfer_api(request):
         unit_moves = _parse_unit_moves(body)
         queue_stock = body.get('queue_stock') in (True, 'true', '1', 'yes', 'True')
         audit = _common_write_kwargs(request, body)
+        lot = _resolve_lot(body)
+        from_location_id = int(body['from_location_id'])
+        fifo_reason = str(body.get('fifo_override_reason') or '').strip()
+        recommended_lot_id = None
+        if queue_stock:
+            batches = _fifo_batch_rows(
+                product_id=lot.product_id,
+                location_id=from_location_id,
+            )
+            recommended_lot_id = batches[0]['lot_id'] if batches else None
+            if (
+                recommended_lot_id is not None
+                and recommended_lot_id != lot.id
+                and not fifo_reason
+            ):
+                raise StockValidationError(
+                    'fifo_override_reason is required when not using oldest stock.',
+                )
         out_entry, in_entry = services.transfer(
             idempotency_key=body['idempotency_key'],
-            lot=_resolve_lot(body),
-            from_location_id=int(body['from_location_id']),
+            lot=lot,
+            from_location_id=from_location_id,
             to_location_id=int(body['to_location_id']),
             quantity=_parse_decimal(body['quantity'], 'quantity'),
             unit_id=_optional_unit_id(body),
@@ -1414,6 +1433,22 @@ def transfer_api(request):
         payload['goods_out_label'] = entry_labels.build_goods_out_label(
             issue_entry=out_entry,
         )
+        if (
+            recommended_lot_id is not None
+            and recommended_lot_id != lot.id
+            and fifo_reason
+        ):
+            StockFifoOverride.objects.get_or_create(
+                stock_entry=out_entry,
+                defaults={
+                    'product_id': lot.product_id,
+                    'scanned_lot_id': lot.id,
+                    'recommended_lot_id': recommended_lot_id,
+                    'reason': fifo_reason,
+                    'actor_user_id': audit.get('actor_user_id'),
+                    'lan_username': (audit.get('lan_username') or None),
+                },
+            )
     if unit_moves is not None:
         serials = []
         for row in unit_moves:
