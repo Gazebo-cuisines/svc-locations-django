@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: queue-transfer
     content: "POST /stock/transfer/ queue_stock: defer both legs, persist Goods OUT label + posting"
-    status: pending
+    status: completed
   - id: post-pair
     content: Extend post_entry to transfer_out and project paired transfer_in after label verify
     status: pending

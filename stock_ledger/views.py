@@ -1369,6 +1369,8 @@ def transfer_api(request):
     unit_moves = None
     try:
         unit_moves = _parse_unit_moves(body)
+        queue_stock = body.get('queue_stock') in (True, 'true', '1', 'yes', 'True')
+        audit = _common_write_kwargs(request, body)
         out_entry, in_entry = services.transfer(
             idempotency_key=body['idempotency_key'],
             lot=_resolve_lot(body),
@@ -1378,7 +1380,8 @@ def transfer_api(request):
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             unit_moves=unit_moves,
-            **_common_write_kwargs(request, body),
+            defer_balance=queue_stock,
+            **audit,
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
@@ -1386,6 +1389,31 @@ def transfer_api(request):
         return api_error(str(exc))
 
     payload = {'out': entry_dict(out_entry), 'in': entry_dict(in_entry)}
+    if queue_stock:
+        out_entry = (
+            StockEntry.objects
+            .select_related('lot__product', 'unit')
+            .get(pk=out_entry.pk)
+        )
+        posting = entry_posting.queue_entry(
+            entry=out_entry,
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+        label = entry_labels.create_entry_label(
+            entry=out_entry,
+            label_format='box',
+            label_count=1,
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+        payload['posting'] = entry_posting.posting_dict(posting)
+        payload['label'] = entry_labels.label_state_dict(label)
+        payload['goods_out_label'] = entry_labels.build_goods_out_label(
+            issue_entry=out_entry,
+        )
     if unit_moves is not None:
         serials = []
         for row in unit_moves:
@@ -1401,7 +1429,7 @@ def transfer_api(request):
         )
         payload['units'] = [stock_unit_dict(u) for u in units]
     return api_success(
-        'Transfer posted.',
+        'Transfer queued.' if queue_stock else 'Transfer posted.',
         payload,
         status_code=201,
     )

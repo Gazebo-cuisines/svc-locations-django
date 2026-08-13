@@ -507,6 +507,7 @@ def transfer(
     unit_id: int | None = None,
     effective_at=None,
     unit_moves: list | None = None,
+    defer_balance: bool = False,
     **kwargs,
 ) -> tuple[StockEntry, StockEntry]:
     if quantity <= 0:
@@ -524,6 +525,7 @@ def transfer(
 
     effective_at = effective_at or timezone.now()
     group_id = str(uuid4())
+    insert_kw = {**kwargs, 'project_balance': not defer_balance}
 
     # Local import: stock_units imports services (consume path).
     from stock_ledger.util.unit_moves import apply_unit_moves_for_transfer
@@ -539,7 +541,7 @@ def transfer(
             quantity=-quantity,
             unit_id=unit_id,
             effective_at=effective_at,
-            **kwargs,
+            **insert_kw,
         )
         in_entry = _insert_entry(
             idempotency_key=in_key,
@@ -551,9 +553,10 @@ def transfer(
             quantity=quantity,
             unit_id=unit_id,
             effective_at=effective_at,
-            **kwargs,
+            **insert_kw,
         )
-        if unit_moves is not None:
+        # ponytail: bag moves wait until post (chunk 4) if queued
+        if unit_moves is not None and not defer_balance:
             apply_unit_moves_for_transfer(
                 lot_id=lot.id,
                 from_location_id=from_location_id,

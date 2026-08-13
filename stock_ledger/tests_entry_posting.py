@@ -124,3 +124,52 @@ class EntryPostingQueueTests(TestCase):
             ).quantity,
             Decimal('100'),
         )
+
+    def test_queued_transfer_returns_goods_out_label_without_moving_stock(self):
+        dest = Location.objects.create(id=74, name='PQ Belts', visible=True)
+        services.receipt(
+            idempotency_key=f'pq-live-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('50'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        before = StockBalance.objects.get(
+            lot_id=self.lot.id, location_id=self.wh.id,
+        ).quantity
+        resp = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-xfer-{uuid4()}",'
+                f'"lot_id":{self.lot.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"10",'
+                '"queue_stock":true'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(resp.json()['message'], 'Transfer queued.')
+        data = resp.json()['data']
+        out_id = data['out']['id']
+        label = data['goods_out_label']
+        self.assertEqual(label['title'], 'Goods OUT')
+        self.assertEqual(label['barcode'], f'E{out_id}')
+        self.assertEqual(label['trace_number'], self.lot.trace_number)
+        self.assertEqual(data['posting']['status'], StockEntryPostingStatus.QUEUED)
+        self.assertEqual(
+            StockBalance.objects.get(
+                lot_id=self.lot.id, location_id=self.wh.id,
+            ).quantity,
+            before,
+        )
+        self.assertFalse(
+            StockBalance.objects.filter(
+                lot_id=self.lot.id, location_id=dest.id,
+            ).exists(),
+        )
