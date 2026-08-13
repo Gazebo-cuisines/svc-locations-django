@@ -560,6 +560,54 @@ class ProductBarcodeTests(TestCase):
         )
         self.assertEqual(ok.status_code, 200, ok.content)
 
+    def test_scan_check_fifo_hides_batches_and_rejects_newer_lot(self):
+        soon = self._lot(use_by=self.today + timedelta(days=3))
+        later = self._lot(use_by=self.today + timedelta(days=30))
+        soon_entry = self._receipt(soon, '10')
+        later_entry = self._receipt(later, '20')
+        loc = self.wh.id
+        pid = self.product.id
+
+        listed = self.client.get(
+            f'/stock/scan/?code=P{pid}&location_id={loc}',
+        )
+        self.assertEqual(listed.json()['data']['batch_count'], 2)
+
+        ok = self.client.get(
+            f'/stock/scan/?code=E{soon_entry.id}&location_id={loc}'
+            f'&expected_product_id={pid}&check_fifo=1',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+        data = ok.json()['data']
+        self.assertEqual(data['batches'], [])
+        self.assertEqual(data['batch_count'], 0)
+        self.assertEqual(data['selected_lot_id'], soon.id)
+        self.assertEqual(data['trace_number'], soon.trace_number)
+
+        bad = self.client.get(
+            f'/stock/scan/?code=E{later_entry.id}&location_id={loc}'
+            f'&expected_product_id={pid}&check_fifo=1',
+        )
+        self.assertEqual(bad.status_code, 409, bad.content)
+        body = bad.json()
+        self.assertEqual(body['data']['error'], 'fifo_mismatch')
+        self.assertEqual(body['data']['recommended_lot_id'], soon.id)
+        self.assertEqual(body['data']['recommended_trace'], soon.trace_number)
+        self.assertIn('older stock', body['message'].lower())
+
+        self.assertEqual(
+            self.client.get(
+                f'/stock/scan/?code=E{soon_entry.id}&check_fifo=1',
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                f'/stock/scan/?code=P{pid}&location_id={loc}&check_fifo=1',
+            ).status_code,
+            400,
+        )
+
     def test_scan_returns_fifo_batches_with_supplier_and_days_left(self):
         soon = self._lot(use_by=self.today + timedelta(days=3))
         later = self._lot(use_by=self.today + timedelta(days=30))

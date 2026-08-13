@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: scan-fifo
     content: "GET /stock/scan check_fifo=1: hide batches, 409 fifo_mismatch with recommended trace"
-    status: pending
+    status: completed
   - id: queue-transfer
     content: "POST /stock/transfer/ queue_stock: defer both legs, persist Goods OUT label + posting"
     status: pending

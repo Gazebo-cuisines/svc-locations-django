@@ -2052,6 +2052,47 @@ def _fifo_batch_rows(
     return batches
 
 
+def _flag(request, name: str) -> bool:
+    return str(request.GET.get(name, '')).lower() in ('1', 'true', 'yes')
+
+
+def _fifo_check_error(match, loc_id, batches, code):
+    if loc_id is None:
+        return api_error('location_id is required when check_fifo=1.')
+    lot = match.get('lot')
+    if lot is None:
+        return api_error(
+            'Scan the goods-in or batch label, not the product barcode.',
+        )
+    scanned = (code or '').strip()
+    if not batches:
+        return api_error(
+            'No stock for this item at this location.',
+            data={'error': 'no_stock', 'scanned_code': scanned},
+            status_code=409,
+        )
+    recommended = batches[0]
+    if lot.id == recommended['lot_id']:
+        return None
+    rec_trace = recommended.get('trace_number')
+    rec_use_by = recommended.get('use_by')
+    use_by_bit = f' (use by {rec_use_by})' if rec_use_by else ''
+    return api_error(
+        f'Please use older stock first. Scan trace {rec_trace}{use_by_bit}, '
+        f'or override.',
+        data={
+            'error': 'fifo_mismatch',
+            'scanned_lot_id': lot.id,
+            'scanned_trace': lot.trace_number,
+            'scanned_code': scanned,
+            'recommended_lot_id': recommended['lot_id'],
+            'recommended_trace': rec_trace,
+            'recommended_use_by': rec_use_by,
+        },
+        status_code=409,
+    )
+
+
 @csrf_exempt
 @require_GET
 def scan_resolve_api(request):
@@ -2095,15 +2136,27 @@ def scan_resolve_api(request):
                 },
                 status_code=409,
             )
-    include_incomplete = str(request.GET.get('include_incomplete', '')).lower() in (
-        '1', 'true', 'yes',
-    )
+    include_incomplete = _flag(request, 'include_incomplete')
     batches = _fifo_batch_rows(
         product_id=product.id,
         location_id=loc_id,
         include_incomplete=include_incomplete,
     )
-    total = sum(Decimal(row['quantity']) for row in batches) if batches else Decimal('0')
+    check_fifo = _flag(request, 'check_fifo')
+    if check_fifo:
+        fifo_err = _fifo_check_error(match, loc_id, batches, code)
+        if fifo_err is not None:
+            return fifo_err
+        selected = next(
+            row for row in batches if row['lot_id'] == match['lot'].id
+        )
+        total = selected['quantity']
+        batches = []
+    else:
+        total = (
+            sum(Decimal(row['quantity']) for row in batches)
+            if batches else Decimal('0')
+        )
 
     data = {
         'scanned_code': (code or '').strip(),
@@ -2126,6 +2179,10 @@ def scan_resolve_api(request):
         'batch_count': len(batches),
         'batches': batches,
     }
+    if check_fifo and match.get('lot') is not None:
+        lot = match['lot']
+        data['trace_number'] = lot.trace_number
+        data['use_by'] = lot.use_by.isoformat() if lot.use_by else None
     entry = match.get('entry')
     if entry is not None:
         data['entry'] = entry_dict(entry)
