@@ -46,7 +46,7 @@ todos:
     status: completed
   - id: chunk-15
     content: "Chunk 15: Postman docs for all purchasing endpoints"
-    status: pending
+    status: completed
 isProject: false
 ---
 

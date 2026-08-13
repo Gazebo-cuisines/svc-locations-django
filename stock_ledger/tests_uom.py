@@ -1,0 +1,99 @@
+"""One ledger unit (product.unit); packs/kg are display only."""
+
+from datetime import date
+from decimal import Decimal
+from uuid import uuid4
+
+from django.test import TestCase
+from django.utils import timezone
+
+from locations.models import Location, LocationRole, LocationRoleAssignment
+from product.models import (
+    Category,
+    Product,
+    ProductClass,
+    ProductLabelMode,
+    ProductSupplier,
+    Range,
+    Unit,
+)
+from stock_ledger.models import StockEntry, StockLot, StockLotOrigin, StockPeriod, StockPeriodStatus
+from stock_ledger.util import services
+from stock_ledger.util.conversions import packs_to_stock, seed_global_unit_conversions, stock_to_kg, stock_to_packs
+
+
+class UomConversionTests(TestCase):
+    def setUp(self):
+        ProductClass.objects.create(id=201, name='UoM Class')
+        Category.objects.create(id=201, name='UoM Cat')
+        Range.objects.create(id=201, name='UoM Range')
+        self.grams = Unit.objects.create(id=201, name='grams')
+        self.kg = Unit.objects.create(id=202, name='Kg')
+        self.box = Unit.objects.create(id=203, name='Box')
+        seed_global_unit_conversions()
+        self.wh = Location.objects.create(id=201, name='UoM WH', visible=True)
+        self.supplier = Location.objects.create(id=202, name='UoM Sup', visible=True)
+        LocationRoleAssignment.objects.create(
+            location=self.supplier, role=LocationRole.SUPPLIER,
+        )
+        self.product = Product.objects.create(
+            name='PEAS ( FROZEN )',
+            recipe_code=f'VEGFRO-{uuid4().hex[:4]}',
+            product_class_id=201,
+            category_id=201,
+            range_id=201,
+            unit=self.grams,
+            label_mode=ProductLabelMode.BATCH,
+            source_container=self.wh,
+            destination_container=self.wh,
+        )
+        self.mapping = ProductSupplier.objects.create(
+            product=self.product,
+            supplier=self.supplier,
+            supplier_code='GAZ-PEAS-10',
+            supplier_product_name='PEAS 10KG',
+            outer_qty=Decimal('1'),
+            outer_unit=self.box,
+            inner_qty=Decimal('10'),
+            inner_unit=self.kg,
+            is_default=True,
+            is_active=True,
+        )
+        StockPeriod.objects.get_or_create(
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 12, 31),
+            defaults={'status': StockPeriodStatus.OPEN},
+        )
+
+    def test_five_boxes_of_10kg_are_50000_grams(self):
+        stock = packs_to_stock(Decimal('5'), self.mapping, self.product)
+        self.assertEqual(stock, Decimal('50000.000000'))
+        self.assertEqual(stock_to_kg(stock, self.product), Decimal('50.000000'))
+        self.assertEqual(
+            stock_to_packs(stock, self.mapping, self.product),
+            Decimal('5.000000'),
+        )
+
+    def test_receipt_stores_product_unit_not_inner_kg(self):
+        lot = StockLot.objects.create(
+            product=self.product,
+            trace_number='T-PEAS-1',
+            origin=StockLotOrigin.PURCHASE,
+            use_by=date(2026, 12, 1),
+        )
+        entry = services.receipt(
+            idempotency_key=f'uom-peas-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            product_supplier=self.mapping,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        self.assertEqual(entry.quantity, Decimal('50000.000000'))
+        self.assertEqual(entry.unit_id, self.grams.id)
+        lot.refresh_from_db()
+        self.assertEqual(lot.product_supplier_id, self.mapping.id)
+        self.assertEqual(
+            StockEntry.objects.get(pk=entry.pk).unit_id, self.grams.id,
+        )

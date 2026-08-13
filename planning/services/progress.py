@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 
 from planning.models import Plan, PlanRunStatus
 from planning.services.exceptions import PlanningError
+from planning.services.picking import issue_qty_by_requirement
 from planning.services.portal import resolve_location
 from stock_ledger.models import ProductionRun, StockEntryType
 
@@ -121,10 +122,24 @@ def build_plan_progress(
             if ts is not None:
                 last_made[key] = ts.isoformat()
 
+    all_req_ids = [
+        rid for meta in planned.values() for rid in meta['requirement_ids']
+    ]
+    issued_by, queued_by = issue_qty_by_requirement(all_req_ids)
+
     lines = []
     for key, meta in planned.items():
         done = made_qty.get(key, Decimal('0'))
         planned_qty = meta['planned']
+        issued = sum(
+            (issued_by[i] for i in meta['requirement_ids']), Decimal('0'),
+        )
+        queued = sum(
+            (queued_by[i] for i in meta['requirement_ids']), Decimal('0'),
+        )
+        remaining = planned_qty - issued - queued
+        if remaining < 0:
+            remaining = Decimal('0')
         lines.append({
             'product_id': meta['product_id'],
             'product': meta['product'],
@@ -137,6 +152,10 @@ def build_plan_progress(
             'done': _dec(done),
             'pct': _pct(planned_qty, done),
             'status': _status(planned_qty, done),
+            'issued': _dec(issued),
+            'queued': _dec(queued),
+            'remaining': _dec(remaining),
+            'issue_status': _status(planned_qty, issued + queued),
             'last_made_at': last_made.get(key),
             'requirement_ids': meta['requirement_ids'],
         })

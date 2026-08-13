@@ -5,11 +5,25 @@ from django.http import JsonResponse
 from django.urls import include, path
 from django.views.decorators.csrf import csrf_exempt
 
+from locations.views.address_views import (
+    location_postal_address_detail_api,
+    location_postal_addresses_api,
+)
+from locations.views.contact_views import (
+    location_contact_detail_api,
+    location_contacts_api,
+)
 from locations.views.container_views import container_index_api, global_container_index_api
 from locations.views.courier_views import courier_detail_api, courier_list_api
 from locations.views.customer_views import customer_detail_api, customer_list_api
 from locations.views.department_views import create_department, department_detail_api, department_list_api
-from locations.views.location_views import location_detail_api, location_list_api
+from locations.views.location_views import (
+    location_audit_api,
+    location_audit_list_api,
+    location_detail_api,
+    location_image_api,
+    location_list_api,
+)
 from locations.views.storage_views import (
     storage_location_detail_api, storage_location_list_api )
  
@@ -23,11 +37,21 @@ def auth_middleware(view_func):
     def _wrapped(request, *args, **kwargs):
         api_token = request.headers.get('X-API-Token')
         auth_header = request.headers.get('Authorization', '')
-        bearer_token = auth_header[7:].strip() if auth_header.startswith('Bearer ') else None
-        token = api_token or bearer_token
-        if token != STATIC_CONTAINER_TOKEN:
-            return JsonResponse({'status': 'error', 'message': 'Unauthorized'}, status=401)
-        return view_func(request, *args, **kwargs)
+        bearer_token = (
+            auth_header[7:].strip() if auth_header.startswith('Bearer ') else None
+        )
+        if api_token == STATIC_CONTAINER_TOKEN or bearer_token == STATIC_CONTAINER_TOKEN:
+            return view_func(request, *args, **kwargs)
+
+        # Cognito JWT also opens the gate (mutations still need IT/admin via view).
+        if bearer_token:
+            from users_rbac.auth import attach_user
+
+            attach_user(request, missing='ok', invalid='ok')
+            if getattr(request, 'rbac_user', None) is not None:
+                return view_func(request, *args, **kwargs)
+
+        return JsonResponse({'status': 'error', 'message': 'Unauthorized'}, status=401)
 
     return _wrapped
 
@@ -36,15 +60,70 @@ container_urlpatterns = [
     path('', auth_middleware(container_index_api), name='container-index'),
     path('locations/', csrf_exempt(auth_middleware(location_list_api)), name='location-list'),
     path(
+        'locations/audit/',
+        auth_middleware(location_audit_list_api),
+        name='location-audit-list',
+    ),
+    path(
         'locations/<int:location_id>/',
         csrf_exempt(auth_middleware(location_detail_api)),
         name='location-detail',
+    ),
+    path(
+        'locations/<int:location_id>/image/',
+        csrf_exempt(auth_middleware(location_image_api)),
+        name='location-image',
+    ),
+    path(
+        'locations/<int:location_id>/audit/',
+        auth_middleware(location_audit_api),
+        name='location-audit',
+    ),
+    path(
+        'locations/<int:location_id>/contacts/',
+        csrf_exempt(auth_middleware(location_contacts_api)),
+        name='location-contacts',
+    ),
+    path(
+        'locations/<int:location_id>/contacts/<int:contact_id>/',
+        csrf_exempt(auth_middleware(location_contact_detail_api)),
+        name='location-contact-detail',
+    ),
+    path(
+        'locations/<int:location_id>/postal-address/',
+        csrf_exempt(auth_middleware(location_postal_addresses_api)),
+        name='location-postal-addresses',
+    ),
+    path(
+        'locations/<int:location_id>/postal-address/<int:address_id>/',
+        csrf_exempt(auth_middleware(location_postal_address_detail_api)),
+        name='location-postal-address-detail',
     ),
     path('suppliers/', csrf_exempt(auth_middleware(supplier_list_api)), name='supplier-list'),
     path(
         'suppliers/<int:location_id>/',
         csrf_exempt(auth_middleware(supplier_detail_api)),
         name='supplier-detail',
+    ),
+    path(
+        'suppliers/<int:location_id>/contacts/',
+        csrf_exempt(auth_middleware(location_contacts_api)),
+        name='supplier-contacts',
+    ),
+    path(
+        'suppliers/<int:location_id>/contacts/<int:contact_id>/',
+        csrf_exempt(auth_middleware(location_contact_detail_api)),
+        name='supplier-contact-detail',
+    ),
+    path(
+        'suppliers/<int:location_id>/postal-address/',
+        csrf_exempt(auth_middleware(location_postal_addresses_api)),
+        name='supplier-postal-addresses',
+    ),
+    path(
+        'suppliers/<int:location_id>/postal-address/<int:address_id>/',
+        csrf_exempt(auth_middleware(location_postal_address_detail_api)),
+        name='supplier-postal-address-detail',
     ),
     path('couriers/', auth_middleware(courier_list_api), name='courier-list'),
     path('couriers/<int:location_id>/', auth_middleware(courier_detail_api), name='courier-detail'),

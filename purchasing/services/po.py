@@ -25,6 +25,31 @@ def assign_po_number(po: PurchaseOrder) -> str:
     return number
 
 
+def display_po_number(po: PurchaseOrder) -> str | None:
+    """User-facing PO ref: Sage number first, else system PO{id}."""
+    return po.external_number or po.number
+
+
+def _normalize_sage_po_number(value) -> str | None:
+    if value in (None, ''):
+        return None
+    text = str(value).strip()[:64]
+    return text or None
+
+
+def _ensure_unique_sage_po_number(
+    external_number: str,
+    *,
+    exclude_po_id: int | None = None,
+) -> None:
+    qs = PurchaseOrder.objects.filter(external_number=external_number)
+    if exclude_po_id is not None:
+        qs = qs.exclude(pk=exclude_po_id)
+    if qs.exists():
+        raise PoValidationError(
+            f'sage_po_number={external_number} is already used on another PO.',
+        )
+
 def _require_supplier(supplier_id: int) -> Location:
     try:
         location = Location.objects.get(pk=supplier_id)
@@ -65,6 +90,40 @@ def _parse_optional_date(value, field_name: str) -> date | None:
         raise PoValidationError(
             f'Invalid date for {field_name}. Use YYYY-MM-DD.',
         ) from exc
+
+
+def _parse_line_label(raw: dict, index: int) -> tuple[str | None, int | None]:
+    fmt = raw.get('label_format')
+    if fmt in (None, ''):
+        return None, None
+    fmt = str(fmt).strip().lower()
+    if fmt not in ('pallet', 'box'):
+        raise PoValidationError(
+            f'lines[{index}].label_format must be pallet or box.',
+        )
+    count_raw = raw.get('label_count')
+    if count_raw in (None, ''):
+        count = 1 if fmt == 'pallet' else None
+    else:
+        try:
+            count = int(count_raw)
+        except (TypeError, ValueError) as exc:
+            raise PoValidationError(
+                f'lines[{index}].label_count must be an integer.',
+            ) from exc
+    if count is None:
+        raise PoValidationError(
+            f'lines[{index}].label_count is required when label_format=box.',
+        )
+    if count < 1:
+        raise PoValidationError(
+            f'lines[{index}].label_count must be >= 1.',
+        )
+    if fmt == 'pallet' and count != 1:
+        raise PoValidationError(
+            f'lines[{index}]: label_format=pallet requires label_count=1.',
+        )
+    return fmt, count
 
 
 def _build_line_rows(supplier_id: int, lines: list) -> list[dict]:
@@ -135,6 +194,8 @@ def _build_line_rows(supplier_id: int, lines: list) -> list[dict]:
                 f'lines[{index}].line_no must be an integer.',
             ) from exc
 
+        label_format, label_count = _parse_line_label(raw, index)
+
         rows.append({
             'line_no': line_no,
             'product_id': product.id,
@@ -148,6 +209,8 @@ def _build_line_rows(supplier_id: int, lines: list) -> list[dict]:
             'unit_cost': unit_cost,
             'multiplier': multiplier,
             'shape_format_label': shape_format_label,
+            'label_format': label_format,
+            'label_count': label_count,
             'remarks': raw.get('remarks') or None,
         })
 
@@ -170,6 +233,8 @@ def create_purchase_order(
     status: str = PurchaseOrderStatus.DRAFT,
     source: str = PurchaseOrderSource.MANUAL,
     external_number: str | None = None,
+    sage_po_number: str | None = None,
+    require_sage_po_number: bool = False,
 ) -> PurchaseOrder:
     supplier = _require_supplier(supplier_id)
     ship_to = _optional_location(ship_to_location_id, 'ship_to_location_id')
@@ -179,18 +244,15 @@ def create_purchase_order(
         raise PoValidationError(
             f'Invalid source. Use one of: {", ".join(PurchaseOrderSource.values)}.',
         )
-    if external_number in ('',):
-        external_number = None
+    external_number = _normalize_sage_po_number(
+        sage_po_number if sage_po_number not in (None, '') else external_number,
+    )
+    if require_sage_po_number and external_number is None:
+        raise PoValidationError('sage_po_number is required.')
     if external_number is not None:
-        external_number = str(external_number).strip()[:64]
-        exists = PurchaseOrder.objects.filter(
-            source=source, external_number=external_number,
-        ).exists()
-        if exists:
-            raise PoValidationError(
-                f'PO already imported for source={source} '
-                f'external_number={external_number}.',
-            )
+        _ensure_unique_sage_po_number(external_number)
+        if source == PurchaseOrderSource.MANUAL:
+            source = PurchaseOrderSource.SAGE
 
     line_rows = _build_line_rows(supplier.id, lines)
     po = PurchaseOrder.objects.create(
@@ -210,7 +272,6 @@ def create_purchase_order(
         PurchaseOrderLine(purchase_order=po, **row) for row in line_rows
     ])
     return get_purchase_order(po.id)
-
 
 @transaction.atomic
 def update_purchase_order(po_id: int, *, body: dict) -> PurchaseOrder:
@@ -246,6 +307,19 @@ def update_purchase_order(po_id: int, *, body: dict) -> PurchaseOrder:
     if 'remarks' in body:
         po.remarks = body.get('remarks') or None
 
+    if 'sage_po_number' in body or 'external_number' in body:
+        sage = _normalize_sage_po_number(
+            body['sage_po_number']
+            if 'sage_po_number' in body
+            else body.get('external_number'),
+        )
+        if sage is None:
+            raise PoValidationError('sage_po_number is required.')
+        _ensure_unique_sage_po_number(sage, exclude_po_id=po.id)
+        po.external_number = sage
+        if po.source == PurchaseOrderSource.MANUAL:
+            po.source = PurchaseOrderSource.SAGE
+
     if 'lines' in body:
         line_rows = _build_line_rows(po.supplier_id, body['lines'])
         po.lines.all().delete()
@@ -271,7 +345,7 @@ def get_purchase_order(po_id: int) -> PurchaseOrder:
             Prefetch(
                 'lines',
                 queryset=PurchaseOrderLine.objects.select_related(
-                    'product', 'unit', 'product_supplier',
+                    'product', 'product__category', 'unit', 'product_supplier',
                 ).order_by('line_no'),
             ),
         )
@@ -279,7 +353,7 @@ def get_purchase_order(po_id: int) -> PurchaseOrder:
     )
 
 
-def list_purchase_orders(*, status=None, supplier_id=None):
+def list_purchase_orders(*, status=None, supplier_id=None, sage_po_number=None):
     qs = PurchaseOrder.objects.select_related(
         'supplier', 'ship_to_location',
     ).order_by('-id')
@@ -287,4 +361,6 @@ def list_purchase_orders(*, status=None, supplier_id=None):
         qs = qs.filter(status=status)
     if supplier_id not in (None, ''):
         qs = qs.filter(supplier_id=int(supplier_id))
+    if sage_po_number not in (None, ''):
+        qs = qs.filter(external_number__iexact=str(sage_po_number).strip())
     return qs

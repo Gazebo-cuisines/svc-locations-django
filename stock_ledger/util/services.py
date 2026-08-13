@@ -28,7 +28,11 @@ from stock_ledger.models import (
     StockPeriodStatus,
 )
 from stock_ledger.stream import publish_balance_delta
-from stock_ledger.util.conversions import StockValidationError, resolve_to_kg
+from stock_ledger.util.conversions import (
+    StockValidationError,
+    packs_to_stock,
+    resolve_to_kg,
+)
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     load_balance_for_row,
@@ -56,6 +60,7 @@ def resolve_lot(
     production_date: date | None = None,
     recipe_version_id: int | None = None,
     shape_format_id: int | None = None,
+    product_supplier_id: int | None = None,
     origin: str = StockLotOrigin.PURCHASE,
     supplier_lot_code: str | None = None,
 ) -> StockLot:
@@ -118,6 +123,7 @@ def resolve_lot(
         'use_by': use_by,
         'recipe_version_id': recipe_version_id,
         'shape_format_id': shape_format_id,
+        'product_supplier_id': product_supplier_id,
     }
     defaults = {
         'origin': origin,
@@ -287,6 +293,8 @@ def _insert_entry(
     source_workstation_ip: str | None = None,
     remarks: str | None = None,
     project_balance: bool = True,
+    mass_factor: Decimal | None = None,
+    mass_qty_base: Decimal | None = None,
 ) -> StockEntry:
     if quantity == 0 and entry_type != StockEntryType.DOWNTIME:
         raise StockValidationError('quantity must be non-zero')
@@ -299,6 +307,11 @@ def _insert_entry(
     if entry_type == StockEntryType.DOWNTIME:
         factor, qty_base = None, None
         project_balance = False
+    elif mass_factor is not None or mass_qty_base is not None:
+        # Caller supplies pack→kg (or other) mass pair; both required together.
+        if mass_factor is None or mass_qty_base is None:
+            raise StockValidationError('mass_factor and mass_qty_base must both be set')
+        factor, qty_base = mass_factor, mass_qty_base
     else:
         factor, qty_base = _mass_fields(
             product_id=lot.product_id, unit_id=unit_id, quantity=quantity,
@@ -360,27 +373,54 @@ def receipt(
     unit_id: int | None = None,
     effective_at=None,
     unit_cost: Decimal | None = None,
+    product_supplier=None,
+    defer_balance: bool = False,
     **kwargs,
 ) -> StockEntry:
     if quantity <= 0:
         raise StockValidationError('receipt quantity must be positive')
-    unit_id = _resolve_unit_id(lot, unit_id)
     effective_at = effective_at or timezone.now()
+    mass_factor = None
+    mass_qty_base = None
+    stock_qty = quantity
+    if product_supplier is not None:
+        product = lot.product
+        stock_qty = packs_to_stock(quantity, product_supplier, product)
+        unit_id = product.unit_id
+        if unit_id is None:
+            raise StockValidationError(
+                f'product_id={lot.product_id} has no stock unit',
+            )
+        if lot.product_supplier_id is None:
+            lot.product_supplier_id = product_supplier.id
+            fields = ['product_supplier_id']
+            if (
+                product_supplier.purchase_shape_format_id
+                and lot.shape_format_id is None
+            ):
+                lot.shape_format_id = product_supplier.purchase_shape_format_id
+                fields.append('shape_format_id')
+            lot.save(update_fields=fields)
+    else:
+        unit_id = _resolve_unit_id(lot, unit_id)
     if unit_cost is None:
         costing = ProductCosting.objects.filter(product_id=lot.product_id).first()
         if costing is not None:
             unit_cost = costing.unit_cost
-    line_cost = (unit_cost * quantity) if unit_cost is not None else None
+    line_cost = (unit_cost * stock_qty) if unit_cost is not None else None
     return _insert_entry(
         idempotency_key=idempotency_key,
         entry_type=StockEntryType.RECEIPT,
         lot=lot,
         location_id=location_id,
-        quantity=quantity,
+        quantity=stock_qty,
         unit_id=unit_id,
         effective_at=effective_at,
         unit_cost=unit_cost,
         line_cost=line_cost,
+        mass_factor=mass_factor,
+        mass_qty_base=mass_qty_base,
+        project_balance=not defer_balance,
         **kwargs,
     )
 
@@ -484,6 +524,7 @@ def transfer(
     unit_id: int | None = None,
     effective_at=None,
     unit_moves: list | None = None,
+    defer_balance: bool = False,
     **kwargs,
 ) -> tuple[StockEntry, StockEntry]:
     if quantity <= 0:
@@ -499,8 +540,23 @@ def transfer(
     if existing_out and existing_in:
         return existing_out, existing_in
 
+    if defer_balance:
+        bal = StockBalance.objects.filter(
+            lot_id=lot.id, location_id=from_location_id,
+        ).first()
+        available = bal.quantity if bal is not None else Decimal('0')
+        if quantity > available:
+            unit_name = (
+                lot.product.unit.name if lot.product.unit_id else 'stock'
+            )
+            raise StockValidationError(
+                f'Only {available} {unit_name} on this lot (need {quantity}). '
+                f'Transfer {available} or less.'
+            )
+
     effective_at = effective_at or timezone.now()
     group_id = str(uuid4())
+    insert_kw = {**kwargs, 'project_balance': not defer_balance}
 
     # Local import: stock_units imports services (consume path).
     from stock_ledger.util.unit_moves import apply_unit_moves_for_transfer
@@ -516,7 +572,7 @@ def transfer(
             quantity=-quantity,
             unit_id=unit_id,
             effective_at=effective_at,
-            **kwargs,
+            **insert_kw,
         )
         in_entry = _insert_entry(
             idempotency_key=in_key,
@@ -528,9 +584,10 @@ def transfer(
             quantity=quantity,
             unit_id=unit_id,
             effective_at=effective_at,
-            **kwargs,
+            **insert_kw,
         )
-        if unit_moves is not None:
+        # ponytail: bag moves wait until post (chunk 4) if queued
+        if unit_moves is not None and not defer_balance:
             apply_unit_moves_for_transfer(
                 lot_id=lot.id,
                 from_location_id=from_location_id,

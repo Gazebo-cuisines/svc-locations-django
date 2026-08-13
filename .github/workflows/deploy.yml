@@ -1,10 +1,8 @@
 name: Deploy to EC2
 
-# Trigger workflow on push to main
 on:
   push:
-    branches: [main]
-
+    branches: [main, dev]
 
 jobs:
   deploy:
@@ -16,36 +14,37 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate secrets
+        env:
+          BRANCH: ${{ github.ref_name }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          DEV_EC2_HOST: ${{ secrets.DEV_EC2_HOST }}
+          DEV_EC2_USERNAME: ${{ secrets.DEV_EC2_USERNAME }}
+          DEV_EC2_SSH_KEY: ${{ secrets.DEV_EC2_SSH_KEY }}
         run: |
-          echo "Validating deployment secrets..."
-          if [ -z "${{ secrets.EC2_HOST }}" ]; then
-            echo " EC2_HOST secret is missing or empty"
-            exit 1
+          set -e
+          echo "Validating deployment secrets for branch: $BRANCH"
+          if [ "$BRANCH" = "dev" ]; then
+            [ -n "$DEV_EC2_HOST" ] || { echo "DEV_EC2_HOST secret is missing or empty"; exit 1; }
+            [ -n "$DEV_EC2_USERNAME" ] || { echo "DEV_EC2_USERNAME secret is missing or empty"; exit 1; }
+            [ -n "$DEV_EC2_SSH_KEY" ] || { echo "DEV_EC2_SSH_KEY secret is missing or empty"; exit 1; }
+            echo "Dev secrets present"
           else
-            echo " EC2_HOST is set"
+            [ -n "$EC2_HOST" ] || { echo "EC2_HOST secret is missing or empty"; exit 1; }
+            [ -n "$EC2_USERNAME" ] || { echo "EC2_USERNAME secret is missing or empty"; exit 1; }
+            [ -n "$EC2_SSH_KEY" ] || { echo "EC2_SSH_KEY secret is missing or empty"; exit 1; }
+            echo "Prod secrets present"
           fi
-          if [ -z "${{ secrets.EC2_USERNAME }}" ]; then
-            echo " EC2_USERNAME secret is missing or empty"
-            exit 1
-          else
-            echo " EC2_USERNAME is set"
-          fi
-          if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
-            echo " EC2_SSH_KEY secret is missing or empty"
-            exit 1
-          else
-            echo " EC2_SSH_KEY is set"
-          fi
-          echo " All required secrets are present"
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
         env:
           GITHUB_DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
+          host: ${{ github.ref_name == 'dev' && secrets.DEV_EC2_HOST || secrets.EC2_HOST }}
+          username: ${{ github.ref_name == 'dev' && secrets.DEV_EC2_USERNAME || secrets.EC2_USERNAME }}
+          key: ${{ github.ref_name == 'dev' && secrets.DEV_EC2_SSH_KEY || secrets.EC2_SSH_KEY }}
           port: ${{ secrets.EC2_PORT || '22' }}
           timeout: 300s
           script_stop: true
@@ -66,11 +65,12 @@ jobs:
             git reset --hard "origin/$BRANCH"
             git clean -fdq || true
 
-            # Apply any pending Django migrations before restarting the app
+            # Install deps then migrate before restarting the app
             if [ -f "venv/bin/activate" ]; then
               # shellcheck disable=SC1091
               . venv/bin/activate
             fi
+            pip install -r requirements.txt
             python manage.py migrate --noinput
 
             if systemctl list-unit-files | grep -q "gunicorn-locations.service"; then

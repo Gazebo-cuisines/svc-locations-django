@@ -13,10 +13,12 @@ from planning.models import (
     PlanRunStatus,
     Resource,
 )
-from product.models import Category, Product, ProductClass, Range, Unit
+from product.models import Category, Product, ProductClass, ProductSupplier, Range, Unit
 from stock_ledger.models import (
     ProductionRun,
     StockEntry,
+    StockEntryPosting,
+    StockEntryPostingStatus,
     StockEntryType,
     StockLot,
     StockLotOrigin,
@@ -125,7 +127,18 @@ class PickingListApiTests(TestCase):
         self.assertEqual(box_row['product_id'], self.box.id)
         self.assertEqual(box_row['from_location_id'], self.unit11.id)
         self.assertEqual(box_row['to_location_id'], self.sleeving.id)
+        self.assertEqual(box_row['category_id'], 1)
+        self.assertEqual(box_row['category_name'], 'Meals')
+        self.assertIsNone(box_row['category_path'])
+        self.assertEqual(box_row['category_l2'], 'Meals')
+        self.assertIsNone(box_row['pack_quantity'])
+        self.assertIsNone(box_row['pack_unit_name'])
+        self.assertIsNone(box_row['shape_format_label'])
         self.assertEqual(len(box_row['requirement_ids']), 2)
+        self.assertEqual(box_row['status'], 'open')
+        self.assertEqual(box_row['issued_quantity'], '0')
+        self.assertEqual(box_row['queued_quantity'], '0')
+        self.assertEqual(box_row['remaining_quantity'], '50.000000')
 
         dept_names = {d['from_location'] for d in data['by_department']}
         self.assertEqual(dept_names, {'Unit 11', 'Spice Room'})
@@ -165,6 +178,126 @@ class PickingListApiTests(TestCase):
         self.assertTrue(
             all(row['from_location_id'] == self.unit11.id for row in data['lines']),
         )
+
+    def test_picking_list_category_l2_from_path(self):
+        raw = Category.objects.create(
+            id=10, name='Raw Materials', path='Raw Materials',
+        )
+        pastry = Category.objects.create(
+            id=11,
+            name='Pastry Sheets',
+            parent=raw,
+            path='Raw Materials > Pastry > Pastry Sheets',
+        )
+        self.box.category = pastry
+        self.box.save(update_fields=['category_id'])
+        resp = self.client.get(
+            f'/planning/plans/{self.plan.id}/runs/{self.run.id}/picking-list/',
+        )
+        box_row = next(
+            row for row in resp.json()['data']['lines']
+            if row['product_id'] == self.box.id
+        )
+        self.assertEqual(box_row['category_id'], 11)
+        self.assertEqual(box_row['category_name'], 'Pastry Sheets')
+        self.assertEqual(box_row['category_path'], 'Raw Materials > Pastry > Pastry Sheets')
+        self.assertEqual(box_row['category_l2'], 'Pastry')
+        self.assertEqual(box_row['from_location'], 'Unit 11')
+        dept_names = {
+            d['from_location']
+            for d in resp.json()['data']['by_department']
+        }
+        self.assertEqual(dept_names, {'Unit 11', 'Spice Room'})
+
+    def test_picking_list_pack_quantity_from_supplier_multiplier(self):
+        box_uom = Unit.objects.create(id=2, name='Box')
+        supplier = Location.objects.create(id=80, name='Pack Supplier', visible=True)
+        ProductSupplier.objects.create(
+            product=self.box,
+            supplier=supplier,
+            supplier_code='BOX-1X10',
+            supplier_product_name='Grab box 10',
+            outer_qty=Decimal('1'),
+            outer_unit=box_uom,
+            inner_qty=Decimal('10'),
+            inner_unit_id=1,
+            is_default=True,
+            is_active=True,
+        )
+        resp = self.client.get(
+            f'/planning/plans/{self.plan.id}/runs/{self.run.id}/picking-list/',
+        )
+        box_row = next(
+            row for row in resp.json()['data']['lines']
+            if row['product_id'] == self.box.id
+        )
+        self.assertEqual(box_row['net_quantity'], '50.000000')
+        self.assertEqual(box_row['pack_quantity'], '5.000000')
+        self.assertEqual(box_row['pack_unit_name'], 'Box')
+        self.assertIn('BOX', box_row['shape_format_label'].upper())
+        label_row = next(
+            row for row in resp.json()['data']['lines']
+            if row['product_id'] == self.label.id
+        )
+        self.assertIsNone(label_row['pack_quantity'])
+
+    def test_picking_list_issue_progress_queued_then_posted(self):
+        req_id = PlanRequirement.objects.filter(
+            run=self.run, product=self.box, closed=False,
+        ).order_by('id').values_list('id', flat=True).first()
+        period, _ = StockPeriod.objects.get_or_create(
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 12, 31),
+        )
+        lot = StockLot.objects.create(
+            product=self.box,
+            trace_number='T-GO-1',
+            origin=StockLotOrigin.PURCHASE,
+        )
+        now = timezone.now()
+        entry = StockEntry.objects.create(
+            idempotency_key='go-progress-1',
+            entry_type=StockEntryType.TRANSFER_OUT,
+            lot=lot,
+            location=self.unit11,
+            counterparty_location=self.sleeving,
+            quantity=Decimal('-20'),
+            unit_id=1,
+            period=period,
+            effective_at=now,
+            recorded_at=now,
+            entry_hash='hash-go-progress-1',
+            source_document_type='plan_requirement',
+            source_document_id=req_id,
+        )
+        StockEntryPosting.objects.create(
+            stock_entry=entry,
+            status=StockEntryPostingStatus.QUEUED,
+            queued_at=now,
+        )
+        url = f'/planning/plans/{self.plan.id}/runs/{self.run.id}/picking-list/'
+        queued = self.client.get(url)
+        box_row = next(
+            row for row in queued.json()['data']['lines']
+            if row['product_id'] == self.box.id
+        )
+        self.assertEqual(box_row['status'], 'partial')
+        self.assertEqual(box_row['queued_quantity'], '20.000000')
+        self.assertEqual(box_row['issued_quantity'], '0')
+        self.assertEqual(box_row['remaining_quantity'], '30.000000')
+
+        posting = entry.posting
+        posting.status = StockEntryPostingStatus.POSTED
+        posting.save(update_fields=['status'])
+        posted = self.client.get(url)
+        box_row = next(
+            row for row in posted.json()['data']['lines']
+            if row['product_id'] == self.box.id
+        )
+        self.assertEqual(box_row['status'], 'partial')
+        self.assertEqual(box_row['queued_quantity'], '0')
+        self.assertEqual(box_row['issued_quantity'], '20.000000')
+        self.assertEqual(box_row['remaining_quantity'], '30.000000')
 
 
 class PlanPublishApiTests(TestCase):
@@ -406,6 +539,10 @@ class PlanProgressApiTests(TestCase):
         self.assertEqual(line['done'], '10.000000')
         self.assertEqual(line['status'], 'complete')
         self.assertEqual(line['pct'], '100.00')
+        self.assertEqual(line['issued'], '0')
+        self.assertEqual(line['queued'], '0')
+        self.assertEqual(line['remaining'], '10.000000')
+        self.assertEqual(line['issue_status'], 'open')
         self.assertIsNotNone(line['last_made_at'])
         dept = data['by_department'][0]
         self.assertEqual(dept['complete_count'], 1)
@@ -418,6 +555,44 @@ class PlanProgressApiTests(TestCase):
         data = resp.json()['data']
         self.assertEqual(data['location'], 'Spice Room')
         self.assertEqual(len(data['lines']), 1)
+
+    def test_progress_includes_goods_out_issued(self):
+        req_id = PlanRequirement.objects.filter(run=self.run).values_list(
+            'id', flat=True,
+        ).first()
+        period = StockPeriod.objects.get(
+            period_start=date(2026, 8, 1),
+            period_end=date(2026, 8, 31),
+        )
+        lot = StockLot.objects.get(trace_number='T1')
+        now = timezone.now()
+        entry = StockEntry.objects.create(
+            idempotency_key='prog-issue-1',
+            entry_type=StockEntryType.TRANSFER_OUT,
+            lot=lot,
+            location=self.spice,
+            counterparty_location=self.mixers,
+            quantity=Decimal('-4'),
+            unit=self.unit,
+            period=period,
+            effective_at=now,
+            recorded_at=now,
+            entry_hash='hash-prog-issue-1',
+            source_document_type='plan_requirement',
+            source_document_id=req_id,
+        )
+        StockEntryPosting.objects.create(
+            stock_entry=entry,
+            status=StockEntryPostingStatus.QUEUED,
+            queued_at=now,
+        )
+        resp = self.client.get(f'/planning/plans/{self.plan.id}/progress/')
+        line = resp.json()['data']['lines'][0]
+        self.assertEqual(line['status'], 'complete')
+        self.assertEqual(line['queued'], '4.000000')
+        self.assertEqual(line['issued'], '0')
+        self.assertEqual(line['remaining'], '6.000000')
+        self.assertEqual(line['issue_status'], 'partial')
 
     def test_progress_requires_complete_run(self):
         bare = Plan.objects.create(

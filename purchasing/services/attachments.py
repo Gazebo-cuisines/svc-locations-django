@@ -15,6 +15,8 @@ from purchasing.models import (
     PurchaseOrderHistory,
     PurchaseOrderLine,
 )
+from users_rbac.models import RbacUser
+from users_rbac.photos import photo_url
 
 ALLOWED_CONTENT_TYPES = {
     'image/jpeg': 'jpg',
@@ -66,8 +68,52 @@ def attachment_url(
         return None
 
 
-def attachment_dict(attachment: GoodsInAttachment) -> dict:
+def _uploader_block(user: RbacUser | None, *, user_id: int | None) -> dict:
+    if user is None and user_id is None:
+        return {
+            'uploaded_by_user_id': None,
+            'uploaded_by_username': None,
+            'uploaded_by_display_name': None,
+            'uploaded_by_email': None,
+            'uploaded_by_photo_url': None,
+            'uploaded_by_profile_path': None,
+        }
+    uid = user.id if user is not None else user_id
     return {
+        'uploaded_by_user_id': uid,
+        'uploaded_by_username': user.username if user else None,
+        'uploaded_by_display_name': (
+            (user.display_name or user.username) if user else None
+        ),
+        'uploaded_by_email': user.email if user else None,
+        'uploaded_by_photo_url': photo_url(user) if user else None,
+        # FE: navigate(uploaded_by_profile_path)
+        'uploaded_by_profile_path': (
+            f'/configuration/users/{uid}' if uid is not None else None
+        ),
+    }
+
+
+def _users_by_id(user_ids: list[int | None]) -> dict[int, RbacUser]:
+    ids = [i for i in user_ids if i is not None]
+    if not ids:
+        return {}
+    return {u.id: u for u in RbacUser.objects.filter(pk__in=ids)}
+
+
+def attachment_dict(
+    attachment: GoodsInAttachment,
+    *,
+    users: dict[int, RbacUser] | None = None,
+) -> dict:
+    user_id = attachment.uploaded_by_user_id
+    user = None
+    if user_id is not None:
+        if users is not None:
+            user = users.get(user_id)
+        else:
+            user = RbacUser.objects.filter(pk=user_id).first()
+    data = {
         'id': attachment.id,
         'purchase_order_id': attachment.purchase_order_id,
         'line_id': attachment.line_id,
@@ -76,19 +122,23 @@ def attachment_dict(attachment: GoodsInAttachment) -> dict:
         's3_key': attachment.s3_key,
         'content_type': attachment.content_type,
         'original_filename': attachment.original_filename,
-        'uploaded_by_user_id': attachment.uploaded_by_user_id,
         'created_at': (
             attachment.created_at.isoformat() if attachment.created_at else None
         ),
         'url': attachment_url(attachment),
     }
+    data.update(_uploader_block(user, user_id=user_id))
+    return data
 
 
 def list_attachments(po_id: int) -> list[dict]:
     if not PurchaseOrder.objects.filter(pk=po_id).exists():
         raise AttachmentError('Purchase order not found.')
-    rows = GoodsInAttachment.objects.filter(purchase_order_id=po_id).order_by('-id')
-    return [attachment_dict(row) for row in rows]
+    rows = list(
+        GoodsInAttachment.objects.filter(purchase_order_id=po_id).order_by('-id'),
+    )
+    users = _users_by_id([r.uploaded_by_user_id for r in rows])
+    return [attachment_dict(row, users=users) for row in rows]
 
 
 @transaction.atomic

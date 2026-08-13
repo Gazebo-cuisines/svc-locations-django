@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 
 from product.models import Product
-from stock_ledger.models import StockLot, StockUnit
-from stock_ledger.util import stock_units
+from stock_ledger.models import StockEntry, StockLot, StockUnit
+from stock_ledger.util import entry_labels, stock_units
 from stock_ledger.util.conversions import StockValidationError
 
 # Bracketed GS1 AI form, e.g. (01)05012345678901(10)26218(21)ABC. Only needed so
@@ -37,16 +37,53 @@ def _product_by_code(text: str) -> Product | None:
     return _product_by_id(int(match.group(1)))
 
 
+def _entry_by_id(entry_id: int) -> StockEntry | None:
+    return (
+        StockEntry.objects
+        .select_related(
+            'lot__product__unit',
+            'lot__product__product_class',
+            'lot__product__range',
+            'unit',
+            'location',
+            'label',
+        )
+        .filter(pk=entry_id)
+        .first()
+    )
+
+
 def resolve_scan(code: str) -> dict:
     """
-    Returns {'match_type', 'product', 'lot', 'unit'}.
+    Returns {'match_type', 'product', 'lot', 'unit'[, 'entry']}.
 
     Product code wins so a hand-typed P123 always works, even if a label is
     damaged. Serial lookup is the fallback for legacy per-unit labels.
+    Goods-in stickers use E{stock_entry.id}.
     """
     text = (code or '').strip()
     if not text:
         raise StockValidationError('code is required')
+    if text.upper() in ('E', 'P'):
+        raise StockValidationError(
+            'Scan the full barcode. This code is incomplete.',
+        )
+
+    entry_id = entry_labels.parse_entry_code(text)
+    if entry_id is not None:
+        entry = _entry_by_id(entry_id)
+        if entry is None:
+            completed = entry_labels.resolve_truncated_entry_id(str(entry_id))
+            entry = _entry_by_id(completed) if completed is not None else None
+        if entry is None:
+            raise StockValidationError(f'code={text} not found')
+        return {
+            'match_type': 'entry',
+            'product': entry.lot.product,
+            'lot': entry.lot,
+            'unit': None,
+            'entry': entry,
+        }
 
     serial = parse_gs1(text).get('21')
     if serial:

@@ -29,6 +29,8 @@ from purchasing.services.po import (
     update_purchase_order,
 )
 from purchasing.models import GoodsInAttachmentKind, PurchaseOrder, PurchaseOrderStatus
+from users_rbac.auth import attach_user
+from users_rbac.permissions import gate_warehouse_write
 
 
 def _parse_json_body(request):
@@ -46,6 +48,10 @@ def po_collection_api(request):
             rows = list_purchase_orders(
                 status=request.GET.get('status'),
                 supplier_id=request.GET.get('supplier_id'),
+                sage_po_number=(
+                    request.GET.get('sage_po_number')
+                    or request.GET.get('external_number')
+                ),
             )
         except (TypeError, ValueError) as exc:
             return api_error(str(exc), status_code=400)
@@ -75,6 +81,9 @@ def po_collection_api(request):
             remarks=body.get('remarks'),
             created_by_user_id=body.get('created_by_user_id'),
             status=body.get('status') or 'draft',
+            sage_po_number=body.get('sage_po_number'),
+            external_number=body.get('external_number'),
+            require_sage_po_number=True,
         )
     except PoValidationError as exc:
         return api_error(str(exc), status_code=400)
@@ -165,12 +174,17 @@ def po_line_qc_api(request, po_id: int, line_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
 def po_receive_api(request, po_id: int):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = receive_purchase_order(po_id, body=body)
+        # Reuse stock receipt audit helpers (JWT / workstation / IP).
+        from stock_ledger.views import _common_write_kwargs
+
+        audit = _common_write_kwargs(request, body)
+        data = receive_purchase_order(po_id, body=body, audit=audit)
     except ReceiveError as exc:
         msg = str(exc)
         status = 404 if msg == 'Purchase order not found.' else 400
@@ -221,6 +235,11 @@ def po_attachments_api(request, po_id: int):
             return api_error('uploaded_by_user_id must be an integer.', status_code=400)
     else:
         uploaded_by = None
+        # Prefer Cognito actor when FE sends Authorization Bearer JWT
+        attach_user(request, missing='ok', invalid='ok')
+        actor = getattr(request, 'rbac_user', None)
+        if actor is not None:
+            uploaded_by = actor.id
 
     try:
         data = upload_attachment(
