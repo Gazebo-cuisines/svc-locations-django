@@ -48,19 +48,37 @@ def _get_signing_key(token: str):
     return _get_jwks_client().get_signing_key_from_jwt(token).key
 
 
-def _audience_ok(claims: dict, client_id: str) -> bool:
+def _client_ids() -> list[str]:
+    """Accept one or more app clients (web + mobile)."""
+    ids: list[str] = []
+    multi = os.getenv('COGNITO_CLIENT_IDS') or ''
+    for part in multi.split(','):
+        value = part.strip()
+        if value and value not in ids:
+            ids.append(value)
+    single = (os.getenv('COGNITO_CLIENT_ID') or '').strip()
+    if single and single not in ids:
+        ids.append(single)
+    return ids
+
+
+def _audience_ok(claims: dict, client_ids: list[str]) -> bool:
+    if not client_ids:
+        return False
     token_use = claims.get('token_use')
     if token_use == 'id':
         aud = claims.get('aud')
-        return aud == client_id or (isinstance(aud, list) and client_id in aud)
+        if isinstance(aud, list):
+            return any(client_id in aud for client_id in client_ids)
+        return aud in client_ids
     if token_use == 'access':
-        return claims.get('client_id') == client_id
+        return claims.get('client_id') in client_ids
     return False
 
 
 def verify_token(token: str) -> dict:
-    client_id = os.getenv('COGNITO_CLIENT_ID')
-    if not client_id or not os.getenv('COGNITO_USER_POOL_ID'):
+    client_ids = _client_ids()
+    if not client_ids or not os.getenv('COGNITO_USER_POOL_ID'):
         raise ValueError('Auth service is not configured.')
     try:
         claims = jwt.decode(
@@ -74,7 +92,7 @@ def verify_token(token: str) -> dict:
         raise ValueError('expired') from exc
     except Exception as exc:
         raise ValueError('invalid') from exc
-    if not _audience_ok(claims, client_id):
+    if not _audience_ok(claims, client_ids):
         raise ValueError('invalid')
     return claims
 
