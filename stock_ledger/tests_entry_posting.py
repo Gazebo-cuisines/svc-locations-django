@@ -173,3 +173,66 @@ class EntryPostingQueueTests(TestCase):
                 lot_id=self.lot.id, location_id=dest.id,
             ).exists(),
         )
+
+    def test_verify_posts_queued_transfer_pair(self):
+        dest = Location.objects.create(id=75, name='PQ Mixers', visible=True)
+        services.receipt(
+            idempotency_key=f'pq-live2-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('50'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        queued = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-xfer2-{uuid4()}",'
+                f'"lot_id":{self.lot.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"10",'
+                '"queue_stock":true'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(queued.status_code, 201, queued.content)
+        out_id = queued.json()['data']['out']['id']
+
+        bad = self.client.post(
+            f'/stock/entries/{out_id}/labels/verify/',
+            data='{"code":"E999","post_stock":true}',
+            content_type='application/json',
+        )
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(
+            StockBalance.objects.get(
+                lot_id=self.lot.id, location_id=self.wh.id,
+            ).quantity,
+            Decimal('50'),
+        )
+
+        ok = self.client.post(
+            f'/stock/entries/{out_id}/labels/verify/',
+            data=f'{{"code":"E{out_id}","post_stock":true}}',
+            content_type='application/json',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+        vdata = ok.json()['data']
+        self.assertEqual(vdata['label']['status'], StockEntryLabelStatus.VERIFIED)
+        self.assertEqual(vdata['posting_status'], StockEntryPostingStatus.POSTED)
+        self.assertEqual(
+            StockBalance.objects.get(
+                lot_id=self.lot.id, location_id=self.wh.id,
+            ).quantity,
+            Decimal('40'),
+        )
+        self.assertEqual(
+            StockBalance.objects.get(
+                lot_id=self.lot.id, location_id=dest.id,
+            ).quantity,
+            Decimal('10'),
+        )

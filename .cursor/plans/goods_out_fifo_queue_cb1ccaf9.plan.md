@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: post-pair
     content: Extend post_entry to transfer_out and project paired transfer_in after label verify
-    status: pending
+    status: completed
   - id: override-tab
     content: stock_fifo_override table + GET /product/<id>/stock-overrides/ (who/what/when/reason)
     status: pending

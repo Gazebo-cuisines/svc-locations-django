@@ -76,9 +76,13 @@ def post_entry(
     )
     if entry is None:
         raise StockValidationError(f'entry_id={entry_id} not found')
-    if entry.entry_type != StockEntryType.RECEIPT:
+    if entry.entry_type not in (
+        StockEntryType.RECEIPT,
+        StockEntryType.TRANSFER_OUT,
+    ):
         raise StockValidationError(
-            f'entry_id={entry_id} is {entry.entry_type}, expected receipt.',
+            f'entry_id={entry_id} is {entry.entry_type}, '
+            f'expected receipt or transfer_out.',
         )
 
     posting = get_posting(entry)
@@ -125,6 +129,22 @@ def post_entry(
             )
 
     _project_balance(entry=entry, override_reason=entry.override_reason)
+    if entry.entry_type == StockEntryType.TRANSFER_OUT:
+        pair = (
+            StockEntry.objects
+            .select_for_update()
+            .filter(
+                transfer_group_id=entry.transfer_group_id,
+                entry_type=StockEntryType.TRANSFER_IN,
+            )
+            .exclude(pk=entry.pk)
+            .first()
+        )
+        if pair is None:
+            raise StockValidationError(
+                f'entry_id={entry_id} has no paired transfer_in.',
+            )
+        _project_balance(entry=pair, override_reason=pair.override_reason)
     posting.status = StockEntryPostingStatus.POSTED
     posting.posted_at = timezone.now()
     if actor_user_id is not None:
