@@ -6,9 +6,13 @@ from django.utils import timezone
 
 from locations.models import Location
 from purchasing.models import (
+    LineShortfallReason,
     PurchaseOrder,
+    PurchaseOrderHistory,
+    PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
     PurchaseOrderStatus,
+    SHORTFALL_AWAIT_REASONS,
 )
 from purchasing.services.goods_in_form import resolve_goods_in_form
 from purchasing.serialize import _qty_str
@@ -32,6 +36,30 @@ def _parse_decimal(value, field_name: str) -> Decimal:
     if qty <= 0:
         raise ReceiveError(f'{field_name} must be greater than 0.')
     return qty
+
+
+def _parse_shortfall(raw: dict, index: int, leftover: Decimal) -> str | None:
+    if leftover <= 0:
+        return None
+    code = raw.get('shortfall_reason')
+    if code in (None, ''):
+        raise ReceiveError(
+            f'lines[{index}].shortfall_reason is required when quantity '
+            f'is less than balance.',
+        )
+    code = str(code)
+    valid = {choice.value for choice in LineShortfallReason}
+    if code not in valid:
+        raise ReceiveError(
+            f'lines[{index}].shortfall_reason must be one of: '
+            f'{", ".join(sorted(valid))}.',
+        )
+    remarks = str(raw.get('remarks') or '').strip()
+    if code == LineShortfallReason.OTHER and not remarks:
+        raise ReceiveError(
+            f'lines[{index}].remarks is required when shortfall_reason=other.',
+        )
+    return code
 
 
 def _optional_date(value, field_name: str) -> date | None:
@@ -270,6 +298,8 @@ def receive_purchase_order(
                 f'Line {line.line_no}: quantity {purchase_qty} exceeds '
                 f'balance {line.qty_balance}.',
             )
+        leftover = (line.qty_balance - purchase_qty).quantize(Decimal('0.000001'))
+        shortfall_reason = _parse_shortfall(raw, index, leftover)
 
         idempotency_key = raw.get('idempotency_key')
         if idempotency_key in (None, ''):
@@ -430,28 +460,73 @@ def receive_purchase_order(
 
         # Reused key: return existing stock, do not advance PO qty again.
         if prior_entry is None and last_entry is not None:
+            reject_qty = (
+                leftover
+                if shortfall_reason and shortfall_reason not in SHORTFALL_AWAIT_REASONS
+                else Decimal('0')
+            )
             line.qty_received = (line.qty_received + purchase_qty).quantize(
                 Decimal('0.000001'),
             )
-            line.qty_balance = (line.qty_ordered - line.qty_received).quantize(
+            line.qty_rejected = (line.qty_rejected + reject_qty).quantize(
                 Decimal('0.000001'),
             )
+            line.qty_balance = (
+                line.qty_ordered - line.qty_received - line.qty_rejected
+            ).quantize(Decimal('0.000001'))
             if line.qty_balance < 0:
                 raise ReceiveError(f'Line {line.line_no} balance went negative.')
             line.last_receipt_entry_id = last_entry.id
+            if shortfall_reason:
+                line.shortfall_reason = shortfall_reason
+            if leftover > 0 and raw.get('remarks') not in (None, ''):
+                line.remarks = str(raw['remarks'])[:256]
             if line.qty_balance == 0:
                 line.line_closed = True
                 line.stock_in_done = True
             line.save(
                 update_fields=[
                     'qty_received',
+                    'qty_rejected',
                     'qty_balance',
+                    'shortfall_reason',
+                    'remarks',
                     'line_closed',
                     'stock_in_done',
                     'last_receipt_entry_id',
                     'updated_at',
                 ],
             )
+            if leftover > 0 and shortfall_reason:
+                needs_credit = shortfall_reason not in SHORTFALL_AWAIT_REASONS
+                PurchaseOrderHistory.objects.create(
+                    purchase_order=po,
+                    event_type=(
+                        PurchaseOrderHistoryEvent.NON_CONFORMANCE
+                        if needs_credit
+                        else PurchaseOrderHistoryEvent.NOTE
+                    ),
+                    remarks=(
+                        f'Line {line.line_no} rejected {reject_qty}: '
+                        f'{shortfall_reason} - credit note'
+                        if needs_credit
+                        else (
+                            f'Line {line.line_no} short {leftover}: '
+                            f'rest coming later'
+                        )
+                    ),
+                    payload={
+                        'line_id': line.id,
+                        'line_no': line.line_no,
+                        'qty_received': str(purchase_qty),
+                        'qty_short': str(leftover),
+                        'qty_rejected': str(reject_qty),
+                        'shortfall_reason': shortfall_reason,
+                        'needs_credit_note': needs_credit,
+                        'remarks': raw.get('remarks'),
+                    },
+                    actor_user_id=receipt_audit.get('actor_user_id'),
+                )
 
         first = transactions[0]
         row = {
@@ -462,7 +537,10 @@ def receive_purchase_order(
                 sum((Decimal(t['quantity_stock']) for t in transactions), Decimal('0')),
             ),
             'qty_received': _qty_str(line.qty_received),
+            'qty_rejected': _qty_str(line.qty_rejected),
             'qty_balance': _qty_str(line.qty_balance),
+            'shortfall_reason': line.shortfall_reason,
+            'needs_credit_note': line.qty_rejected > 0,
             'stock_entry_id': first['stock_entry_id'],
             'entry_code': first['entry_code'],
             'lot_id': lot.id,

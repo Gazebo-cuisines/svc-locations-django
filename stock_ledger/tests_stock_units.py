@@ -248,13 +248,14 @@ class StockUnitTests(TestCase):
         self.assertEqual(data.get('counterparty_location_id'), supplier.id)
         self.assertEqual(data.get('supplier_id'), supplier.id)
         self.assertEqual(data.get('supplier_name'), supplier.name)
-        # quantity body is pack count; stock qty = packs × multiplier (5×20=100 → 100*100)
+        # quantity body is pack count; stock in product.unit (here Kg = inner).
         self.assertEqual(entry.quantity, Decimal('10000.000000'))
-        self.assertEqual(entry.unit_id, mapping.inner_unit_id)
-        self.assertEqual(entry.base_unit_factor, mapping.multiplier)
-        self.assertEqual(data.get('pack_quantity'), '100')
+        self.assertEqual(entry.unit_id, self.product.unit_id)
+        self.assertEqual(Decimal(data.get('pack_quantity')), Decimal('100'))
         self.assertEqual(data.get('shape_multiplier'), '100')
-        self.assertEqual(data.get('quantity'), '10000')
+        self.assertEqual(Decimal(data.get('quantity')), Decimal('10000'))
+        lot.refresh_from_db()
+        self.assertEqual(lot.product_supplier_id, mapping.id)
 
     def test_purchase_receipt_requires_supplier(self):
         lot = StockLot.objects.create(

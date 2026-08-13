@@ -24,6 +24,19 @@ class PurchaseOrderHistoryEvent(models.TextChoices):
     NOTE = 'note', 'Note'
 
 
+class LineShortfallReason(models.TextChoices):
+    SHORT_DELIVERY = 'short_delivery', 'Rest coming later'
+    WRONG_PRODUCT = 'wrong_product', 'Wrong product'
+    SHORT_USEBY = 'short_useby', 'Use-by too short'
+    TECHNICAL = 'technical_issue', 'Technical issue'
+    DAMAGED = 'damaged', 'Damaged'
+    QUALITY = 'quality', 'Quality fail'
+    OTHER = 'other', 'Other'
+
+
+SHORTFALL_AWAIT_REASONS = frozenset({LineShortfallReason.SHORT_DELIVERY})
+
+
 class PurchaseOrder(models.Model):
     number = models.CharField(max_length=32, unique=True, null=True, blank=True)
     supplier = models.ForeignKey(
@@ -143,7 +156,11 @@ class PurchaseOrderLine(models.Model):
     qty_received = models.DecimalField(
         max_digits=16, decimal_places=6, default=Decimal('0'),
     )
+    qty_rejected = models.DecimalField(
+        max_digits=16, decimal_places=6, default=Decimal('0'),
+    )
     qty_balance = models.DecimalField(max_digits=16, decimal_places=6)
+    shortfall_reason = models.CharField(max_length=32, null=True, blank=True)
     unit = models.ForeignKey(
         'product.Unit',
         on_delete=models.PROTECT,
@@ -197,6 +214,10 @@ class PurchaseOrderLine(models.Model):
             models.CheckConstraint(
                 check=models.Q(qty_received__gte=0),
                 name='chk_po_line_qty_received_nonneg',
+            ),
+            models.CheckConstraint(
+                check=models.Q(qty_rejected__gte=0),
+                name='chk_po_line_qty_rejected_nonneg',
             ),
             models.CheckConstraint(
                 check=models.Q(qty_balance__gte=0),

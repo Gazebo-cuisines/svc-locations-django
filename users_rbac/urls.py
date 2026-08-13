@@ -1,7 +1,7 @@
 from django.urls import path
 
 from users_rbac.audit import audit_list, user_activity, user_audit
-from users_rbac.views import login_view
+from users_rbac.views import login_view, refresh_view
 from users_rbac.views_users import (
     me_photo,
     me_view,
@@ -15,6 +15,9 @@ from users_rbac.views_users import (
 urlpatterns = [
     # Sign in with username/email + password; returns Cognito tokens.
     path('login/', login_view, name='users_rbac_login'),
+
+    # Extend session with refresh_token + username (SECRET_HASH stays on server).
+    path('refresh/', refresh_view, name='users_rbac_refresh'),
 
     # Caller's profile + effective grants (for FE nav).
     path('me/', me_view, name='users_rbac_me'),

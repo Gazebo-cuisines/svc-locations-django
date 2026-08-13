@@ -28,7 +28,11 @@ from stock_ledger.models import (
     StockPeriodStatus,
 )
 from stock_ledger.stream import publish_balance_delta
-from stock_ledger.util.conversions import StockValidationError, resolve_to_kg
+from stock_ledger.util.conversions import (
+    StockValidationError,
+    packs_to_stock,
+    resolve_to_kg,
+)
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     load_balance_for_row,
@@ -56,6 +60,7 @@ def resolve_lot(
     production_date: date | None = None,
     recipe_version_id: int | None = None,
     shape_format_id: int | None = None,
+    product_supplier_id: int | None = None,
     origin: str = StockLotOrigin.PURCHASE,
     supplier_lot_code: str | None = None,
 ) -> StockLot:
@@ -118,6 +123,7 @@ def resolve_lot(
         'use_by': use_by,
         'recipe_version_id': recipe_version_id,
         'shape_format_id': shape_format_id,
+        'product_supplier_id': product_supplier_id,
     }
     defaults = {
         'origin': origin,
@@ -378,12 +384,23 @@ def receipt(
     mass_qty_base = None
     stock_qty = quantity
     if product_supplier is not None:
-        # quantity = pack count of this supplier shape; stock in inner unit (usually KG).
-        multiplier = product_supplier.multiplier
-        stock_qty = (quantity * multiplier).quantize(Decimal('0.000001'))
-        unit_id = product_supplier.inner_unit_id
-        mass_factor = multiplier
-        mass_qty_base = stock_qty
+        product = lot.product
+        stock_qty = packs_to_stock(quantity, product_supplier, product)
+        unit_id = product.unit_id
+        if unit_id is None:
+            raise StockValidationError(
+                f'product_id={lot.product_id} has no stock unit',
+            )
+        if lot.product_supplier_id is None:
+            lot.product_supplier_id = product_supplier.id
+            fields = ['product_supplier_id']
+            if (
+                product_supplier.purchase_shape_format_id
+                and lot.shape_format_id is None
+            ):
+                lot.shape_format_id = product_supplier.purchase_shape_format_id
+                fields.append('shape_format_id')
+            lot.save(update_fields=fields)
     else:
         unit_id = _resolve_unit_id(lot, unit_id)
     if unit_cost is None:
@@ -522,6 +539,20 @@ def transfer(
     existing_in = _existing(in_key)
     if existing_out and existing_in:
         return existing_out, existing_in
+
+    if defer_balance:
+        bal = StockBalance.objects.filter(
+            lot_id=lot.id, location_id=from_location_id,
+        ).first()
+        available = bal.quantity if bal is not None else Decimal('0')
+        if quantity > available:
+            unit_name = (
+                lot.product.unit.name if lot.product.unit_id else 'stock'
+            )
+            raise StockValidationError(
+                f'Only {available} {unit_name} on this lot (need {quantity}). '
+                f'Transfer {available} or less.'
+            )
 
     effective_at = effective_at or timezone.now()
     group_id = str(uuid4())

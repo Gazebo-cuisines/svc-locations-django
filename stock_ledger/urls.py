@@ -73,6 +73,11 @@ urlpatterns = [
         name='stock-entry-post',
     ),
     path(
+        'entries/<int:entry_id>/cancel/',
+        views.entry_cancel_api,
+        name='stock-entry-cancel',
+    ),
+    path(
         'entries/queued/',
         views.entry_queued_list_api,
         name='stock-entry-queued',

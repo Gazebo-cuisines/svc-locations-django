@@ -36,6 +36,30 @@ def parse_entry_code(code: str) -> int | None:
     return int(match.group(1))
 
 
+def scan_matches_entry_code(scanned: str, expected: str) -> bool:
+    """Exact match, or scanner dropped the last character of a known label."""
+    got = (scanned or '').strip().upper()
+    want = (expected or '').strip().upper()
+    if got == want:
+        return True
+    return (
+        len(want) - len(got) == 1
+        and want.startswith(got)
+        and _ENTRY_CODE.match(got) is not None
+    )
+
+
+def resolve_truncated_entry_id(digits: str) -> int | None:
+    """If exact E{digits} is missing, unique E{digits}{0-9} wins."""
+    if not digits.isdigit():
+        return None
+    candidates = [int(digits + d) for d in '0123456789']
+    hits = list(
+        StockEntry.objects.filter(pk__in=candidates).values_list('pk', flat=True)[:2]
+    )
+    return hits[0] if len(hits) == 1 else None
+
+
 def _size_for(label_format: str) -> dict:
     return dict(LABEL_SIZES_MM.get(label_format, LABEL_SIZES_MM[StockEntryLabelFormat.BOX]))
 
@@ -285,7 +309,7 @@ def verify_label(
         'source_workstation': source_workstation,
         'meta': meta if isinstance(meta, dict) else {},
     }
-    if scanned != expected.upper():
+    if not scan_matches_entry_code(scanned, expected):
         scan = _record_scan(
             label=label,
             code=code,

@@ -137,6 +137,13 @@ class StockLot(models.Model):
         blank=True,
         related_name='stock_lots',
     )
+    product_supplier = models.ForeignKey(
+        'product.ProductSupplier',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stock_lots',
+    )
     trace_number = models.CharField(max_length=32)
     supplier_lot_code = models.CharField(max_length=64, null=True, blank=True)
     origin = models.CharField(max_length=16, choices=StockLotOrigin.choices)
@@ -175,6 +182,7 @@ class StockLot(models.Model):
                     'use_by',
                     'recipe_version',
                     'shape_format',
+                    'product_supplier',
                 ],
                 name='uq_stock_lot_identity',
             ),

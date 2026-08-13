@@ -10,7 +10,7 @@ from purchasing.models import (
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
-from purchasing.serialize import _qty_str, rbac_names
+from purchasing.serialize import _qty_str, rbac_names, shortfall_reason_options
 
 
 class GoodsInFormError(ValueError):
@@ -156,7 +156,10 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'storage_regime': regime,
             'qty_ordered': _qty_str(line.qty_ordered),
             'qty_received': _qty_str(line.qty_received),
+            'qty_rejected': _qty_str(line.qty_rejected),
             'qty_balance': _qty_str(line.qty_balance),
+            'shortfall_reason': line.shortfall_reason,
+            'needs_credit_note': line.qty_rejected > 0,
             'pack_size': line.shape_format_label,
             'unit_id': line.unit_id,
             'unit_name': line.unit.name if line.unit_id else None,
@@ -207,6 +210,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
         'qc_tl_comment': po.qc_tl_comment,
         'saved_header_answers': po.header_checks or {},
         'header': _template_block(header_template),
+        'shortfall_reasons': shortfall_reason_options(),
         'lines': line_blocks,
         'attachments': list_attachments(po.id),
     }

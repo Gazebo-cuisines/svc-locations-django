@@ -58,6 +58,23 @@ def queue_entry(
     )
 
 
+def cancel_entry(*, entry_id: int) -> StockEntryPosting:
+    posting = (
+        StockEntryPosting.objects
+        .filter(stock_entry_id=entry_id)
+        .first()
+    )
+    if posting is None:
+        raise StockValidationError(f'entry_id={entry_id} has no posting.')
+    if posting.status == StockEntryPostingStatus.POSTED:
+        raise StockValidationError(f'entry_id={entry_id} is already posted.')
+    if posting.status != StockEntryPostingStatus.CANCELLED:
+        posting.status = StockEntryPostingStatus.CANCELLED
+        posting.cancelled_at = timezone.now()
+        posting.save(update_fields=['status', 'cancelled_at'])
+    return posting
+
+
 @transaction.atomic
 def post_entry(
     *,
