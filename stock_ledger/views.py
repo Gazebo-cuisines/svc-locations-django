@@ -2070,6 +2070,31 @@ def scan_resolve_api(request):
         return api_error(msg, status_code=404 if 'not found' in msg else 400)
 
     product = match['product']
+    expected_raw = request.GET.get('expected_product_id')
+    if expected_raw not in (None, ''):
+        try:
+            expected_id = int(expected_raw)
+        except (TypeError, ValueError):
+            return api_error('expected_product_id must be an integer.')
+        if product.id != expected_id:
+            expected = (
+                Product.objects.filter(pk=expected_id).only('id', 'name').first()
+            )
+            expected_name = expected.name if expected else f'product {expected_id}'
+            scanned_name = product.name
+            return api_error(
+                f'Please scan the barcode for {expected_name}. '
+                f'The one you scanned is for {scanned_name}.',
+                data={
+                    'error': 'wrong_product',
+                    'expected_product_id': expected_id,
+                    'expected_product_name': expected_name,
+                    'scanned_product_id': product.id,
+                    'scanned_product_name': scanned_name,
+                    'scanned_code': (code or '').strip(),
+                },
+                status_code=409,
+            )
     include_incomplete = str(request.GET.get('include_incomplete', '')).lower() in (
         '1', 'true', 'yes',
     )

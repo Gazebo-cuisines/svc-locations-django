@@ -48,6 +48,10 @@ def resolve_scan(code: str) -> dict:
     text = (code or '').strip()
     if not text:
         raise StockValidationError('code is required')
+    if text.upper() in ('E', 'P'):
+        raise StockValidationError(
+            'Scan the full barcode. This code is incomplete.',
+        )
 
     entry_id = entry_labels.parse_entry_code(text)
     if entry_id is not None:

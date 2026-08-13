@@ -529,6 +529,36 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(self.client.get('/stock/scan/?code=P99999999').status_code, 404)
         self.assertEqual(self.client.get('/stock/scan/?code=NOPE').status_code, 404)
         self.assertEqual(self.client.get('/stock/scan/?code=').status_code, 400)
+        incomplete = self.client.get('/stock/scan/?code=E')
+        self.assertEqual(incomplete.status_code, 400)
+        self.assertIn('incomplete', incomplete.json()['message'].lower())
+
+    def test_scan_wrong_product_returns_clear_409(self):
+        other = self._product(ProductLabelMode.PRODUCT)
+        other.name = 'SALT'
+        other.save(update_fields=['name'])
+        self.product.name = 'SUGAR'
+        self.product.save(update_fields=['name'])
+
+        resp = self.client.get(
+            f'/stock/scan/?code=P{other.id}'
+            f'&expected_product_id={self.product.id}',
+        )
+        self.assertEqual(resp.status_code, 409, resp.content)
+        body = resp.json()
+        self.assertEqual(
+            body['message'],
+            'Please scan the barcode for SUGAR. The one you scanned is for SALT.',
+        )
+        self.assertEqual(body['data']['error'], 'wrong_product')
+        self.assertEqual(body['data']['expected_product_id'], self.product.id)
+        self.assertEqual(body['data']['scanned_product_id'], other.id)
+
+        ok = self.client.get(
+            f'/stock/scan/?code=P{self.product.id}'
+            f'&expected_product_id={self.product.id}',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
 
     def test_scan_returns_fifo_batches_with_supplier_and_days_left(self):
         soon = self._lot(use_by=self.today + timedelta(days=3))
