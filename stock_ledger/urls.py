@@ -5,7 +5,6 @@ from stock_ledger import views
 # MVP happy path: lots (hidden resolve), movements, production, balances.
 # Parked for later (keep routes; not required for floor/ops MVP):
 #   - ATP / reservations
-#   - genealogy trace + mass-balance (needs kg edges)
 #   - unit-conversions as a gate (moves no longer require kg)
 #   - S3 chain anchors / hash verify commands
 
@@ -42,6 +41,12 @@ urlpatterns = [
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
     path('scan/', views.scan_resolve_api, name='stock-scan'),
+    path('recall/', views.recall_api, name='stock-recall'),
+    path(
+        'products/<int:product_id>/genealogy/',
+        views.product_genealogy_api,
+        name='stock-product-genealogy',
+    ),
     path(
         'products/<int:product_id>/label/',
         views.product_label_api,

@@ -1,0 +1,94 @@
+{
+  "info": {
+    "name": "Gazebo - Stock Recall Genealogy",
+    "description": "Complaint / recall stock genealogy APIs.\n\n**Tables:** `stock_lot`, `stock_balance`, `stock_unit`, `stock_genealogy`, `stock_entry`.\n\nLook up by **product_id + use_by** when the pack does not identify a single lot; returns every matching batch with balances, units, and backward/forward trees.\n\n**Vars:** `{{base_url}}`, `{{product_id}}`, `{{use_by}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Recall by product + use-by",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/recall/?product_id={{product_id}}&use_by={{use_by}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "recall", ""],
+          "query": [
+            {
+              "key": "product_id",
+              "value": "{{product_id}}",
+              "description": "Finished-goods (or any) product id from the pack"
+            },
+            {
+              "key": "use_by",
+              "value": "{{use_by}}",
+              "description": "Use-by date YYYY-MM-DD printed on the pack"
+            }
+          ]
+        },
+        "description": "### Recall by product + use-by\n\n`GET /stock/recall/?product_id=:id&use_by=:date`\n\nComplaint / glass-in-food flow when staff only have product id and use-by from the pack. Returns **every** `stock_lot` with that pair (different trace numbers / production dates), each with balances, stock units, and full backward + forward genealogy trees. Empty `lots` is success when no batch matches (wrong date).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `product_id` | yes | Product primary key |\n| `use_by` | yes | `YYYY-MM-DD` |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message: \"Recall report fetched.\", data: { product, use_by, lot_count, lots: [ { lot, balances, stock_units, has_genealogy, genealogy: { backward, forward, graph: { nodes, edges } } } ] } }`\n\nGenealogy rows include `lot_id`, `product_id`, `product_name`, `trace_number`, `supplier_lot_code`, `depth`, entry ids, `quantity_base`. `graph` is React Flow–ready (`nodes[].data.role` = focus|upstream|downstream; edges input→output).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including zero matching lots) |\n| 400 | Missing / invalid `product_id` or `use_by` |\n| 404 | Product missing or inactive |"
+      }
+    },
+    {
+      "name": "Product genealogy index",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/products/{{product_id}}/genealogy/?with_trees=1",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "products", "{{product_id}}", "genealogy", ""],
+          "query": [
+            {
+              "key": "with_trees",
+              "value": "1",
+              "description": "1 = include backward/forward trees; 0 = lot index + has_genealogy + edge_count only"
+            }
+          ]
+        },
+        "description": "### Product genealogy index\n\n`GET /stock/products/:product_id/genealogy/?with_trees=1`\n\nLists all available stock lots for a product (newest first, cap 200) with genealogy flags and optional full trees. Use when browsing every batch for a product without a use-by filter.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `product_id` | yes | Product primary key |\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `with_trees` | no | Default `1`. Use `0` / `false` / `no` for a light index (`lot`, `has_genealogy`, `edge_count` only) |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message: \"Product genealogy fetched.\", data: { product, lot_count, with_trees, lots: [ ... ] } }`\n\nWhen `with_trees=1`, each lot matches the recall lot shape (balances, stock_units, genealogy) plus `edge_count`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Invalid `with_trees` |\n| 404 | Product missing or inactive |"
+      }
+    },
+    {
+      "name": "Trace backward (lot)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/trace/backward/?lot_id={{lot_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "trace", "backward", ""],
+          "query": [
+            {
+              "key": "lot_id",
+              "value": "{{lot_id}}",
+              "description": "Known stock_lot id"
+            }
+          ]
+        },
+        "description": "### Trace backward (lot)\n\n`GET /stock/trace/backward/?lot_id=:id`\n\nLow-level lot genealogy: ingredients / supplier lots that fed into this lot (parents).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `lot_id` | yes | Stock lot primary key |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message: \"Backward trace fetched.\", data: [ { lot_id, product_id, trace_number, supplier_lot_code, depth, input_entry_id, output_entry_id, quantity_base }, ... ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (empty list if no edges) |\n| 400 | Missing / invalid `lot_id` |"
+      }
+    },
+    {
+      "name": "Trace forward (lot)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/trace/forward/?lot_id={{lot_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "trace", "forward", ""],
+          "query": [
+            {
+              "key": "lot_id",
+              "value": "{{lot_id}}",
+              "description": "Known stock_lot id"
+            }
+          ]
+        },
+        "description": "### Trace forward (lot)\n\n`GET /stock/trace/forward/?lot_id=:id`\n\nLow-level lot genealogy: finished goods / downstream lots this lot fed into (children). Use after identifying a suspect supplier lot from backward trace.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `lot_id` | yes | Stock lot primary key |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message: \"Forward trace fetched.\", data: [ { lot_id, product_id, trace_number, supplier_lot_code, depth, input_entry_id, output_entry_id, quantity_base }, ... ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (empty list if no edges) |\n| 400 | Missing / invalid `lot_id` |"
+      }
+    }
+  ]
+}
