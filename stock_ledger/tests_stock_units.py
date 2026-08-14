@@ -609,6 +609,31 @@ class ProductBarcodeTests(TestCase):
             400,
         )
 
+    def test_scan_goods_out_newer_lot_returns_qty_and_fifo_warning(self):
+        soon = self._lot(use_by=self.today + timedelta(days=3))
+        later = self._lot(use_by=self.today + timedelta(days=30))
+        self._receipt(soon, '10')
+        later_entry = self._receipt(later, '20')
+        loc = self.wh.id
+        pid = self.product.id
+
+        resp = self.client.get(
+            f'/stock/scan/goods-out/?code=E{later_entry.id}&location_id={loc}'
+            f'&expected_product_id={pid}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['lot_id'], later.id)
+        self.assertEqual(data['quantity'], '20')
+        self.assertFalse(data['fifo_ok'])
+        self.assertEqual(data['recommended_lot_id'], soon.id)
+        self.assertEqual(data['recommended_trace'], soon.trace_number)
+
+        product_only = self.client.get(
+            f'/stock/scan/goods-out/?code=P{pid}&location_id={loc}',
+        )
+        self.assertEqual(product_only.status_code, 400)
+
     def test_scan_returns_fifo_batches_with_supplier_and_days_left(self):
         soon = self._lot(use_by=self.today + timedelta(days=3))
         later = self._lot(use_by=self.today + timedelta(days=30))
