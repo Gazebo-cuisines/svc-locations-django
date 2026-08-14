@@ -11,6 +11,7 @@ from purchasing.services.julian import julian_trace_number
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
 from purchasing.serialize import _qty_str, rbac_names, shortfall_reason_options
+from purchasing.services.po_qty import queued_hold_by_line_no
 
 
 class GoodsInFormError(ValueError):
@@ -138,6 +139,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
     )
 
     line_blocks = []
+    holds = queued_hold_by_line_no(po.id)
     for line in lines:
         gin_type = effective_goods_in_type(line.product)
         tech = tech_by_product.get(line.product_id)
@@ -157,6 +159,7 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'qty_ordered': _qty_str(line.qty_ordered),
             'qty_received': _qty_str(line.qty_received),
             'qty_rejected': _qty_str(line.qty_rejected),
+            'qty_queued': _qty_str(holds.get(line.line_no, 0)),
             'qty_balance': _qty_str(line.qty_balance),
             'shortfall_reason': line.shortfall_reason,
             'needs_credit_note': line.qty_rejected > 0,

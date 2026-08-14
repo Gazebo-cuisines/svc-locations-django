@@ -396,13 +396,16 @@ def product_update_api(request, product: Product):
         'secondary_gff_recipe',
         'external_barcode',
         'label_mode',
-        'is_active',
         'is_downtime',
         'ingredient_count',
         'remarks',
     ):
         if field in body:
             setattr(product, field, body[field])
+    # Delist only via DELETE. Ignore is_active=false on save so an unchecked
+    # form box cannot hide the product. is_active=true still reactivates.
+    if body.get('is_active') is True:
+        product.is_active = True
 
     purchase = _purchase_details_from_body(body)
     if purchase is not None:

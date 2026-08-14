@@ -19,6 +19,7 @@ from stock_ledger.models import (
     ProductionRun,
     StockBalance,
     StockEntry,
+    StockEntryPostingStatus,
     StockEntryType,
     StockLot,
     StockLotOrigin,
@@ -55,6 +56,7 @@ from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     receipt_meta_by_lot_ids,
     serialize_balance_row,
+    supplier_pack_fields,
 )
 from stock_ledger.util.recall import (
     RecallLookupError,
@@ -1844,6 +1846,12 @@ def audit_timeline_api(request):
             'counterparty_location',
             'lot__product',
         )
+        .exclude(
+            posting__status__in=[
+                StockEntryPostingStatus.QUEUED,
+                StockEntryPostingStatus.CANCELLED,
+            ],
+        )
         .order_by('-recorded_at', '-id')
     )
     try:
@@ -1998,6 +2006,20 @@ def warehouse_remaining_api(request):
         )
         .order_by('location__name', 'lot__product__name')
     )
+    rows = list(rows)
+    product_ids = {row['lot__product_id'] for row in rows}
+    products = {
+        p.id: p
+        for p in Product.objects.filter(pk__in=product_ids).select_related('unit')
+    }
+    mappings = {}
+    for mapping in (
+        ProductSupplier.objects
+        .filter(product_id__in=product_ids, is_active=True)
+        .select_related('outer_unit', 'inner_unit')
+        .order_by('-is_default', '-id')
+    ):
+        mappings.setdefault(mapping.product_id, mapping)
 
     by_location: dict[int, dict] = {}
     for row in rows:
@@ -2010,13 +2032,19 @@ def warehouse_remaining_api(request):
                 'products': [],
             }
             by_location[loc_id] = bucket
+        qty = row['remaining_qty']
+        pid = row['lot__product_id']
+        pack = supplier_pack_fields(
+            qty, products.get(pid), mappings.get(pid),
+        )
         bucket['products'].append({
-            'product_id': row['lot__product_id'],
+            'product_id': pid,
             'product_name': row['lot__product__name'],
             'unit_id': row['lot__product__unit_id'],
             'unit_name': row['lot__product__unit__name'],
-            'remaining_qty': _dec(row['remaining_qty']),
+            'remaining_qty': _dec(qty),
             'lot_count': row['lot_count'],
+            **pack,
         })
 
     data = list(by_location.values())

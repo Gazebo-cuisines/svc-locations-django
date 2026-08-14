@@ -36,6 +36,7 @@ class ProductApiTests(TestCase):
             'unit_id': 1,
             'source_container_id': 1,
             'destination_container_id': 2,
+            'storage_regime': 'frozen',
         }
         payload.update(overrides)
         return self.client.post(
@@ -88,11 +89,15 @@ class ProductApiTests(TestCase):
 
         update_resp = self.client.patch(
             f'/product/{product_id}/',
-            data=json.dumps({'name': 'Product 102 Updated'}),
+            data=json.dumps({
+                'name': 'Product 102 Updated',
+                'is_active': False,
+            }),
             content_type='application/json',
             HTTP_AUTHORIZATION=self.auth_header,
         )
         self.assertEqual(update_resp.status_code, 200)
+        self.assertTrue(update_resp.json()['data']['is_active'])
 
         delete_resp = self.client.delete(
             f'/product/{product_id}/',

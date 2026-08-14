@@ -10,7 +10,7 @@ from users_rbac.models import RbacUser
 
 @require_GET
 def product_timeline_api(request, pk: int):
-    if not active_products().filter(pk=pk).exists():
+    if not Product.objects.filter(pk=pk).exists():
         return api_error('Product not found.', status_code=404)
 
     row = ProductAudit.objects.filter(product_id=pk).first()

@@ -15,6 +15,7 @@ from stock_ledger.models import (
 from stock_ledger.util import entry_labels
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.services import _project_balance
+from purchasing.services.po_qty import apply_po_receipt_from_entry
 
 
 def posting_dict(posting: StockEntryPosting) -> dict:
@@ -44,6 +45,7 @@ def queue_entry(
     actor_user_id=None,
     lan_username=None,
     source_workstation=None,
+    meta: dict | None = None,
 ) -> StockEntryPosting:
     existing = StockEntryPosting.objects.filter(stock_entry=entry).first()
     if existing is not None:
@@ -55,6 +57,7 @@ def queue_entry(
         actor_user_id=actor_user_id,
         lan_username=lan_username,
         source_workstation=source_workstation,
+        meta=meta or {},
     )
 
 
@@ -179,6 +182,7 @@ def post_entry(
             'source_workstation',
         ],
     )
+    apply_po_receipt_from_entry(entry)
     return {
         'entry_id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),

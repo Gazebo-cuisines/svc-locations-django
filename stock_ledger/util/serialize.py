@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.core.exceptions import ObjectDoesNotExist
 
+from product.models import Product, ProductSupplier
 from stock_ledger.models import StockBalance, StockEntry, StockEntryType
+from stock_ledger.util.conversions import StockValidationError, stock_to_kg, stock_to_packs
 
 BALANCE_SELECT_RELATED = (
     'location',
@@ -10,11 +14,43 @@ BALANCE_SELECT_RELATED = (
     'lot__product__range',
     'lot__product__unit',
     'lot__product__yield_data',
+    'lot__product_supplier__outer_unit',
+    'lot__product_supplier__inner_unit',
 )
 
 
 def _dec(value):
     return str(value) if value is not None else None
+
+
+def supplier_pack_fields(
+    stock_qty: Decimal,
+    product: Product | None,
+    mapping: ProductSupplier | None,
+) -> dict:
+    """Warehouse display: N bags + pack shape. Ledger qty stays in product.unit."""
+    display_kg = (
+        _dec(stock_to_kg(stock_qty, product)) if product is not None else None
+    )
+    fields = {
+        'pack_quantity': None,
+        'pack_unit_name': None,
+        'shape_format_label': None,
+        'display_kg': display_kg,
+    }
+    if mapping is None or product is None:
+        return fields
+    fields['shape_format_label'] = mapping.shape_format_label
+    fields['pack_unit_name'] = (
+        mapping.outer_unit.name if mapping.outer_unit_id else None
+    )
+    try:
+        fields['pack_quantity'] = _dec(
+            stock_to_packs(stock_qty, mapping, product),
+        )
+    except StockValidationError:
+        fields['pack_quantity'] = None
+    return fields
 
 
 def receipt_meta_by_lot_ids(lot_ids: set[int]) -> dict[int, dict]:
@@ -62,6 +98,11 @@ def serialize_balance_row(
     except ObjectDoesNotExist:
         yield_factor = None
     meta = receipt_meta or {}
+    pack = supplier_pack_fields(
+        balance.quantity,
+        product,
+        getattr(balance.lot, 'product_supplier', None),
+    )
     return {
         'lot_id': balance.lot_id,
         'product_id': balance.lot.product_id,
@@ -92,6 +133,7 @@ def serialize_balance_row(
         'quantity_base': _dec(balance.quantity_base),
         'last_entry_id': balance.last_entry_id,
         'updated_at': balance.updated_at.isoformat() if balance.updated_at else None,
+        **pack,
     }
 
 

@@ -6,6 +6,7 @@ from purchasing.models import (
     PurchaseOrderLine,
     SHORTFALL_AWAIT_REASONS,
 )
+from purchasing.services.po_qty import queued_hold_by_line_no
 from users_rbac.models import RbacUser
 
 
@@ -49,7 +50,11 @@ def rbac_names(user_ids: set[int | None]) -> dict[int, str]:
     }
 
 
-def line_dict(line: PurchaseOrderLine) -> dict:
+def line_dict(line: PurchaseOrderLine, qty_queued=None) -> dict:
+    if qty_queued is None:
+        qty_queued = queued_hold_by_line_no(line.purchase_order_id).get(
+            line.line_no, 0,
+        )
     return {
         'id': line.id,
         'line_no': line.line_no,
@@ -59,6 +64,7 @@ def line_dict(line: PurchaseOrderLine) -> dict:
         'qty_ordered': _qty_str(line.qty_ordered),
         'qty_received': _qty_str(line.qty_received),
         'qty_rejected': _qty_str(line.qty_rejected),
+        'qty_queued': _qty_str(qty_queued),
         'qty_balance': _qty_str(line.qty_balance),
         'shortfall_reason': line.shortfall_reason,
         'needs_credit_note': line.qty_rejected > 0,
@@ -111,6 +117,7 @@ def po_detail_dict(po: PurchaseOrder) -> dict:
         po.created_by_user_id,
     })
     data = po_list_dict(po)
+    holds = queued_hold_by_line_no(po.id)
     data.update({
         'remarks': po.remarks,
         'delivery_trace_number': po.delivery_trace_number,
@@ -129,6 +136,9 @@ def po_detail_dict(po: PurchaseOrder) -> dict:
         'total_net': _qty_str(po.total_net),
         'created_by_user_id': po.created_by_user_id,
         'created_by_name': names.get(po.created_by_user_id),
-        'lines': [line_dict(line) for line in po.lines.all()],
+        'lines': [
+            line_dict(line, qty_queued=holds.get(line.line_no, 0))
+            for line in po.lines.all()
+        ],
     })
     return data

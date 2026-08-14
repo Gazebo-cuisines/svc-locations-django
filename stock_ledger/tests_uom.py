@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.utils import timezone
 
 from locations.models import Location, LocationRole, LocationRoleAssignment
@@ -32,6 +32,9 @@ class UomConversionTests(TestCase):
         self.box = Unit.objects.create(id=203, name='Box')
         seed_global_unit_conversions()
         self.wh = Location.objects.create(id=201, name='UoM WH', visible=True)
+        LocationRoleAssignment.objects.create(
+            location=self.wh, role=LocationRole.STORAGE,
+        )
         self.supplier = Location.objects.create(id=202, name='UoM Sup', visible=True)
         LocationRoleAssignment.objects.create(
             location=self.supplier, role=LocationRole.SUPPLIER,
@@ -97,3 +100,43 @@ class UomConversionTests(TestCase):
         self.assertEqual(
             StockEntry.objects.get(pk=entry.pk).unit_id, self.grams.id,
         )
+
+    def test_balances_and_remaining_show_supplier_packs(self):
+        lot = StockLot.objects.create(
+            product=self.product,
+            trace_number='T-PEAS-PACK',
+            origin=StockLotOrigin.PURCHASE,
+            use_by=date(2026, 12, 1),
+        )
+        services.receipt(
+            idempotency_key=f'uom-pack-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('2'),
+            product_supplier=self.mapping,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        client = Client()
+        balances = client.get(
+            f'/stock/balances/?location_id={self.wh.id}'
+            f'&product_id={self.product.id}',
+        )
+        self.assertEqual(balances.status_code, 200, balances.content)
+        row = balances.json()['data'][0]
+        self.assertEqual(Decimal(row['quantity']), Decimal('20000'))
+        self.assertEqual(Decimal(row['pack_quantity']), Decimal('2'))
+        self.assertEqual(row['pack_unit_name'], 'Box')
+        self.assertEqual(Decimal(row['display_kg']), Decimal('20'))
+        self.assertTrue(row['shape_format_label'])
+
+        remaining = client.get(
+            f'/stock/warehouse/remaining/?location_id={self.wh.id}',
+        )
+        self.assertEqual(remaining.status_code, 200, remaining.content)
+        product = remaining.json()['data'][0]['products'][0]
+        self.assertEqual(Decimal(product['remaining_qty']), Decimal('20000'))
+        self.assertEqual(Decimal(product['pack_quantity']), Decimal('2'))
+        self.assertEqual(product['pack_unit_name'], 'Box')
+        self.assertEqual(Decimal(product['display_kg']), Decimal('20'))
+        self.assertTrue(product['shape_format_label'])

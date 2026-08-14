@@ -14,8 +14,12 @@ from purchasing.models import (
     PurchaseOrderStatus,
     SHORTFALL_AWAIT_REASONS,
 )
-from purchasing.services.goods_in_form import resolve_goods_in_form
+from purchasing.services.po_qty import (
+    queued_hold_for_line,
+    recompute_po_status,
+)
 from purchasing.serialize import _qty_str
+from purchasing.services.goods_in_form import resolve_goods_in_form
 from purchasing.services.release import is_quarantine_location
 from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
@@ -81,17 +85,6 @@ def _stock_quantity(line: PurchaseOrderLine, purchase_qty: Decimal) -> Decimal:
     if multiplier <= 0:
         raise ReceiveError(f'line {line.line_no} has invalid multiplier.')
     return (purchase_qty * multiplier).quantize(Decimal('0.000001'))
-
-
-def _recompute_po_status(po: PurchaseOrder) -> None:
-    lines = list(po.lines.all())
-    if not lines:
-        return
-    if all(line.qty_balance == 0 for line in lines):
-        po.status = PurchaseOrderStatus.RECEIVED
-    elif any(line.qty_received > 0 for line in lines):
-        po.status = PurchaseOrderStatus.PARTIAL
-    po.save(update_fields=['status', 'updated_at'])
 
 
 def _entry_payload(entry: StockEntry) -> dict:
@@ -287,20 +280,10 @@ def receive_purchase_order(
             raise ReceiveError(
                 f'Line {line.line_no} has not passed QC (line_check_ok=false).',
             )
-        if line.qty_balance <= 0 or line.line_closed:
-            raise ReceiveError(f'Line {line.line_no} has no open balance.')
 
         purchase_qty = _parse_decimal(
             raw.get('quantity'), f'lines[{index}].quantity',
         )
-        if purchase_qty > line.qty_balance:
-            raise ReceiveError(
-                f'Line {line.line_no}: quantity {purchase_qty} exceeds '
-                f'balance {line.qty_balance}.',
-            )
-        leftover = (line.qty_balance - purchase_qty).quantize(Decimal('0.000001'))
-        shortfall_reason = _parse_shortfall(raw, index, leftover)
-
         idempotency_key = raw.get('idempotency_key')
         if idempotency_key in (None, ''):
             raise ReceiveError(f'lines[{index}].idempotency_key is required.')
@@ -311,6 +294,21 @@ def receive_purchase_order(
         prior_entry = StockEntry.objects.filter(
             idempotency_key=unit_keys[0],
         ).first()
+        queue_stock = _wants_queued_stock(raw, label_format=label_format)
+        queued = queued_hold_for_line(line)
+        open_qty = (line.qty_balance - queued).quantize(Decimal('0.000001'))
+        leftover = Decimal('0')
+        shortfall_reason = None
+        if prior_entry is None:
+            if line.line_closed or open_qty <= 0:
+                raise ReceiveError(f'Line {line.line_no} has no open balance.')
+            if purchase_qty > open_qty:
+                raise ReceiveError(
+                    f'Line {line.line_no}: quantity {purchase_qty} exceeds '
+                    f'balance {open_qty}.',
+                )
+            leftover = (open_qty - purchase_qty).quantize(Decimal('0.000001'))
+            shortfall_reason = _parse_shortfall(raw, index, leftover)
 
         lot_body = raw.get('lot') if isinstance(raw.get('lot'), dict) else {}
         use_by = _optional_date(
@@ -374,13 +372,13 @@ def receive_purchase_order(
             'authorised_by_user_id': audit.get('authorised_by_user_id'),
         }
         receipt_audit = {k: v for k, v in receipt_audit.items() if v is not None}
-        queue_stock = _wants_queued_stock(raw, label_format=label_format)
         qty_parts = _split_quantities(receipt_qty, label_count)
+        purchase_parts = _split_quantities(purchase_qty, label_count)
 
         transactions = []
         last_entry = None
-        for unit_index, (unit_key, part_qty) in enumerate(
-            zip(unit_keys, qty_parts), start=1,
+        for unit_index, (unit_key, part_qty, purchase_part) in enumerate(
+            zip(unit_keys, qty_parts, purchase_parts), start=1,
         ):
             try:
                 entry = stock_services.receipt(
@@ -411,6 +409,12 @@ def receive_purchase_order(
                     actor_user_id=receipt_audit.get('actor_user_id'),
                     lan_username=receipt_audit.get('lan_username'),
                     source_workstation=receipt_audit.get('source_workstation'),
+                    meta={
+                        'po_id': po.id,
+                        'line_id': line.id,
+                        'line_no': line.line_no,
+                        'purchase_qty': str(purchase_part),
+                    },
                 )
             else:
                 posting = entry_posting.get_posting(entry)
@@ -465,9 +469,10 @@ def receive_purchase_order(
                 if shortfall_reason and shortfall_reason not in SHORTFALL_AWAIT_REASONS
                 else Decimal('0')
             )
-            line.qty_received = (line.qty_received + purchase_qty).quantize(
-                Decimal('0.000001'),
-            )
+            if not queue_stock:
+                line.qty_received = (line.qty_received + purchase_qty).quantize(
+                    Decimal('0.000001'),
+                )
             line.qty_rejected = (line.qty_rejected + reject_qty).quantize(
                 Decimal('0.000001'),
             )
@@ -538,6 +543,7 @@ def receive_purchase_order(
             ),
             'qty_received': _qty_str(line.qty_received),
             'qty_rejected': _qty_str(line.qty_rejected),
+            'qty_queued': _qty_str(queued_hold_for_line(line)),
             'qty_balance': _qty_str(line.qty_balance),
             'shortfall_reason': line.shortfall_reason,
             'needs_credit_note': line.qty_rejected > 0,
@@ -564,7 +570,7 @@ def receive_purchase_order(
             row['goods_in_label'] = first['goods_in_label']
         results.append(row)
 
-    _recompute_po_status(po)
+    recompute_po_status(po)
     form = resolve_goods_in_form(po.id)
     form['receive_results'] = results
     return form
