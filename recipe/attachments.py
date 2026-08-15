@@ -119,7 +119,7 @@ def attachment_url(
         return None
 
 
-def attachment_dict(row: RecipeAttachment, *, include_url: bool = True) -> dict:
+def attachment_dict(row: RecipeAttachment) -> dict:
     return {
         'id': row.id,
         'recipe_version_id': row.recipe_version_id,
@@ -131,7 +131,7 @@ def attachment_dict(row: RecipeAttachment, *, include_url: bool = True) -> dict:
         'sort_order': row.sort_order,
         'uploaded_by_sub': row.uploaded_by_sub,
         'created_at': row.created_at.isoformat() if row.created_at else None,
-        'url': attachment_url(row) if include_url else None,
+        'url': attachment_url(row),
     }
 
 

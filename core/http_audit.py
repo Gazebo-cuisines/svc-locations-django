@@ -1,4 +1,4 @@
-"""Best-effort S3 log of every API request/response JSON. Never raises."""
+"""Best-effort S3 log of mutating API request/response JSON. Never raises."""
 
 import json
 import os
@@ -150,7 +150,7 @@ def audit_request(request, response):
     try:
         if (request.path or '').startswith(SKIP_PREFIXES):
             return
-        if request.method in ('HEAD', 'OPTIONS'):
+        if request.method in ('GET', 'HEAD', 'OPTIONS'):
             return
         _start_audit(build_payload(request, response))
     except Exception:

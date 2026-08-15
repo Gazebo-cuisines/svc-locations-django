@@ -65,7 +65,7 @@ def users_collection(request):
             qs = qs.filter(is_active=False)
         return success_response(
             'Users fetched successfully.',
-            data=[user_dict(row, include_photo_url=False) for row in qs.distinct()],
+            data=[user_dict(row) for row in qs.distinct()],
         )
 
     body = _parse_body(request)

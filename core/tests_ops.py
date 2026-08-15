@@ -125,3 +125,8 @@ class ErrorTicketTests(TestCase):
         self.assertEqual(payload['in']['message'], 'boom')
         self.assertEqual(payload['out']['status'], 'success')
         self.assertEqual(payload['status'], 201)
+
+    def test_http_audit_skips_get(self):
+        with self._attach(self.admin):
+            self.client.get('/ops/errors/')
+        self.mock_audit.assert_not_called()

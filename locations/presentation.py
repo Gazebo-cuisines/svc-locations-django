@@ -31,13 +31,12 @@ def location_list_dict(location: Location) -> dict:
         'roles': list(location.roles.values_list('role', flat=True)),
         'features': list(location.features.values_list('feature', flat=True)),
         'image_key': location.image_key,
-        'image_url': None,
+        'image_url': location_image_url(location),
     }
 
 
 def location_detail_dict(location: Location) -> dict:
     data = location_list_dict(location)
-    data['image_url'] = location_image_url(location)
     profile = getattr(location, 'stock_profile', None)
     supplier = getattr(location, 'supplier_profile', None)
     data.update(

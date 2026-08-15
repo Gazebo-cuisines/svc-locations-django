@@ -20,7 +20,7 @@ class OpsErrorMiddleware:
 
 
 class ApiAuditMiddleware:
-    """Write request + response JSON to AUDIT_S3_BUCKET. Never changes the response."""
+    """Write mutating request + response JSON to AUDIT_S3_BUCKET. Never changes the response."""
 
     def __init__(self, get_response):
         self.get_response = get_response

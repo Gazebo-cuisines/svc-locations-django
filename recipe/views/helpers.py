@@ -111,9 +111,7 @@ def active_or_latest_version(recipe: Recipe):
     return max(versions, key=lambda v: v.version_number) if versions else None
 
 
-def component_dict(
-    component: RecipeComponent, *, include_attachment_urls: bool = True,
-) -> dict:
+def component_dict(component: RecipeComponent) -> dict:
     return {
         'id': component.id,
         'recipe_id': component.recipe_version.recipe_id,
@@ -134,7 +132,7 @@ def component_dict(
         'step_instructions': component.step_instructions,
         'is_implicit': component.is_implicit,
         'attachments': [
-            attachment_dict(a, include_url=include_attachment_urls)
+            attachment_dict(a)
             for a in component.attachments.all()
         ],
     }
@@ -195,11 +193,11 @@ def recipe_version_detail_dict(version: RecipeVersion) -> dict:
     return data
 
 
-def recipe_list_dict(recipe: Recipe, *, include_attachment_urls: bool = False) -> dict:
+def recipe_list_dict(recipe: Recipe) -> dict:
     version = active_or_latest_version(recipe)
     ingredients = (
         [
-            component_dict(c, include_attachment_urls=include_attachment_urls)
+            component_dict(c)
             for c in sorted(version.components.all(), key=lambda c: c.line_no)
         ]
         if version else []
@@ -233,7 +231,7 @@ def recipe_list_dict(recipe: Recipe, *, include_attachment_urls: bool = False) -
 
 
 def recipe_detail_dict(recipe: Recipe) -> dict:
-    data = recipe_list_dict(recipe, include_attachment_urls=True)
+    data = recipe_list_dict(recipe)
     data.update({
         'remarks': recipe.remarks,
         'created_at': recipe.created_at.isoformat() if recipe.created_at else None,

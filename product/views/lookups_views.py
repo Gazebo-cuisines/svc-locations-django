@@ -44,7 +44,7 @@ def product_class_list_api(request):
 
 
 def _category_dict(
-    row: Category, *, include_children: bool = True, include_image_url: bool = True,
+    row: Category, *, include_children: bool = True,
 ) -> dict:
     data = {
         'id': row.id,
@@ -54,7 +54,7 @@ def _category_dict(
         'code_generator': row.code_generator,
         'remarks': row.remarks,
         'image_key': row.image_key,
-        'image_url': category_image_url(row) if include_image_url else None,
+        'image_url': category_image_url(row),
     }
     if include_children:
         data['children'] = []
@@ -63,7 +63,7 @@ def _category_dict(
 
 def _category_tree(root_parent_id=None) -> list:
     nodes = {
-        row.id: _category_dict(row, include_image_url=False)
+        row.id: _category_dict(row)
         for row in Category.objects.all().order_by('name')
     }
     roots = []

@@ -155,14 +155,14 @@ def grants_dict(user: RbacUser) -> dict:
 
 
 def user_dict(
-    user: RbacUser, *, with_grants: bool = True, include_photo_url: bool = True,
+    user: RbacUser, *, with_grants: bool = True,
 ) -> dict:
     data = {
         'id': user.id,
         'username': user.username,
         'email': user.email,
         'display_name': user.display_name,
-        'photo_url': photo_url(user) if include_photo_url else None,
+        'photo_url': photo_url(user),
         'is_active': user.is_active,
         'is_admin': is_admin_user(user),
         'cognito_sub': user.cognito_sub,

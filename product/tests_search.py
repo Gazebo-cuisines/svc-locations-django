@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 
 from locations.models import Location, LocationRole, LocationRoleAssignment
@@ -45,11 +47,22 @@ class GlobalSearchApiTests(TestCase):
             source_container=self.wh,
             destination_container=self.wh,
         )
+        self.auth = patch('users_rbac.auth.attach_user', return_value=None)
+        self.auth.start()
+        self.addCleanup(self.auth.stop)
 
     def _hits(self, q: str):
         resp = self.client.get('/search/', {'q': q})
         self.assertEqual(resp.status_code, 200, resp.content)
         return resp.json()['data']['results']
+
+    def test_requires_auth(self):
+        self.auth.stop()
+        try:
+            resp = self.client.get('/search/', {'q': 'ab'})
+            self.assertEqual(resp.status_code, 401)
+        finally:
+            self.auth.start()
 
     def test_short_q_rejected(self):
         resp = self.client.get('/search/', {'q': 'x'})

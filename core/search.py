@@ -7,6 +7,7 @@ from django.views.decorators.http import require_GET
 from locations.models import Location, LocationRole
 from locations.utils.api_response import api_error, api_success
 from product.query import active_products
+from users_rbac.auth import require_auth
 from purchasing.models import PurchaseOrder
 from stock_ledger.models import StockLot
 from stock_ledger.util.conversions import StockValidationError
@@ -37,6 +38,7 @@ def _scan_hit(q: str) -> dict | None:
 
 @csrf_exempt
 @require_GET
+@require_auth
 def global_search_api(request):
     q = (request.GET.get('q') or '').strip()
     if len(q) < MIN_LEN:
