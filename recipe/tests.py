@@ -1,9 +1,11 @@
 from decimal import Decimal
 import time
+from datetime import date
 from unittest.mock import patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+from django.core.management import call_command
 from django.test import TestCase
 
 from locations.models import Location
@@ -549,3 +551,54 @@ class RecipeApprovalTests(RecipeAuthMixin, TestCase):
             ) % child.id,
         )
         self.assertEqual(resp.status_code, 409)
+
+
+class RecipeScheduledActivationTests(TestCase):
+    def setUp(self):
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        Location.objects.create(id=1, name='Spice Room', visible=True)
+        Location.objects.create(id=2, name='Mixers', visible=True)
+        Product.objects.create(
+            name='Due FG',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+        self.product = Product.objects.get(name='Due FG')
+        self.recipe = Recipe.objects.create(product=self.product, name='Due FG')
+
+    def test_dry_run_does_not_activate(self):
+        version = RecipeVersion.objects.create(
+            recipe=self.recipe,
+            version_number=1,
+            status=RecipeVersionStatus.APPROVED,
+            effective_from=date(2020, 1, 1),
+        )
+        call_command('activate_due_recipe_versions', dry_run=True)
+        version.refresh_from_db()
+        self.assertEqual(version.status, RecipeVersionStatus.APPROVED)
+
+    def test_due_version_activates(self):
+        version = RecipeVersion.objects.create(
+            recipe=self.recipe,
+            version_number=1,
+            status=RecipeVersionStatus.APPROVED,
+            effective_from=date(2020, 1, 1),
+        )
+        RecipeVersion.objects.create(
+            recipe=self.recipe,
+            version_number=2,
+            status=RecipeVersionStatus.APPROVED,
+            effective_from=date(2099, 1, 1),
+        )
+        call_command('activate_due_recipe_versions')
+        version.refresh_from_db()
+        self.assertEqual(version.status, RecipeVersionStatus.ACTIVE)
+        future = self.recipe.versions.get(version_number=2)
+        self.assertEqual(future.status, RecipeVersionStatus.APPROVED)
