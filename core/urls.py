@@ -2,8 +2,13 @@
 
 from django.urls import include, path
 
+from core.ops_views import error_detail, errors_collection
+from core.search import global_search_api
 
 urlpatterns = [
+    path('search/', global_search_api, name='global-search'),
+    path('ops/errors/', errors_collection, name='ops-errors'),
+    path('ops/errors/<int:pk>/', error_detail, name='ops-error-detail'),
     path('', include('locations.urls')),
     path('product/', include('product.urls')),
     path('recipe/', include('recipe.urls')),

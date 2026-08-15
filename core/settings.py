@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'core',
     'locations',
     'product',
     'recipe',
@@ -42,6 +43,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.OpsErrorMiddleware',
+    'core.middleware.ApiAuditMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'

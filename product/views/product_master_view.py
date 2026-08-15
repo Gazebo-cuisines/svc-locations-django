@@ -311,6 +311,7 @@ def product_collection_api(request):
         products = active_products(
             source_container_id=source_id,
             destination_container_id=dest_id,
+            q=(request.GET.get('q') or '').strip() or None,
         )
         return api_success(
             'Product list fetched successfully.',

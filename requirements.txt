@@ -7,3 +7,4 @@ certifi>=2024.0
 django-cors-headers>=4.4
 gunicorn>=22.0
 reportlab>=4.0
+pillow>=9.0
