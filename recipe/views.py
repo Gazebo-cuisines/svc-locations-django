@@ -8,7 +8,8 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.models import Location
 from locations.utils.api_response import api_error, api_success
-from product.models import Product, Unit
+from product.audit_log import capture_product_audit
+from product.models import Product, ProductAudit, Unit
 from product.query import active_products
 from recipe.models import (
     Recipe,
@@ -31,6 +32,22 @@ from recipe.utils import (
 
 def _dec(value):
     return str(value) if value is not None else None
+
+
+_RECIPE_AUDIT_ENTITIES = frozenset({
+    'recipe', 'recipe_version', 'recipe_component',
+})
+
+
+def _audit(request, *, product_id, entity, action, before_data, after_data):
+    capture_product_audit(
+        request,
+        product_id=product_id,
+        entity=entity,
+        action=action,
+        before_data=before_data,
+        after_data=after_data,
+    )
 
 
 def _parse_json_body(request):
@@ -211,9 +228,19 @@ def recipe_by_product_api(request, product_id: int):
         return api_error('Product not found.', status_code=404)
     recipe, created = get_or_create_recipe_with_draft(product_id)
     recipe = _recipe_detail_qs().get(pk=recipe.pk)
+    after = recipe_detail_dict(recipe)
+    if created:
+        _audit(
+            request,
+            product_id=product_id,
+            entity='recipe',
+            action='create',
+            before_data=None,
+            after_data=after,
+        )
     return api_success(
         'Recipe created successfully.' if created else 'Recipe fetched successfully.',
-        recipe_detail_dict(recipe),
+        after,
         status_code=201 if created else 200,
     )
 
@@ -262,9 +289,19 @@ def recipe_create_api(request):
         remarks=body.get('remarks'),
     )
     recipe = _recipe_detail_qs().get(pk=recipe.pk)
+    after = recipe_detail_dict(recipe)
+    if created:
+        _audit(
+            request,
+            product_id=product_id,
+            entity='recipe',
+            action='create',
+            before_data=None,
+            after_data=after,
+        )
     return api_success(
         'Recipe created successfully.' if created else 'Recipe fetched successfully.',
-        recipe_detail_dict(recipe),
+        after,
         status_code=201 if created else 200,
     )
 
@@ -281,7 +318,7 @@ def recipe_detail_api(request, pk: int):
     if request.method == 'GET':
         return api_success('Recipe fetched successfully.', recipe_detail_dict(recipe))
     if request.method == 'DELETE':
-        return recipe_delete_api(recipe)
+        return recipe_delete_api(request, recipe)
     return recipe_update_api(request, recipe)
 
 
@@ -290,6 +327,7 @@ def recipe_update_api(request, recipe: Recipe):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
+    before_data = recipe_detail_dict(recipe)
     if 'name' in body:
         recipe.name = body['name']
     if 'remarks' in body:
@@ -301,11 +339,21 @@ def recipe_update_api(request, recipe: Recipe):
         return api_error(f'Could not update recipe: {exc}', status_code=400)
 
     recipe = _recipe_detail_qs().get(pk=recipe.pk)
-    return api_success('Recipe updated successfully.', recipe_detail_dict(recipe))
+    after_data = recipe_detail_dict(recipe)
+    _audit(
+        request,
+        product_id=recipe.product_id,
+        entity='recipe',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
+    return api_success('Recipe updated successfully.', after_data)
 
 
-def recipe_delete_api(recipe: Recipe):
+def recipe_delete_api(request, recipe: Recipe):
     product_id = recipe.product_id
+    before_data = recipe_detail_dict(recipe)
     # versions FK is PROTECT; components CASCADE from versions
     with transaction.atomic():
         version_ids = list(recipe.versions.values_list('pk', flat=True))
@@ -313,7 +361,53 @@ def recipe_delete_api(recipe: Recipe):
         recipe.versions.all().delete()
         recipe.delete()
     sync_has_recipe(product_id)
+    _audit(
+        request,
+        product_id=product_id,
+        entity='recipe',
+        action='delete',
+        before_data=before_data,
+        after_data=None,
+    )
     return api_success('Recipe deleted successfully.', data=None)
+
+
+def _event_version_id(event: dict):
+    for payload in (event.get('after_json'), event.get('before_json')):
+        if not isinstance(payload, dict):
+            continue
+        if event.get('entity') == 'recipe_version' and payload.get('id') is not None:
+            return payload.get('id')
+        if payload.get('recipe_version_id') is not None:
+            return payload.get('recipe_version_id')
+    return None
+
+
+@require_GET
+def recipe_audit_api(request, pk: int):
+    try:
+        recipe = Recipe.objects.get(pk=pk)
+    except Recipe.DoesNotExist:
+        return api_error('Recipe not found.', status_code=404)
+
+    row = ProductAudit.objects.filter(product_id=recipe.product_id).first()
+    events = []
+    if row and isinstance(row.timeline_events, list):
+        events = [
+            event
+            for event in reversed(row.timeline_events)
+            if event.get('entity') in _RECIPE_AUDIT_ENTITIES
+        ]
+    version_id = request.GET.get('version_id')
+    if version_id not in (None, ''):
+        try:
+            version_id = int(version_id)
+        except (TypeError, ValueError):
+            return api_error('version_id must be an integer.', status_code=400)
+        events = [
+            event for event in events if _event_version_id(event) == version_id
+        ]
+    return api_success('Recipe audit fetched successfully.', events)
 
 
 def _version_detail_qs():
@@ -445,6 +539,14 @@ def recipe_version_collection_api(request, pk: int):
     data = recipe_version_detail_dict(version)
     if source is not None:
         data['copied_from_version_id'] = source.id
+    _audit(
+        request,
+        product_id=recipe.product_id,
+        entity='recipe_version',
+        action='create',
+        before_data=None,
+        after_data=data,
+    )
     return api_success(
         'Recipe version created successfully.',
         data,
@@ -478,6 +580,7 @@ def recipe_version_update_api(request, version: RecipeVersion):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
+    before_data = recipe_version_detail_dict(version)
     try:
         if 'status' in body:
             status = body['status']
@@ -544,14 +647,23 @@ def recipe_version_update_api(request, version: RecipeVersion):
     except IntegrityError as exc:
         return api_error(f'Could not update recipe version: {exc}', status_code=400)
 
-    version = RecipeVersion.objects.prefetch_related(
+    version = RecipeVersion.objects.select_related('recipe').prefetch_related(
         'components__recipe_version',
         'components__component_product',
         'components__unit',
     ).get(pk=version.pk)
+    after_data = recipe_version_detail_dict(version)
+    _audit(
+        request,
+        product_id=version.recipe.product_id,
+        entity='recipe_version',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Recipe version updated successfully.',
-        recipe_version_detail_dict(version),
+        after_data,
     )
 
 
@@ -560,19 +672,25 @@ def recipe_version_update_api(request, version: RecipeVersion):
 @gate_recipe_activate
 def recipe_version_activate_api(request, pk: int):
     try:
-        version = RecipeVersion.objects.get(pk=pk)
+        version = _version_detail_qs().select_related('recipe').get(pk=pk)
     except RecipeVersion.DoesNotExist:
         return api_error('Recipe version not found.', status_code=404)
 
+    before_data = recipe_version_detail_dict(version)
     version = activate_version(version)
-    version = RecipeVersion.objects.prefetch_related(
-        'components__recipe_version',
-        'components__component_product',
-        'components__unit',
-    ).get(pk=version.pk)
+    version = _version_detail_qs().select_related('recipe').get(pk=version.pk)
+    after_data = recipe_version_detail_dict(version)
+    _audit(
+        request,
+        product_id=version.recipe.product_id,
+        entity='recipe_version',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Recipe version activated successfully.',
-        recipe_version_detail_dict(version),
+        after_data,
     )
 
 
@@ -641,9 +759,18 @@ def recipe_component_collection_api(request, pk: int):
     except IntegrityError as exc:
         return api_error(f'Could not create component: {exc}', status_code=400)
 
+    after_data = component_dict(component)
+    _audit(
+        request,
+        product_id=version.recipe.product_id,
+        entity='recipe_component',
+        action='create',
+        before_data=None,
+        after_data=after_data,
+    )
     return api_success(
         'Recipe component created successfully.',
-        component_dict(component),
+        after_data,
         status_code=201,
     )
 
@@ -663,14 +790,25 @@ def recipe_component_detail_api(request, pk: int):
 
     if request.method == 'DELETE':
         product_id = component.recipe_version.recipe.product_id
+        before_data = component_dict(component)
         component.delete()
         sync_has_recipe(product_id)
+        _audit(
+            request,
+            product_id=product_id,
+            entity='recipe_component',
+            action='delete',
+            before_data=before_data,
+            after_data=None,
+        )
         return api_success('Recipe component deleted successfully.', data=None)
 
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
+    before_data = component_dict(component)
+    product_id = component.recipe_version.recipe.product_id
     try:
         if 'component_product_id' in body:
             component_product_id = body['component_product_id']
@@ -724,7 +862,16 @@ def recipe_component_detail_api(request, pk: int):
     except IntegrityError as exc:
         return api_error(f'Could not update component: {exc}', status_code=400)
 
+    after_data = component_dict(component)
+    _audit(
+        request,
+        product_id=product_id,
+        entity='recipe_component',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
     return api_success(
         'Recipe component updated successfully.',
-        component_dict(component),
+        after_data,
     )

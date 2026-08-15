@@ -1,6 +1,7 @@
 from django.urls import path
 
 from recipe.views import (
+    recipe_audit_api,
     recipe_by_product_api,
     recipe_collection_api,
     recipe_component_collection_api,
@@ -16,6 +17,7 @@ urlpatterns = [
     path('product/<int:product_id>/tree/', recipe_product_tree_api, name='recipe-product-tree'),
     path('product/<int:product_id>/', recipe_by_product_api, name='recipe-by-product'),
     path('', recipe_collection_api, name='recipe-collection'),
+    path('<int:pk>/audit/', recipe_audit_api, name='recipe-audit'),
     path('<int:pk>/', recipe_detail_api, name='recipe-detail'),
     path('<int:pk>/versions/', recipe_version_collection_api, name='recipe-version-collection'),
     path('versions/<int:pk>/', recipe_version_detail_api, name='recipe-version-detail'),

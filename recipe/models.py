@@ -5,6 +5,8 @@ from django.db import models
 
 class RecipeVersionStatus(models.TextChoices):
     DRAFT = 'draft', 'Draft'
+    PENDING_APPROVAL = 'pending_approval', 'Pending approval'
+    REJECTED = 'rejected', 'Rejected'
     APPROVED = 'approved', 'Approved'
     ACTIVE = 'active', 'Active'
     RETIRED = 'retired', 'Retired'
@@ -21,6 +23,8 @@ class Recipe(models.Model):
     )
     name = models.CharField(max_length=128, null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
+    created_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    created_by_name = models.CharField(max_length=128, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -77,7 +81,22 @@ class RecipeVersion(models.Model):
     )
     effective_from = models.DateField(null=True, blank=True)
     effective_to = models.DateField(null=True, blank=True)
+    next_review_date = models.DateField(null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
+    created_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    created_by_name = models.CharField(max_length=128, null=True, blank=True)
+    submitted_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    submitted_by_name = models.CharField(max_length=128, null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    approved_by_name = models.CharField(max_length=128, null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_reason = models.TextField(null=True, blank=True)
+    rejected_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    rejected_by_name = models.CharField(max_length=128, null=True, blank=True)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(null=True, blank=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -92,6 +111,8 @@ class RecipeVersion(models.Model):
                 check=models.Q(
                     status__in=[
                         RecipeVersionStatus.DRAFT,
+                        RecipeVersionStatus.PENDING_APPROVAL,
+                        RecipeVersionStatus.REJECTED,
                         RecipeVersionStatus.APPROVED,
                         RecipeVersionStatus.ACTIVE,
                         RecipeVersionStatus.RETIRED,
@@ -108,6 +129,10 @@ class RecipeVersion(models.Model):
             models.Index(
                 fields=['recipe', 'status'],
                 name='idx_recipe_version_status',
+            ),
+            models.Index(
+                fields=['status', 'effective_from'],
+                name='idx_recipe_version_due',
             ),
         ]
 

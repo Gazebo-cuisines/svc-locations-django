@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from django.test import TestCase
 
 from locations.models import Location
-from product.models import Category, Product, ProductClass, Range, Unit
+from product.models import Category, Product, ProductAudit, ProductClass, Range, Unit
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
 from users_rbac.models import AdminAccess, AdminArea, Department, RbacUser, UserDepartment
 
@@ -380,3 +380,74 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         resp = self._post(f'/recipe/versions/{version.id}/activate/')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['data']['status'], 'active')
+
+
+class RecipeAuditTests(RecipeAuthMixin, TestCase):
+    def setUp(self):
+        self._recipe_auth()
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        Location.objects.create(id=1, name='Spice Room', visible=True)
+        Location.objects.create(id=2, name='Mixers', visible=True)
+
+    def _product(self, name):
+        return Product.objects.create(
+            name=name,
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+
+    def test_component_quantity_writes_before_after(self):
+        parent = self._product('FG')
+        child = self._product('Spice')
+        recipe = Recipe.objects.create(product=parent, name='FG')
+        version = RecipeVersion.objects.create(
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
+        )
+        created = self._post(
+            f'/recipe/versions/{version.id}/components/',
+            data=(
+                '{"line_no": 1, "component_product_id": %s,'
+                ' "quantity": "6", "unit_id": 1}'
+            ) % child.id,
+        )
+        self.assertEqual(created.status_code, 201)
+        comp_id = created.json()['data']['id']
+        patched = self.client.patch(
+            f'/recipe/components/{comp_id}/',
+            data='{"quantity": "8"}',
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(patched.status_code, 200)
+        events = self.client.get(f'/recipe/{recipe.id}/audit/').json()['data']
+        entities = {e['entity'] for e in events}
+        self.assertEqual(entities, {'recipe_component'})
+        qty = [e for e in events if e['action'] == 'update'][0]
+        self.assertEqual(qty['actor_name'], 'recipe.user')
+        self.assertIn('quantity', qty['changed_fields'])
+        self.assertEqual(qty['before_json']['quantity'], '6.000000')
+        self.assertEqual(qty['after_json']['quantity'], '8.000000')
+
+    def test_audit_hides_unrelated_product_events(self):
+        parent = self._product('FG')
+        recipe = Recipe.objects.create(product=parent, name='FG')
+        ProductAudit.objects.create(
+            product_id=parent.id,
+            timeline_events=[{
+                'entity': 'flags',
+                'action': 'update',
+                'before_json': {'has_recipe': False},
+                'after_json': {'has_recipe': True},
+            }],
+        )
+        self._post(f'/recipe/{recipe.id}/versions/')
+        events = self.client.get(f'/recipe/{recipe.id}/audit/').json()['data']
+        self.assertTrue(events)
+        self.assertTrue(all(e['entity'] != 'flags' for e in events))
