@@ -18,6 +18,69 @@ def assert_not_self_loop(*, parent_product_id: int, component_product_id: int) -
         )
 
 
+def next_version_number(recipe: Recipe) -> int:
+    last = recipe.versions.order_by('-version_number').first()
+    return (last.version_number + 1) if last else 1
+
+
+@transaction.atomic
+def get_or_create_recipe_with_draft(
+    product_id: int,
+    *,
+    name=None,
+    remarks=None,
+) -> tuple[Recipe, bool]:
+    """Resolve recipe for a product, creating it plus an empty draft v1 if absent."""
+    product_name = Product.objects.get(pk=product_id).name
+    recipe, created = Recipe.objects.select_for_update().get_or_create(
+        product_id=product_id,
+        defaults={'name': name or product_name, 'remarks': remarks},
+    )
+    if not recipe.versions.exists():
+        RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.DRAFT,
+        )
+        created = True
+    return recipe, created
+
+
+@transaction.atomic
+def clone_version(source: RecipeVersion) -> RecipeVersion:
+    """New draft on the same recipe with source header fields + all component lines."""
+    Recipe.objects.select_for_update().get(pk=source.recipe_id)
+    clone = RecipeVersion.objects.create(
+        recipe_id=source.recipe_id,
+        version_number=next_version_number(source.recipe),
+        status=RecipeVersionStatus.DRAFT,
+        process_loss=source.process_loss,
+        batch_quantity=source.batch_quantity,
+        batch_unit_id=source.batch_unit_id,
+        sum_batch_quantity=source.sum_batch_quantity,
+        sum_net_quantity=source.sum_net_quantity,
+        sum_gross_quantity=source.sum_gross_quantity,
+        location_id=source.location_id,
+        remarks=source.remarks,
+    )
+    RecipeComponent.objects.bulk_create([
+        RecipeComponent(
+            recipe_version=clone,
+            line_no=component.line_no,
+            component_product_id=component.component_product_id,
+            quantity=component.quantity,
+            unit_id=component.unit_id,
+            batch_quantity=component.batch_quantity,
+            gross_batch_quantity=component.gross_batch_quantity,
+            step_instructions=component.step_instructions,
+            is_implicit=component.is_implicit,
+        )
+        for component in source.components.all()
+    ])
+    sync_has_recipe(source.recipe.product_id)
+    return clone
+
+
 def sync_has_recipe(product_id: int) -> None:
     """Set product_flags.has_recipe from whether any recipe components exist."""
     has_recipe = RecipeComponent.objects.filter(

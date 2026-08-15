@@ -21,6 +21,8 @@ from recipe.utils import (
     activate_version,
     assert_not_self_loop,
     build_recipe_tree,
+    get_or_create_recipe_with_draft,
+    next_version_number,
     sync_has_recipe,
 )
 
@@ -119,6 +121,8 @@ def recipe_version_list_dict(version: RecipeVersion) -> dict:
         'id': version.id,
         'recipe_id': version.recipe_id,
         'version_number': version.version_number,
+        'version_label': f'v{version.version_number}',
+        'component_count': len(version.components.all()),
         'status': version.status,
         'process_loss': _dec(version.process_loss),
         'batch_quantity': _dec(version.batch_quantity),
@@ -151,10 +155,24 @@ def recipe_version_detail_dict(version: RecipeVersion) -> dict:
     return data
 
 
+def _recipe_detail_qs():
+    return Recipe.objects.filter(product__is_active=True).select_related(
+        'product__source_container',
+        'product__destination_container',
+    ).prefetch_related(
+        'versions__location',
+        'versions__components__recipe_version',
+        'versions__components__component_product',
+        'versions__components__unit',
+    )
+
+
 def component_dict(component: RecipeComponent) -> dict:
     return {
         'id': component.id,
+        'recipe_id': component.recipe_version.recipe_id,
         'recipe_version_id': component.recipe_version_id,
+        'version_number': component.recipe_version.version_number,
         'line_no': component.line_no,
         'component_product_id': component.component_product_id,
         'component_product_name': (
@@ -185,6 +203,20 @@ def recipe_product_tree_api(request, product_id: int):
 
 @require_http_methods(['GET', 'POST'])
 @csrf_exempt
+def recipe_by_product_api(request, product_id: int):
+    if not active_products().filter(pk=product_id).exists():
+        return api_error('Product not found.', status_code=404)
+    recipe, created = get_or_create_recipe_with_draft(product_id)
+    recipe = _recipe_detail_qs().get(pk=recipe.pk)
+    return api_success(
+        'Recipe created successfully.' if created else 'Recipe fetched successfully.',
+        recipe_detail_dict(recipe),
+        status_code=201 if created else 200,
+    )
+
+
+@require_http_methods(['GET', 'POST'])
+@csrf_exempt
 def recipe_collection_api(request):
     if request.method == 'GET':
         recipes = (
@@ -195,6 +227,7 @@ def recipe_collection_api(request):
             )
             .prefetch_related(
                 'versions__location',
+                'versions__components__recipe_version',
                 'versions__components__component_product',
                 'versions__components__unit',
             )
@@ -219,25 +252,16 @@ def recipe_create_api(request):
     if not active_products().filter(pk=product_id).exists():
         return api_error(f'product_id={product_id} not found.', status_code=400)
 
-    if Recipe.objects.filter(product_id=product_id).exists():
-        return api_error(
-            f'Recipe for product_id={product_id} already exists.',
-            status_code=409,
-        )
-
-    try:
-        recipe = Recipe.objects.create(
-            product_id=product_id,
-            name=body.get('name'),
-            remarks=body.get('remarks'),
-        )
-    except IntegrityError as exc:
-        return api_error(f'Could not create recipe: {exc}', status_code=400)
-
+    recipe, created = get_or_create_recipe_with_draft(
+        product_id,
+        name=body.get('name'),
+        remarks=body.get('remarks'),
+    )
+    recipe = _recipe_detail_qs().get(pk=recipe.pk)
     return api_success(
-        'Recipe created successfully.',
+        'Recipe created successfully.' if created else 'Recipe fetched successfully.',
         recipe_detail_dict(recipe),
-        status_code=201,
+        status_code=201 if created else 200,
     )
 
 
@@ -245,14 +269,7 @@ def recipe_create_api(request):
 @csrf_exempt
 def recipe_detail_api(request, pk: int):
     try:
-        recipe = Recipe.objects.filter(product__is_active=True).select_related(
-            'product__source_container',
-            'product__destination_container',
-        ).prefetch_related(
-            'versions__location',
-            'versions__components__component_product',
-            'versions__components__unit',
-        ).get(pk=pk)
+        recipe = _recipe_detail_qs().get(pk=pk)
     except Recipe.DoesNotExist:
         return api_error('Recipe not found.', status_code=404)
 
@@ -278,14 +295,7 @@ def recipe_update_api(request, recipe: Recipe):
     except IntegrityError as exc:
         return api_error(f'Could not update recipe: {exc}', status_code=400)
 
-    recipe = Recipe.objects.filter(product__is_active=True).select_related(
-        'product__source_container',
-        'product__destination_container',
-    ).prefetch_related(
-        'versions__location',
-        'versions__components__component_product',
-        'versions__components__unit',
-    ).get(pk=recipe.pk)
+    recipe = _recipe_detail_qs().get(pk=recipe.pk)
     return api_success('Recipe updated successfully.', recipe_detail_dict(recipe))
 
 
@@ -322,10 +332,7 @@ def recipe_version_collection_api(request, pk: int):
     if status not in RecipeVersionStatus.values:
         return api_error('Invalid status.', status_code=400)
 
-    version_number = body.get('version_number')
-    if version_number in (None, ''):
-        last = recipe.versions.order_by('-version_number').first()
-        version_number = (last.version_number + 1) if last else 1
+    version_number = next_version_number(recipe)
 
     batch_unit_id = body.get('batch_unit_id')
     if batch_unit_id is not None and not Unit.objects.filter(pk=batch_unit_id).exists():
@@ -376,6 +383,7 @@ def recipe_version_collection_api(request, pk: int):
 def recipe_version_detail_api(request, pk: int):
     try:
         version = RecipeVersion.objects.prefetch_related(
+            'components__recipe_version',
             'components__component_product',
             'components__unit',
         ).get(pk=pk)
@@ -462,6 +470,7 @@ def recipe_version_update_api(request, version: RecipeVersion):
         return api_error(f'Could not update recipe version: {exc}', status_code=400)
 
     version = RecipeVersion.objects.prefetch_related(
+        'components__recipe_version',
         'components__component_product',
         'components__unit',
     ).get(pk=version.pk)
@@ -481,6 +490,7 @@ def recipe_version_activate_api(request, pk: int):
 
     version = activate_version(version)
     version = RecipeVersion.objects.prefetch_related(
+        'components__recipe_version',
         'components__component_product',
         'components__unit',
     ).get(pk=version.pk)
@@ -543,6 +553,7 @@ def recipe_component_collection_api(request, pk: int):
         )
         sync_has_recipe(version.recipe.product_id)
         component = RecipeComponent.objects.select_related(
+            'recipe_version',
             'component_product',
             'unit',
         ).get(pk=component.pk)
@@ -624,6 +635,7 @@ def recipe_component_detail_api(request, pk: int):
 
         component.save()
         component = RecipeComponent.objects.select_related(
+            'recipe_version',
             'component_product',
             'unit',
         ).get(pk=component.pk)
