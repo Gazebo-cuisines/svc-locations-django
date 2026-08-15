@@ -200,3 +200,44 @@ class RecipeComponent(models.Model):
             f'recipe_component:{self.id}:'
             f'v{self.recipe_version_id}:line{self.line_no}'
         )
+
+
+class RecipeAttachmentKind(models.TextChoices):
+    HERO = 'hero', 'Finished product'
+    STEP = 'step', 'Process step'
+    PACKAGING = 'packaging', 'Packaging'
+    OTHER = 'other', 'Other'
+
+
+class RecipeAttachment(models.Model):
+    recipe_version = models.ForeignKey(
+        RecipeVersion,
+        on_delete=models.CASCADE,
+        related_name='attachments',
+    )
+    component = models.ForeignKey(
+        RecipeComponent,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attachments',
+    )
+    kind = models.CharField(
+        max_length=32,
+        choices=RecipeAttachmentKind.choices,
+        default=RecipeAttachmentKind.STEP,
+    )
+    s3_key = models.CharField(max_length=512)
+    content_type = models.CharField(max_length=64, null=True, blank=True)
+    original_filename = models.CharField(max_length=255, null=True, blank=True)
+    caption = models.CharField(max_length=255, null=True, blank=True)
+    sort_order = models.IntegerField(default=0)
+    uploaded_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'recipe_attachment'
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return f'recipe_attachment:{self.id}:v{self.recipe_version_id}'

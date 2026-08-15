@@ -1,10 +1,11 @@
 from decimal import Decimal
 import time
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase
 
@@ -602,3 +603,135 @@ class RecipeScheduledActivationTests(TestCase):
         self.assertEqual(version.status, RecipeVersionStatus.ACTIVE)
         future = self.recipe.versions.get(version_number=2)
         self.assertEqual(future.status, RecipeVersionStatus.APPROVED)
+
+
+class RecipeAttachmentTests(RecipeAuthMixin, TestCase):
+    def setUp(self):
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        Location.objects.create(id=1, name='Spice Room', visible=True)
+        Location.objects.create(id=2, name='Mixers', visible=True)
+        self.parent = Product.objects.create(
+            name='Att FG',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+        self.child = Product.objects.create(
+            name='Att Spice',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+        self.recipe = Recipe.objects.create(product=self.parent, name='Att FG')
+        self.version = RecipeVersion.objects.create(
+            recipe=self.recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
+        )
+        self.component = RecipeComponent.objects.create(
+            recipe_version=self.version,
+            line_no=1,
+            component_product=self.child,
+            quantity=Decimal('1'),
+            unit_id=1,
+        )
+        self._recipe_auth()
+
+    def _jpeg(self):
+        return SimpleUploadedFile(
+            'hero.jpg', b'\xff\xd8\xfffakejpeg', content_type='image/jpeg',
+        )
+
+    def _s3(self, s3_factory):
+        s3 = MagicMock()
+        s3.generate_presigned_url.return_value = 'https://s3.example/signed'
+        s3_factory.return_value = s3
+        return s3
+
+    @patch('recipe.attachments._s3_client')
+    def test_upload_hero_on_draft(self, s3_factory):
+        self._s3(s3_factory)
+        resp = self.client.post(
+            f'/recipe/versions/{self.version.id}/attachments/',
+            {'file': self._jpeg(), 'kind': 'hero', 'caption': 'finished'},
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()['data']
+        self.assertEqual(data['kind'], 'hero')
+        self.assertIsNone(data['component_id'])
+        self.assertEqual(data['url'], 'https://s3.example/signed')
+        self.assertTrue(data['original_filename'].endswith('.jpg'))
+        detail = self.client.get(f'/recipe/versions/{self.version.id}/')
+        self.assertEqual(len(detail.json()['data']['attachments']), 1)
+
+    @patch('recipe.attachments._s3_client')
+    def test_step_photo_on_component(self, s3_factory):
+        self._s3(s3_factory)
+        resp = self.client.post(
+            f'/recipe/versions/{self.version.id}/attachments/',
+            {
+                'file': self._jpeg(),
+                'kind': 'step',
+                'component_id': str(self.component.id),
+            },
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 201)
+        detail = self.client.get(f'/recipe/versions/{self.version.id}/')
+        data = detail.json()['data']
+        self.assertEqual(data['attachments'], [])
+        self.assertEqual(len(data['components'][0]['attachments']), 1)
+        self.assertEqual(
+            data['components'][0]['attachments'][0]['component_id'],
+            self.component.id,
+        )
+
+    @patch('recipe.attachments._s3_client')
+    def test_upload_on_pending_is_409(self, s3_factory):
+        self._s3(s3_factory)
+        self.version.status = RecipeVersionStatus.PENDING_APPROVAL
+        self.version.save(update_fields=['status'])
+        resp = self.client.post(
+            f'/recipe/versions/{self.version.id}/attachments/',
+            {'file': self._jpeg(), 'kind': 'hero'},
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 409)
+
+    def test_pdf_is_400(self):
+        resp = self.client.post(
+            f'/recipe/versions/{self.version.id}/attachments/',
+            {
+                'file': SimpleUploadedFile(
+                    'doc.pdf', b'%PDF-1.4', content_type='application/pdf',
+                ),
+            },
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    @patch('recipe.attachments._s3_client')
+    def test_delete_attachment(self, s3_factory):
+        self._s3(s3_factory)
+        created = self.client.post(
+            f'/recipe/versions/{self.version.id}/attachments/',
+            {'file': self._jpeg(), 'kind': 'hero'},
+            HTTP_AUTHORIZATION=self.auth,
+        ).json()['data']
+        resp = self.client.delete(
+            f"/recipe/attachments/{created['id']}/",
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 200)
+        listed = self.client.get(
+            f'/recipe/versions/{self.version.id}/attachments/',
+        )
+        self.assertEqual(listed.json()['data']['count'], 0)

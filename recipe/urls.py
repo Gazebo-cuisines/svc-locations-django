@@ -1,20 +1,30 @@
 from django.urls import path
 
-from recipe.views import (
-    recipe_audit_api,
-    recipe_by_product_api,
-    recipe_collection_api,
-    recipe_component_collection_api,
-    recipe_component_detail_api,
-    recipe_detail_api,
-    recipe_product_tree_api,
-    recipe_version_activate_api,
+from recipe.views.approval_views import (
     recipe_version_approve_api,
-    recipe_version_collection_api,
-    recipe_version_detail_api,
     recipe_version_history_api,
     recipe_version_reject_api,
     recipe_version_submit_api,
+)
+from recipe.views.attachment_views import (
+    recipe_attachment_detail_api,
+    recipe_version_attachments_api,
+)
+from recipe.views.audit_views import recipe_audit_api
+from recipe.views.component_views import (
+    recipe_component_collection_api,
+    recipe_component_detail_api,
+)
+from recipe.views.recipe_views import (
+    recipe_by_product_api,
+    recipe_collection_api,
+    recipe_detail_api,
+    recipe_product_tree_api,
+)
+from recipe.views.version_views import (
+    recipe_version_activate_api,
+    recipe_version_collection_api,
+    recipe_version_detail_api,
 )
 
 urlpatterns = [
@@ -30,6 +40,8 @@ urlpatterns = [
     path('versions/<int:pk>/reject/', recipe_version_reject_api, name='recipe-version-reject'),
     path('versions/<int:pk>/history/', recipe_version_history_api, name='recipe-version-history'),
     path('versions/<int:pk>/activate/', recipe_version_activate_api, name='recipe-version-activate'),
+    path('versions/<int:pk>/attachments/', recipe_version_attachments_api, name='recipe-version-attachments'),
+    path('attachments/<int:pk>/', recipe_attachment_detail_api, name='recipe-attachment-detail'),
     path('versions/<int:pk>/components/', recipe_component_collection_api, name='recipe-component-collection'),
     path('components/<int:pk>/', recipe_component_detail_api, name='recipe-component-detail'),
 ]
