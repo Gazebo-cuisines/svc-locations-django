@@ -106,10 +106,6 @@ def _template_response_data(
 
 
 def _parse_sleeving_extras(body: dict) -> dict:
-    packed_id = _require_int(body, 'packed_product_id')
-    if not Product.objects.filter(pk=packed_id).exists():
-        raise ValueError(f'packed_product_id={packed_id} not found.')
-
     items_per_unit = _positive_decimal(body, 'items_per_unit')
     unitary_weight = _positive_decimal(body, 'unitary_weight')
     unit_id = _require_int(body, 'case_size_unit_id')

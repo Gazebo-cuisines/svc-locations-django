@@ -184,7 +184,6 @@ class ProductApiTests(TestCase):
         Unit.objects.create(id=2, name='GM')
         resp = self._post('/product/sleeving/', self._core_body(
             'Sleeve 400',
-            packed_product_id=self.product_id,
             items_per_unit=4,
             unitary_weight=400,
             case_size_unit_id=2,
