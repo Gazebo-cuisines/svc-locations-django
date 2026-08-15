@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 
 from product.models import Product, ProductFlags
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
@@ -29,25 +30,38 @@ def get_or_create_recipe_with_draft(
     *,
     name=None,
     remarks=None,
+    created_by_sub=None,
+    created_by_name=None,
 ) -> tuple[Recipe, bool]:
     """Resolve recipe for a product, creating it plus an empty draft v1 if absent."""
     product_name = Product.objects.get(pk=product_id).name
+    defaults = {'name': name or product_name, 'remarks': remarks}
+    if created_by_sub:
+        defaults['created_by_sub'] = created_by_sub
+        defaults['created_by_name'] = created_by_name
     recipe, created = Recipe.objects.select_for_update().get_or_create(
         product_id=product_id,
-        defaults={'name': name or product_name, 'remarks': remarks},
+        defaults=defaults,
     )
     if not recipe.versions.exists():
         RecipeVersion.objects.create(
             recipe=recipe,
             version_number=1,
             status=RecipeVersionStatus.DRAFT,
+            created_by_sub=created_by_sub,
+            created_by_name=created_by_name,
         )
         created = True
     return recipe, created
 
 
 @transaction.atomic
-def clone_version(source: RecipeVersion) -> RecipeVersion:
+def clone_version(
+    source: RecipeVersion,
+    *,
+    created_by_sub=None,
+    created_by_name=None,
+) -> RecipeVersion:
     """New draft on the same recipe with source header fields + all component lines."""
     recipe = Recipe.objects.select_for_update().get(pk=source.recipe_id)
     clone = RecipeVersion.objects.create(
@@ -62,6 +76,8 @@ def clone_version(source: RecipeVersion) -> RecipeVersion:
         sum_gross_quantity=source.sum_gross_quantity,
         location_id=source.location_id,
         remarks=source.remarks,
+        created_by_sub=created_by_sub,
+        created_by_name=created_by_name,
     )
     RecipeComponent.objects.bulk_create([
         RecipeComponent(
@@ -107,7 +123,8 @@ def activate_version(version: RecipeVersion) -> RecipeVersion:
     )
     if target.status != RecipeVersionStatus.ACTIVE:
         target.status = RecipeVersionStatus.ACTIVE
-        target.save(update_fields=['status', 'updated_at'])
+        target.activated_at = timezone.now()
+        target.save(update_fields=['status', 'activated_at', 'updated_at'])
     return target
 
 

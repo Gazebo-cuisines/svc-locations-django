@@ -375,7 +375,7 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         self._recipe_auth(it=True, sub='sub-it', username='it.user')
         recipe = Recipe.objects.create(product=self._product('FG'), name='FG')
         version = RecipeVersion.objects.create(
-            recipe=recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.APPROVED,
         )
         resp = self._post(f'/recipe/versions/{version.id}/activate/')
         self.assertEqual(resp.status_code, 200)
@@ -451,3 +451,101 @@ class RecipeAuditTests(RecipeAuthMixin, TestCase):
         events = self.client.get(f'/recipe/{recipe.id}/audit/').json()['data']
         self.assertTrue(events)
         self.assertTrue(all(e['entity'] != 'flags' for e in events))
+
+
+class RecipeApprovalTests(RecipeAuthMixin, TestCase):
+    def setUp(self):
+        self._recipe_auth()
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        Location.objects.create(id=1, name='Spice Room', visible=True)
+        Location.objects.create(id=2, name='Mixers', visible=True)
+
+    def _product(self, name):
+        return Product.objects.create(
+            name=name,
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+
+    def _draft_with_line(self):
+        parent = self._product('FG')
+        child = self._product('Spice')
+        recipe = Recipe.objects.create(product=parent, name='FG')
+        version = RecipeVersion.objects.create(
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=child,
+            quantity=Decimal('6'),
+            unit_id=1,
+        )
+        return recipe, version, child
+
+    def test_submit_without_components_is_400(self):
+        recipe = Recipe.objects.create(product=self._product('FG'), name='FG')
+        version = RecipeVersion.objects.create(
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
+        )
+        resp = self._post(f'/recipe/versions/{version.id}/submit/')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_approve_without_reason_is_400(self):
+        _, version, _ = self._draft_with_line()
+        self._post(f'/recipe/versions/{version.id}/submit/')
+        resp = self._post(
+            f'/recipe/versions/{version.id}/approve/',
+            data='{"effective_from": "2020-01-01"}',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_approve_as_floor_is_403(self):
+        _, version, _ = self._draft_with_line()
+        self._post(f'/recipe/versions/{version.id}/submit/')
+        self._recipe_auth(floor=True, sub='sub-floor2', username='floor2.user')
+        resp = self._post(
+            f'/recipe/versions/{version.id}/approve/',
+            data='{"reason": "ok", "effective_from": "2020-01-01"}',
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_approve_past_date_activates(self):
+        _, version, _ = self._draft_with_line()
+        self._post(f'/recipe/versions/{version.id}/submit/')
+        resp = self._post(
+            f'/recipe/versions/{version.id}/approve/',
+            data='{"reason": "go live", "effective_from": "2020-01-01"}',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['data']['status'], 'active')
+        self.assertEqual(resp.json()['data']['approval_reason'], 'go live')
+
+    def test_approve_future_stays_approved(self):
+        _, version, _ = self._draft_with_line()
+        self._post(f'/recipe/versions/{version.id}/submit/')
+        resp = self._post(
+            f'/recipe/versions/{version.id}/approve/',
+            data='{"reason": "later", "effective_from": "2099-01-01"}',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['data']['status'], 'approved')
+
+    def test_component_on_pending_is_409(self):
+        recipe, version, child = self._draft_with_line()
+        self._post(f'/recipe/versions/{version.id}/submit/')
+        resp = self._post(
+            f'/recipe/versions/{version.id}/components/',
+            data=(
+                '{"line_no": 2, "component_product_id": %s,'
+                ' "quantity": "1", "unit_id": 1}'
+            ) % child.id,
+        )
+        self.assertEqual(resp.status_code, 409)

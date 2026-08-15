@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -48,6 +49,30 @@ def _audit(request, *, product_id, entity, action, before_data, after_data):
         before_data=before_data,
         after_data=after_data,
     )
+
+
+_EDITABLE_STATUSES = {
+    RecipeVersionStatus.DRAFT,
+    RecipeVersionStatus.REJECTED,
+}
+_VERSION_LOCKED_MSG = 'This version is locked while it is awaiting approval.'
+
+
+def _actor(request):
+    user = getattr(request, 'rbac_user', None)
+    if not user:
+        return None, None
+    return user.cognito_sub, (user.display_name or user.username)
+
+
+def _iso(value):
+    return value.isoformat() if value else None
+
+
+def _version_locked_response(version: RecipeVersion):
+    if version.status in _EDITABLE_STATUSES:
+        return None
+    return api_error(_VERSION_LOCKED_MSG, status_code=409)
 
 
 def _parse_json_body(request):
@@ -154,6 +179,14 @@ def recipe_version_list_dict(version: RecipeVersion) -> dict:
         'effective_to': (
             version.effective_to.isoformat() if version.effective_to else None
         ),
+        'next_review_date': _iso(version.next_review_date),
+        'activated_at': _iso(version.activated_at),
+        'approval_reason': version.approval_reason,
+        'rejection_reason': version.rejection_reason,
+        'created_by_name': version.created_by_name,
+        'submitted_by_name': version.submitted_by_name,
+        'approved_by_name': version.approved_by_name,
+        'rejected_by_name': version.rejected_by_name,
     }
 
 
@@ -164,6 +197,9 @@ def recipe_version_detail_dict(version: RecipeVersion) -> dict:
         'sum_net_quantity': _dec(version.sum_net_quantity),
         'sum_gross_quantity': _dec(version.sum_gross_quantity),
         'remarks': version.remarks,
+        'submitted_at': _iso(version.submitted_at),
+        'approved_at': _iso(version.approved_at),
+        'rejected_at': _iso(version.rejected_at),
         'created_at': version.created_at.isoformat() if version.created_at else None,
         'updated_at': version.updated_at.isoformat() if version.updated_at else None,
         'components': [
@@ -226,7 +262,12 @@ def recipe_product_tree_api(request, product_id: int):
 def recipe_by_product_api(request, product_id: int):
     if not active_products().filter(pk=product_id).exists():
         return api_error('Product not found.', status_code=404)
-    recipe, created = get_or_create_recipe_with_draft(product_id)
+    sub, name = _actor(request)
+    recipe, created = get_or_create_recipe_with_draft(
+        product_id,
+        created_by_sub=sub,
+        created_by_name=name,
+    )
     recipe = _recipe_detail_qs().get(pk=recipe.pk)
     after = recipe_detail_dict(recipe)
     if created:
@@ -283,10 +324,13 @@ def recipe_create_api(request):
     if not active_products().filter(pk=product_id).exists():
         return api_error(f'product_id={product_id} not found.', status_code=400)
 
+    sub, name = _actor(request)
     recipe, created = get_or_create_recipe_with_draft(
         product_id,
         name=body.get('name'),
         remarks=body.get('remarks'),
+        created_by_sub=sub,
+        created_by_name=name,
     )
     recipe = _recipe_detail_qs().get(pk=recipe.pk)
     after = recipe_detail_dict(recipe)
@@ -431,15 +475,7 @@ def recipe_version_collection_api(request, pk: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
-    status = body.get('status', RecipeVersionStatus.DRAFT)
-    if status == RecipeVersionStatus.ACTIVE:
-        return api_error(
-            'Use the activate endpoint to make a version active.',
-            status_code=400,
-        )
-    if status not in RecipeVersionStatus.values:
-        return api_error('Invalid status.', status_code=400)
-
+    sub, name = _actor(request)
     source = None
     copy_from_version_id = body.get('copy_from_version_id')
     if copy_from_version_id not in (None, ''):
@@ -466,7 +502,11 @@ def recipe_version_collection_api(request, pk: int):
     try:
         with transaction.atomic():
             if source is not None:
-                version = clone_version(source)
+                version = clone_version(
+                    source,
+                    created_by_sub=sub,
+                    created_by_name=name,
+                )
                 if 'process_loss' in body:
                     version.process_loss = _parse_decimal(
                         body.get('process_loss', '1.0000'), 'process_loss',
@@ -506,7 +546,9 @@ def recipe_version_collection_api(request, pk: int):
                 version = RecipeVersion.objects.create(
                     recipe=recipe,
                     version_number=next_version_number(recipe),
-                    status=status,
+                    status=RecipeVersionStatus.DRAFT,
+                    created_by_sub=sub,
+                    created_by_name=name,
                     process_loss=_parse_decimal(
                         body.get('process_loss', '1.0000'), 'process_loss',
                     ) or Decimal('1.0000'),
@@ -580,19 +622,17 @@ def recipe_version_update_api(request, version: RecipeVersion):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
 
+    if 'status' in body:
+        return api_error(
+            'Use submit, approve, or reject to change status.',
+            status_code=400,
+        )
+    locked = _version_locked_response(version)
+    if locked:
+        return locked
+
     before_data = recipe_version_detail_dict(version)
     try:
-        if 'status' in body:
-            status = body['status']
-            if status == RecipeVersionStatus.ACTIVE:
-                return api_error(
-                    'Use the activate endpoint to make a version active.',
-                    status_code=400,
-                )
-            if status not in RecipeVersionStatus.values:
-                return api_error('Invalid status.', status_code=400)
-            version.status = status
-
         if 'process_loss' in body:
             value = _parse_decimal(body['process_loss'], 'process_loss')
             if value is None or value <= 0:
@@ -676,6 +716,12 @@ def recipe_version_activate_api(request, pk: int):
     except RecipeVersion.DoesNotExist:
         return api_error('Recipe version not found.', status_code=404)
 
+    if version.status != RecipeVersionStatus.APPROVED:
+        return api_error(
+            'Only an approved version can be activated.',
+            status_code=409,
+        )
+
     before_data = recipe_version_detail_dict(version)
     version = activate_version(version)
     version = _version_detail_qs().select_related('recipe').get(pk=version.pk)
@@ -694,6 +740,182 @@ def recipe_version_activate_api(request, pk: int):
     )
 
 
+def _reload_version(pk: int) -> RecipeVersion:
+    return _version_detail_qs().select_related('recipe').get(pk=pk)
+
+
+@require_http_methods(['POST'])
+@csrf_exempt
+@gate_recipe_write
+def recipe_version_submit_api(request, pk: int):
+    try:
+        version = _reload_version(pk)
+    except RecipeVersion.DoesNotExist:
+        return api_error('Recipe version not found.', status_code=404)
+    if version.status not in _EDITABLE_STATUSES:
+        return api_error(_VERSION_LOCKED_MSG, status_code=409)
+    if not version.components.exists():
+        return api_error(
+            'Add at least one ingredient before submitting.',
+            status_code=400,
+        )
+    before_data = recipe_version_detail_dict(version)
+    sub, name = _actor(request)
+    version.status = RecipeVersionStatus.PENDING_APPROVAL
+    version.submitted_by_sub = sub
+    version.submitted_by_name = name
+    version.submitted_at = timezone.now()
+    version.save(update_fields=[
+        'status', 'submitted_by_sub', 'submitted_by_name', 'submitted_at',
+        'updated_at',
+    ])
+    after_data = recipe_version_detail_dict(_reload_version(version.pk))
+    _audit(
+        request,
+        product_id=version.recipe.product_id,
+        entity='recipe_version',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
+    return api_success('Recipe version submitted for approval.', after_data)
+
+
+@require_http_methods(['POST'])
+@csrf_exempt
+@gate_recipe_activate
+def recipe_version_approve_api(request, pk: int):
+    try:
+        version = _reload_version(pk)
+    except RecipeVersion.DoesNotExist:
+        return api_error('Recipe version not found.', status_code=404)
+    if version.status != RecipeVersionStatus.PENDING_APPROVAL:
+        return api_error(
+            'Only a version awaiting approval can be approved.',
+            status_code=409,
+        )
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    reason = body.get('reason')
+    if not isinstance(reason, str) or not reason.strip():
+        return api_error('Reason is required.', status_code=400)
+    reason = reason.strip()
+    try:
+        effective_from = _parse_date(body.get('effective_from'), 'effective_from')
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+    if effective_from is None:
+        return api_error('effective_from is required.', status_code=400)
+    try:
+        next_review_date = _parse_date(body.get('next_review_date'), 'next_review_date')
+        effective_to = _parse_date(body.get('effective_to'), 'effective_to')
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+
+    before_data = recipe_version_detail_dict(version)
+    sub, name = _actor(request)
+    version.approved_by_sub = sub
+    version.approved_by_name = name
+    version.approved_at = timezone.now()
+    version.approval_reason = reason
+    version.effective_from = effective_from
+    version.next_review_date = next_review_date
+    version.effective_to = effective_to
+    version.status = RecipeVersionStatus.APPROVED
+    version.save()
+    if effective_from <= timezone.localdate():
+        version = activate_version(version)
+    after_data = recipe_version_detail_dict(_reload_version(version.pk))
+    _audit(
+        request,
+        product_id=version.recipe.product_id,
+        entity='recipe_version',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
+    return api_success('Recipe version approved.', after_data)
+
+
+@require_http_methods(['POST'])
+@csrf_exempt
+@gate_recipe_activate
+def recipe_version_reject_api(request, pk: int):
+    try:
+        version = _reload_version(pk)
+    except RecipeVersion.DoesNotExist:
+        return api_error('Recipe version not found.', status_code=404)
+    if version.status != RecipeVersionStatus.PENDING_APPROVAL:
+        return api_error(
+            'Only a version awaiting approval can be rejected.',
+            status_code=409,
+        )
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    reason = body.get('reason')
+    if not isinstance(reason, str) or not reason.strip():
+        return api_error('Reason is required.', status_code=400)
+    reason = reason.strip()
+    before_data = recipe_version_detail_dict(version)
+    sub, name = _actor(request)
+    version.status = RecipeVersionStatus.REJECTED
+    version.rejected_by_sub = sub
+    version.rejected_by_name = name
+    version.rejected_at = timezone.now()
+    version.rejection_reason = reason
+    version.save(update_fields=[
+        'status', 'rejected_by_sub', 'rejected_by_name', 'rejected_at',
+        'rejection_reason', 'updated_at',
+    ])
+    after_data = recipe_version_detail_dict(_reload_version(version.pk))
+    _audit(
+        request,
+        product_id=version.recipe.product_id,
+        entity='recipe_version',
+        action='update',
+        before_data=before_data,
+        after_data=after_data,
+    )
+    return api_success('Recipe version rejected.', after_data)
+
+
+@require_GET
+def recipe_version_history_api(request, pk: int):
+    try:
+        version = RecipeVersion.objects.select_related('recipe').get(pk=pk)
+    except RecipeVersion.DoesNotExist:
+        return api_error('Recipe version not found.', status_code=404)
+    return api_success(
+        'Recipe version history fetched successfully.',
+        {
+            'id': version.id,
+            'recipe_id': version.recipe_id,
+            'version_number': version.version_number,
+            'status': version.status,
+            'created_by_sub': version.created_by_sub,
+            'created_by_name': version.created_by_name,
+            'created_at': _iso(version.created_at),
+            'submitted_by_sub': version.submitted_by_sub,
+            'submitted_by_name': version.submitted_by_name,
+            'submitted_at': _iso(version.submitted_at),
+            'approved_by_sub': version.approved_by_sub,
+            'approved_by_name': version.approved_by_name,
+            'approved_at': _iso(version.approved_at),
+            'approval_reason': version.approval_reason,
+            'rejected_by_sub': version.rejected_by_sub,
+            'rejected_by_name': version.rejected_by_name,
+            'rejected_at': _iso(version.rejected_at),
+            'rejection_reason': version.rejection_reason,
+            'effective_from': _iso(version.effective_from),
+            'effective_to': _iso(version.effective_to),
+            'next_review_date': _iso(version.next_review_date),
+            'activated_at': _iso(version.activated_at),
+        },
+    )
+
+
 @require_http_methods(['POST'])
 @csrf_exempt
 @gate_recipe_write
@@ -702,6 +924,9 @@ def recipe_component_collection_api(request, pk: int):
         version = RecipeVersion.objects.select_related('recipe').get(pk=pk)
     except RecipeVersion.DoesNotExist:
         return api_error('Recipe version not found.', status_code=404)
+    locked = _version_locked_response(version)
+    if locked:
+        return locked
 
     body = _parse_json_body(request)
     if body is None:
@@ -787,6 +1012,10 @@ def recipe_component_detail_api(request, pk: int):
         ).get(pk=pk)
     except RecipeComponent.DoesNotExist:
         return api_error('Recipe component not found.', status_code=404)
+
+    locked = _version_locked_response(component.recipe_version)
+    if locked:
+        return locked
 
     if request.method == 'DELETE':
         product_id = component.recipe_version.recipe.product_id
