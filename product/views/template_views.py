@@ -77,6 +77,15 @@ def _optional_int(body: dict, field: str) -> int | None:
     return _require_int(body, field)
 
 
+def _optional_decimal(body: dict, field: str) -> Decimal | None:
+    if field not in body or body.get(field) in (None, ''):
+        return None
+    try:
+        return Decimal(str(body[field]))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f'Invalid decimal for {field}.') from exc
+
+
 def _template_response_data(
     product: Product,
     packaging: ProductPackaging,
@@ -162,6 +171,54 @@ def _create_sleeving_satellites(product: Product, extras: dict) -> dict:
     )
 
 
+def _parse_high_risk_extras(body: dict) -> dict:
+    gas_raw = body.get('is_gas_flush')
+    if 'is_gas_flush' not in body or gas_raw in (None, ''):
+        is_gas_flush = True
+    else:
+        is_gas_flush = bool(gas_raw)
+    return {
+        'pack_weight': _positive_decimal(body, 'pack_weight'),
+        'is_gas_flush': is_gas_flush,
+        'shelf_life_days': _require_int(body, 'shelf_life_days'),
+        'avg_staff_min_per_unit': _optional_decimal(body, 'avg_staff_min_per_unit'),
+        'avg_staff_per_minute': _optional_decimal(body, 'avg_staff_per_minute'),
+    }
+
+
+def _create_high_risk_satellites(product: Product, extras: dict) -> dict:
+    packaging = ProductPackaging.objects.create(
+        product=product,
+        pack_weight=extras['pack_weight'],
+        is_gas_flush=extras['is_gas_flush'],
+    )
+    shelf_life = ProductShelfLife.objects.create(
+        product=product,
+        shelf_life_days=extras['shelf_life_days'],
+    )
+    flags = ProductFlags.objects.create(
+        product=product,
+        is_sales_item=False,
+        include_in_projections=False,
+    )
+    production = ProductProduction.objects.create(
+        product=product,
+        avg_staff_min_per_unit=extras['avg_staff_min_per_unit'],
+        avg_staff_per_minute=extras['avg_staff_per_minute'],
+    )
+    costing, _ = ProductCosting.objects.get_or_create(product_id=product.id)
+    return _template_response_data(
+        product, packaging, shelf_life, flags, production, costing,
+    )
+
+
+def _run_template_create(body: dict, parse_extras, write_satellites) -> dict:
+    extras = parse_extras(body)
+    with transaction.atomic():
+        product = _create_core_product(body)
+        return write_satellites(_product_qs().get(pk=product.pk), extras)
+
+
 @require_http_methods(['POST'])
 @csrf_exempt
 def product_sleeving_create_api(request):
@@ -170,12 +227,40 @@ def product_sleeving_create_api(request):
         return api_error('Invalid JSON body.', status_code=400)
 
     try:
-        extras = _parse_sleeving_extras(body)
-        with transaction.atomic():
-            product = _create_core_product(body)
-            after_data = _create_sleeving_satellites(
-                _product_qs().get(pk=product.pk), extras,
-            )
+        after_data = _run_template_create(
+            body, _parse_sleeving_extras, _create_sleeving_satellites,
+        )
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+    except IntegrityError as exc:
+        return api_error(f'Could not create product: {exc}', status_code=400)
+
+    capture_product_audit(
+        request,
+        product_id=after_data['ref'],
+        entity='product',
+        action='create',
+        before_data=None,
+        after_data=after_data,
+    )
+    return api_success(
+        'Product created successfully.',
+        after_data,
+        status_code=201,
+    )
+
+
+@require_http_methods(['POST'])
+@csrf_exempt
+def product_high_risk_create_api(request):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    try:
+        after_data = _run_template_create(
+            body, _parse_high_risk_extras, _create_high_risk_satellites,
+        )
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
