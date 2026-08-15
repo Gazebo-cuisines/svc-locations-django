@@ -154,7 +154,9 @@ def grants_dict(user: RbacUser) -> dict:
     }
 
 
-def user_dict(user: RbacUser, *, with_grants: bool = True) -> dict:
+def user_dict(
+    user: RbacUser, *, with_grants: bool = True,
+) -> dict:
     data = {
         'id': user.id,
         'username': user.username,

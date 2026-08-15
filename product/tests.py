@@ -1,5 +1,6 @@
 import base64
 import json
+from decimal import Decimal
 
 from django.test import TestCase
 
@@ -28,7 +29,7 @@ class ProductApiTests(TestCase):
         Location.objects.create(id=1, name='Source', visible=True)
         Location.objects.create(id=2, name='Destination', visible=True)
 
-    def _seed_product(self, name: str, **overrides):
+    def _core_body(self, name: str, **overrides):
         payload = {
             'name': name,
             'product_class_id': 1,
@@ -39,12 +40,18 @@ class ProductApiTests(TestCase):
             'storage_regime': 'frozen',
         }
         payload.update(overrides)
+        return payload
+
+    def _post(self, path: str, payload: dict):
         return self.client.post(
-            '/product/',
+            path,
             data=json.dumps(payload),
             content_type='application/json',
             HTTP_AUTHORIZATION=self.auth_header,
         )
+
+    def _seed_product(self, name: str, **overrides):
+        return self._post('/product/', self._core_body(name, **overrides))
 
     def _create_product(self, name: str, **overrides) -> int:
         resp = self._seed_product(name, **overrides)
@@ -172,3 +179,38 @@ class ProductApiTests(TestCase):
             HTTP_AUTHORIZATION=self.auth_header,
         )
         self.assertEqual(resp.status_code, 400)
+
+    def test_sleeving_create_derives_case_size_and_sets_flags(self):
+        Unit.objects.create(id=2, name='GM')
+        resp = self._post('/product/sleeving/', self._core_body(
+            'Sleeve 400',
+            items_per_unit=4,
+            unitary_weight=400,
+            case_size_unit_id=2,
+            shelf_life_days=7,
+        ))
+        self.assertEqual(resp.status_code, 201, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(Decimal(data['packaging']['pack_weight']), Decimal('1600'))
+        self.assertEqual(data['costing']['case_size_description'], '4 x 400 GM')
+        self.assertEqual(data['shelf_life']['shelf_life_days'], 7)
+        self.assertTrue(data['shelf_life']['force_production_date'])
+        self.assertTrue(data['shelf_life']['force_use_by'])
+        self.assertTrue(data['flags']['is_sales_item'])
+        self.assertTrue(data['flags']['has_plan'])
+        self.assertTrue(data['flags']['include_in_projections'])
+
+    def test_high_risk_create_sets_gas_flush_and_unsold_flags(self):
+        resp = self._post('/product/high-risk/', self._core_body(
+            'High Risk Tray',
+            pack_weight='1.25',
+        ))
+        self.assertEqual(resp.status_code, 201, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(Decimal(data['packaging']['pack_weight']), Decimal('1.25'))
+        self.assertTrue(data['packaging']['is_gas_flush'])
+        self.assertIsNone(data['packaging']['tray_id'])
+        self.assertIsNone(data['packaging']['container_vessel_id'])
+        self.assertIsNone(data['shelf_life'])
+        self.assertFalse(data['flags']['is_sales_item'])
+        self.assertFalse(data['flags']['include_in_projections'])

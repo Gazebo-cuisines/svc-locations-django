@@ -1,13 +1,12 @@
 """Private recipe photos in S3 (gazebo-media-files / Recipe-version/)."""
 
-import os
 import uuid
 
-import boto3
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.db import transaction
 
+from core.s3 import s3_client as _s3_client
 from recipe.models import (
     RecipeAttachment,
     RecipeAttachmentKind,
@@ -15,32 +14,90 @@ from recipe.models import (
     RecipeVersion,
 )
 
-ALLOWED_CONTENT_TYPES = {
+MIME_TO_EXT = {
     'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/pjpeg': 'jpg',
     'image/png': 'png',
     'image/webp': 'webp',
+    'image/gif': 'gif',
+    'image/bmp': 'bmp',
+    'image/heic': 'heic',
+    'image/heif': 'heif',
+    'image/tiff': 'tiff',
+    'image/tif': 'tiff',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'video/webm': 'webm',
+    'video/x-msvideo': 'avi',
+    'video/x-matroska': 'mkv',
+    'video/mpeg': 'mpeg',
+    'video/3gpp': '3gp',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/mp4': 'm4a',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/aac': 'aac',
+    'audio/ogg': 'ogg',
+    'application/pdf': 'pdf',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.ms-powerpoint': 'ppt',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/vnd.oasis.opendocument.text': 'odt',
+    'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+    'text/csv': 'csv',
+    'text/plain': 'txt',
+    'application/rtf': 'rtf',
+    'text/rtf': 'rtf',
 }
-MAX_BYTES = 5 * 1024 * 1024
+EXT_TO_MIME = {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'webp': 'image/webp',
+    'gif': 'image/gif',
+    'bmp': 'image/bmp',
+    'heic': 'image/heic',
+    'heif': 'image/heif',
+    'tif': 'image/tiff',
+    'tiff': 'image/tiff',
+    'mp4': 'video/mp4',
+    'mov': 'video/quicktime',
+    'webm': 'video/webm',
+    'avi': 'video/x-msvideo',
+    'mkv': 'video/x-matroska',
+    'mpeg': 'video/mpeg',
+    'mpg': 'video/mpeg',
+    '3gp': 'video/3gpp',
+    'mp3': 'audio/mpeg',
+    'm4a': 'audio/mp4',
+    'wav': 'audio/wav',
+    'aac': 'audio/aac',
+    'ogg': 'audio/ogg',
+    'pdf': 'application/pdf',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'ppt': 'application/vnd.ms-powerpoint',
+    'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'odt': 'application/vnd.oasis.opendocument.text',
+    'ods': 'application/vnd.oasis.opendocument.spreadsheet',
+    'csv': 'text/csv',
+    'txt': 'text/plain',
+    'rtf': 'application/rtf',
+}
+MAX_BYTES = 50 * 1024 * 1024
 PRESIGN_SECONDS = 3600
 PREFIX = 'Recipe-version'
 
 
 class AttachmentError(ValueError):
     pass
-
-
-def _s3_client():
-    profile = os.getenv('AWS_PROFILE') or getattr(settings, 'AWS_PROFILE', None)
-    region = (
-        os.getenv('AWS_DEFAULT_REGION')
-        or getattr(settings, 'AWS_DEFAULT_REGION', None)
-        or 'eu-west-2'
-    )
-    try:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    except Exception:
-        session = boto3.Session()
-    return session.client('s3', region_name=region)
 
 
 def _bucket() -> str:
@@ -110,13 +167,21 @@ def upload_attachment(
             ) from exc
 
     content_type = (getattr(uploaded_file, 'content_type', None) or '').lower()
-    ext = ALLOWED_CONTENT_TYPES.get(content_type)
+    content_type = content_type.split(';', 1)[0].strip()
+    ext = MIME_TO_EXT.get(content_type)
     if not ext:
-        raise AttachmentError('File must be a JPEG, PNG, or WebP.')
+        suffix = (getattr(uploaded_file, 'name', None) or '').rsplit('.', 1)
+        tail = suffix[-1].lower() if len(suffix) == 2 else ''
+        content_type = EXT_TO_MIME.get(tail, '')
+        ext = MIME_TO_EXT.get(content_type)
+    if not ext:
+        raise AttachmentError(
+            'That file type is not supported. Use an image, video, audio, PDF, or office document.',
+        )
 
     size = getattr(uploaded_file, 'size', None)
     if size is not None and size > MAX_BYTES:
-        raise AttachmentError('File must be 5 MB or smaller.')
+        raise AttachmentError('File must be 50 MB or smaller.')
 
     try:
         sort_order = int(sort_order or 0)

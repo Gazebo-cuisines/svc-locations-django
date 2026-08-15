@@ -29,6 +29,10 @@ from product.views.lookups_views import (
 from product.views.nutrition_views import product_nutrition_api
 from product.views.packaging_views import product_packaging_api
 from product.views.product_master_view import product_collection_api, product_detail_api
+from product.views.template_views import (
+    product_high_risk_create_api,
+    product_sleeving_create_api,
+)
 from product.views.production_views import product_production_api
 from product.views.shelf_life_views import product_shelf_life_api
 from product.views.stock_policy_views import product_stock_policy_api
@@ -65,6 +69,8 @@ urlpatterns = [
     path('delivery-state/', product_delivery_state_list_api, name='product-delivery-state-list'),
     path('allergen-code/', product_allergen_code_list_api, name='product-allergen-code-list'),
     path('supplier-products/', supplier_products_list_api, name='supplier-products-list'),
+    path('sleeving/', product_sleeving_create_api, name='product-sleeving-create'),
+    path('high-risk/', product_high_risk_create_api, name='product-high-risk-create'),
     path('', product_collection_api, name='product-collection'),
     path('<int:pk>/', product_detail_api, name='product-detail'),
     path('<int:pk>/flags/', product_flags_api, name='product-flags'),

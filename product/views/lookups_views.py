@@ -43,7 +43,9 @@ def product_class_list_api(request):
     return api_success('Product classes fetched successfully.', _rows(ProductClass.objects.all()))
 
 
-def _category_dict(row: Category, *, include_children: bool = True) -> dict:
+def _category_dict(
+    row: Category, *, include_children: bool = True,
+) -> dict:
     data = {
         'id': row.id,
         'name': row.name,

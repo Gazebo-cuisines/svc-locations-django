@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'core',
     'locations',
     'product',
     'recipe',
@@ -42,6 +43,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.OpsErrorMiddleware',
+    'core.middleware.ApiAuditMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -113,6 +116,8 @@ CSRF_TRUSTED_ORIGINS = [
 
 AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
 MEDIA_S3_BUCKET = os.getenv('MEDIA_S3_BUCKET', 'gazebo-media-files')
+DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 AWS_PROFILE = os.getenv('AWS_PROFILE')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-2')
 CORS_ALLOW_HEADERS = (

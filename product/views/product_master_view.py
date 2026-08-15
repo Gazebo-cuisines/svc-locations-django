@@ -311,6 +311,7 @@ def product_collection_api(request):
         products = active_products(
             source_container_id=source_id,
             destination_container_id=dest_id,
+            q=(request.GET.get('q') or '').strip() or None,
         )
         return api_success(
             'Product list fetched successfully.',
@@ -440,12 +441,7 @@ def product_update_api(request, product: Product):
     )
 
 
-def product_create_api(request):
-    """Create a core product row. Required FKs must already exist."""
-    body = _parse_json_body(request)
-    if body is None:
-        return api_error('Invalid JSON body.', status_code=400)
-
+def _create_core_product(body: dict) -> Product:
     required = [
         'name',
         'product_class_id',
@@ -456,10 +452,7 @@ def product_create_api(request):
     ]
     missing = [key for key in required if body.get(key) in (None, '')]
     if missing:
-        return api_error(
-            f'Missing required fields: {", ".join(missing)}',
-            status_code=400,
-        )
+        raise ValueError(f'Missing required fields: {", ".join(missing)}')
 
     try:
         ProductClass.objects.get(pk=body['product_class_id'])
@@ -470,57 +463,63 @@ def product_create_api(request):
         Category.DoesNotExist,
         Unit.DoesNotExist,
     ) as exc:
-        return api_error(f'Invalid lookup reference: {exc}', status_code=400)
+        raise ValueError(f'Invalid lookup reference: {exc}') from exc
 
     for field in ('source_container_id', 'destination_container_id'):
         if not Location.objects.filter(pk=body[field]).exists():
-            return api_error(f'{field}={body[field]} not found.', status_code=400)
+            raise ValueError(f'{field}={body[field]} not found.')
 
     label_mode = body.get('label_mode', ProductLabelMode.PRODUCT)
     label_mode_error = _label_mode_error(label_mode)
     if label_mode_error is not None:
-        return api_error(label_mode_error, status_code=400)
+        raise ValueError(label_mode_error)
 
     if 'goods_in_type' in body and body.get('goods_in_type') not in (None, ''):
         goods_in_type = _normalize_goods_in_type(body.get('goods_in_type'))
         goods_in_type_error = _goods_in_type_error(goods_in_type)
         if goods_in_type_error is not None:
-            return api_error(goods_in_type_error, status_code=400)
+            raise ValueError(goods_in_type_error)
     else:
         goods_in_type = goods_in_type_from_category(category)
 
-    try:
-        _storage_regime_from_body(body, required=True)
-    except ValueError as exc:
-        return api_error(str(exc), status_code=400)
-
+    _storage_regime_from_body(body, required=True)
     purchase = _purchase_details_from_body(body) or {}
+    with transaction.atomic():
+        product = Product(
+            name=body['name'],
+            alternate_name=body.get('alternate_name'),
+            recipe_code=body.get('recipe_code'),
+            alternate_recipe_code=body.get('alternate_recipe_code'),
+            gff_code=body.get('gff_code'),
+            secondary_gff_recipe=body.get('secondary_gff_recipe'),
+            external_barcode=body.get('external_barcode'),
+            label_mode=label_mode,
+            goods_in_type=goods_in_type,
+            is_active=body.get('is_active', True),
+            is_downtime=body.get('is_downtime', False),
+            ingredient_count=body.get('ingredient_count'),
+            remarks=body.get('remarks'),
+            product_class_id=body['product_class_id'],
+            category_id=body['category_id'],
+            unit_id=body['unit_id'],
+            source_container_id=body['source_container_id'],
+            destination_container_id=body['destination_container_id'],
+        )
+        _apply_purchase_details(product, purchase)
+        product.save()
+        _apply_nested_costing(product, body)
+        _apply_storage_regime(product, body, required=True)
+    return product
+
+
+def product_create_api(request):
+    """Create a core product row. Required FKs must already exist."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
     try:
-        with transaction.atomic():
-            product = Product(
-                name=body['name'],
-                alternate_name=body.get('alternate_name'),
-                recipe_code=body.get('recipe_code'),
-                alternate_recipe_code=body.get('alternate_recipe_code'),
-                gff_code=body.get('gff_code'),
-                secondary_gff_recipe=body.get('secondary_gff_recipe'),
-                external_barcode=body.get('external_barcode'),
-                label_mode=label_mode,
-                goods_in_type=goods_in_type,
-                is_active=body.get('is_active', True),
-                is_downtime=body.get('is_downtime', False),
-                ingredient_count=body.get('ingredient_count'),
-                remarks=body.get('remarks'),
-                product_class_id=body['product_class_id'],
-                category_id=body['category_id'],
-                unit_id=body['unit_id'],
-                source_container_id=body['source_container_id'],
-                destination_container_id=body['destination_container_id'],
-            )
-            _apply_purchase_details(product, purchase)
-            product.save()
-            _apply_nested_costing(product, body)
-            _apply_storage_regime(product, body, required=True)
+        product = _create_core_product(body)
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
     except IntegrityError as exc:

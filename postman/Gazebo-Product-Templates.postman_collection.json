@@ -1,0 +1,119 @@
+{
+  "info": {
+    "name": "Gazebo - Product Templates",
+    "description": "# Gazebo Product Templates\n\nOne-shot create for catalog templates used by Add new product.\n\nCreates the core `product` row **and** satellite rows (`product_packaging`, `product_shelf_life`, `product_flags`, `product_production`, `product_costing`) in one transaction, so the UI does not chain five PUTs.\n\n**Tables:** `product`, `product_packaging`, `product_shelf_life`, `product_flags`, `product_production`, `product_costing`\n\n## Routes\n`POST /product/sleeving/`, `POST /product/high-risk/`\n\nCore / General / Raw material / Packaging still use `POST /product/`.\n\n## Auth\n1. Run **Login** in Gazebo - RBAC Users (`POST /auth/login/`)\n2. Copy `data.id_token` into `{{id_token}}`\n3. Both routes need `Authorization: Bearer {{id_token}}`\n\n## Envelope\nSuccess: `{ \"status\": \"success\", \"message\": \"...\", \"data\": ... }`\nError: `{ \"status\": \"error\", \"message\": \"...\", \"data\": null }`\n\n## Vars\n`{{base_url}}`, `{{id_token}}`, `{{product_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "id_token",
+      "value": ""
+    },
+    {
+      "key": "product_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Product Templates",
+      "description": "Create-only template POSTs for Sleeving and High risk.\n\n**Tables:** `product` + satellites listed above.\n\n**Vars:** `{{id_token}}`, `{{product_id}}` (saved from `data.ref`)",
+      "item": [
+        {
+          "name": "Create sleeving product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('product_id', String(response.data.ref || ''));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/product/sleeving/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "sleeving", ""]
+            },
+            "description": "### Create sleeving product\n\n`POST /product/sleeving/`\n\nCreate-only template for **Cased / Sleeving** items. Writes the core `product` row plus packaging, shelf life, flags, production, and costing in one transaction.\n\nUse this when the UI template is Sleeving (e.g. a 4 × 400 g sleeve that ships from Sleeving to Dispatch). Do **not** send derived fields: the server computes `pack_weight` and `costing.case_size_description` from the three case-size boxes.\n\nUpdates stay on `PATCH /product/:id/` plus the satellite PUTs.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\nCore (same as `POST /product/`):\n\n| Field | Required | Meaning |\n|---|---|---|\n| `name` | yes | Internal item name |\n| `product_class_id` | yes | Existing `product_class` PK |\n| `category_id` | yes | Existing `product_category` PK (typical: Cased Items) |\n| `unit_id` | yes | Goods-out unit PK (typical: Case) |\n| `source_container_id` | yes | Location PK — source / Container OUT |\n| `destination_container_id` | yes | Location PK — destination / Container IN |\n| `storage_regime` | yes | `ambient`, `chilled`, `frozen`, or `non_food` |\n| `alternate_name` | no | Alternative item name |\n| `recipe_code` | no | Internal recipe / product code |\n| `alternate_recipe_code` | no | Alternative recipe code |\n| `external_barcode` | no | Barcode |\n| `label_mode` | no | Default `product`. Also `per_unit`, `batch` |\n\nSleeving extras:\n\n| Field | Required | Meaning |\n|---|---|---|\n| `items_per_unit` | yes | Units per case (box 1). Must be > 0 |\n| `unitary_weight` | yes | Weight of each unit (box 2). Must be > 0 |\n| `case_size_unit_id` | yes | Weight unit PK (box 3). Name is baked into the case-size label; no extra FK stored |\n| `shelf_life_days` | yes | Client shelf life in days |\n| `shelf_life_depot_days` | no | Depot days |\n| `force_trace_number` | no | Default `false`. Production date and use-by are always forced on |\n| `default_resource_id` | no | Default production line (`planning` resource PK) |\n\nServer-derived (do not send):\n\n| Field | Rule |\n|---|---|\n| `packaging.pack_weight` | `items_per_unit × unitary_weight` (no unit conversion) |\n| `costing.case_size_description` | `\"{qty} x {weight} {UNIT}\"` e.g. `4 x 400 GRAMS` |\n\nFlag defaults written: `is_sales_item`, `has_plan`, `include_in_projections` all **true**.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Bearer {{id_token}}` |\n| `Content-Type` | yes | `application/json` |\n\n### Response body\n\n`message`: `Product created successfully.`  \n`data`: core product detail plus nested `packaging`, `shelf_life`, `flags`, `production`, `costing`. `data.ref` is the new product id (same as `data.id`). Test script saves it to `{{product_id}}`.\n\nExample: 4 × 400 grams → `pack_weight` `1600`, `case_size_description` `4 x 400 GRAMS`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | Product + satellites created |\n| 400 | Invalid JSON, missing/invalid fields, unknown unit/category/location, or integrity error |\n| 401 | Not signed in |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sleeve 400\",\n  \"product_class_id\": 19,\n  \"category_id\": 127,\n  \"unit_id\": 9002,\n  \"source_container_id\": 5,\n  \"destination_container_id\": 6,\n  \"storage_regime\": \"chilled\",\n  \"items_per_unit\": 4,\n  \"unitary_weight\": 400,\n  \"case_size_unit_id\": 2,\n  \"shelf_life_days\": 18,\n  \"shelf_life_depot_days\": 14,\n  \"force_trace_number\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create high risk product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('product_id', String(response.data.ref || ''));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/product/high-risk/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "high-risk", ""]
+            },
+            "description": "### Create high risk product\n\n`POST /product/high-risk/`\n\nCreate-only template for **Packed / High risk** items. Writes the core `product` row plus packaging, optional shelf life, flags, production, and a costing stub in one transaction.\n\nUse this when the UI template is High risk (e.g. a tray that leaves High Risk for Sleeving). Packed items are **not** sold: `is_sales_item` and `include_in_projections` are forced **false**.\n\nUpdates stay on `PATCH /product/:id/` plus the satellite PUTs.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\nCore (same as `POST /product/`):\n\n| Field | Required | Meaning |\n|---|---|---|\n| `name` | yes | Internal item name |\n| `product_class_id` | yes | Existing `product_class` PK |\n| `category_id` | yes | Existing `product_category` PK (typical: Packed Items) |\n| `unit_id` | yes | Goods-out unit PK |\n| `source_container_id` | yes | Location PK — source / Container OUT (typical: High Risk) |\n| `destination_container_id` | yes | Location PK — destination / Container IN (typical: Sleeving) |\n| `storage_regime` | yes | `ambient`, `chilled`, `frozen`, or `non_food` |\n| `alternate_name` | no | Alternative item name |\n| `recipe_code` | no | Internal recipe / product code |\n| `alternate_recipe_code` | no | Alternative recipe code |\n| `label_mode` | no | Default `product` |\n\nHigh-risk extras:\n\n| Field | Required | Meaning |\n|---|---|---|\n| `pack_weight` | yes | Tray weight. Must be > 0 |\n| `is_gas_flush` | no | Default **true** if omitted |\n| `shelf_life_days` | no | If set, creates a `product_shelf_life` row. Force flags stay at model defaults |\n| `avg_staff_min_per_unit` | no | Labour minutes per unit |\n| `avg_staff_per_minute` | no | Staff per minute |\n\n`tray_id` / `container_vessel_id` are **not** taken from this body — both stay null unless later set via `PUT /product/:id/packaging/`.\n\n### Headers\n\n| Header | Required | Meaning |\n|---|---|---|\n| `Authorization` | yes | `Bearer {{id_token}}` |\n| `Content-Type` | yes | `application/json` |\n\n### Response body\n\n`message`: `Product created successfully.`  \n`data`: core product detail plus nested `packaging`, `shelf_life` (null if days omitted), `flags`, `production`, `costing`. `data.ref` is the new product id. Test script saves it to `{{product_id}}`.\n\nExample: `pack_weight` `1.25` + omitted gas flush → `packaging.is_gas_flush` true, `flags.is_sales_item` false.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | Product + satellites created |\n| 400 | Invalid JSON, missing/invalid fields, unknown category/unit/location, or integrity error |\n| 401 | Not signed in |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"High Risk Tray\",\n  \"product_class_id\": 19,\n  \"category_id\": 76,\n  \"unit_id\": 1,\n  \"source_container_id\": 4,\n  \"destination_container_id\": 5,\n  \"storage_regime\": \"ambient\",\n  \"pack_weight\": 1.25,\n  \"is_gas_flush\": true,\n  \"shelf_life_days\": 7,\n  \"avg_staff_min_per_unit\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

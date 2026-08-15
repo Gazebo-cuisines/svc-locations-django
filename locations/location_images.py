@@ -1,12 +1,11 @@
 """Private location profile images in S3 (gazebo-media-files / Location-profile/)."""
 
-import os
 import uuid
 
-import boto3
 from botocore.exceptions import ClientError
 from django.conf import settings
 
+from core.s3 import s3_client as _s3_client
 from locations.models import Location
 
 ALLOWED_CONTENT_TYPES = {
@@ -17,20 +16,6 @@ ALLOWED_CONTENT_TYPES = {
 MAX_BYTES = 2 * 1024 * 1024  # 2 MiB
 PRESIGN_SECONDS = 3600
 PREFIX = 'Location-profile'
-
-
-def _s3_client():
-    profile = os.getenv('AWS_PROFILE') or getattr(settings, 'AWS_PROFILE', None)
-    region = (
-        os.getenv('AWS_DEFAULT_REGION')
-        or getattr(settings, 'AWS_DEFAULT_REGION', None)
-        or 'eu-west-2'
-    )
-    try:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    except Exception:
-        session = boto3.Session()
-    return session.client('s3', region_name=region)
 
 
 def _bucket() -> str:

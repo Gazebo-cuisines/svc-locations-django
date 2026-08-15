@@ -706,12 +706,27 @@ class RecipeAttachmentTests(RecipeAuthMixin, TestCase):
         )
         self.assertEqual(resp.status_code, 409)
 
-    def test_pdf_is_400(self):
+    @patch('recipe.attachments._s3_client')
+    def test_pdf_upload(self, s3_factory):
+        self._s3(s3_factory)
         resp = self.client.post(
             f'/recipe/versions/{self.version.id}/attachments/',
             {
                 'file': SimpleUploadedFile(
                     'doc.pdf', b'%PDF-1.4', content_type='application/pdf',
+                ),
+            },
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['data']['content_type'], 'application/pdf')
+
+    def test_exe_is_400(self):
+        resp = self.client.post(
+            f'/recipe/versions/{self.version.id}/attachments/',
+            {
+                'file': SimpleUploadedFile(
+                    'app.exe', b'MZ', content_type='application/x-msdownload',
                 ),
             },
             HTTP_AUTHORIZATION=self.auth,

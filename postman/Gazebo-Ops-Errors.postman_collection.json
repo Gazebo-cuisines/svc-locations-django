@@ -1,0 +1,130 @@
+{
+  "info": {
+    "name": "Gazebo - Ops Errors",
+    "description": "# Gazebo Ops Errors\n\nClient console / interceptor reports and unhandled Django 500s land in one table: `ops_error_ticket`.\n\nDuplicates share a `fingerprint` (hash of message + first stack line): occurrences increment; a resolved ticket reopens.\n\n**Not an auto-fixer.** A human (or PR) still ships the fix. Bedrock explain is later.\n\n## Routes\n`POST /ops/errors/`, `GET /ops/errors/`, `PATCH /ops/errors/:id/`\n\n## Auth\n1. Run **Login** in Gazebo - RBAC Users (`POST /auth/login/`)\n2. Copy `data.id_token` into `{{id_token}}`\n3. **Report error** — any signed-in user\n4. **List / Update** — IT or any Admin area\n\n## Envelope\nSuccess: `{ \"status\": \"success\", \"message\": \"...\", \"data\": ... }`\nError: `{ \"status\": \"error\", \"message\": \"...\", \"data\": null }`\n\n## Vars\n`{{base_url}}`, `{{id_token}}`, `{{ticket_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "id_token",
+      "value": ""
+    },
+    {
+      "key": "ticket_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Error tickets",
+      "description": "Maintenance log for runtime errors (console, HTTP 500 interceptor, Django unhandled exceptions).\n\n**Table:** `ops_error_ticket`\n\n**Vars:** `{{id_token}}`, `{{ticket_id}}`",
+      "item": [
+        {
+          "name": "Report error",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('ticket_id', String(response.data.id || ''));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ops/errors/",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "errors", ""]
+            },
+            "description": "### Report error\n\n`POST /ops/errors/`\n\nAny signed-in user. Frontend wraps `console.error` / `window.onerror` / `unhandledrejection` and the axios interceptor for HTTP 500s, then POSTs here. Same fingerprint updates `occurrences` instead of creating a new row (HTTP 200). A previously resolved ticket reopens.\n\nUnhandled Django exceptions are written by middleware and do not use this route.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `message` | yes | Error text (truncated to 1024) |\n| `stack` | no | Stack string (truncated to 8000). First line feeds the fingerprint |\n| `url` | no | Page URL where it happened |\n| `payload` | no | Optional request/context JSON (truncated ~4k) |\n\n### Response body\n\n`message`: `Error recorded.`  \n`data`: ticket object including `id`, `fingerprint`, `status`, `occurrences`, `stack`, `url`.\n\nNew fingerprint → HTTP 201. Repeat → HTTP 200, `occurrences` incremented.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | New ticket created |\n| 200 | Duplicate fingerprint bumped |\n| 400 | Invalid JSON or missing `message` |\n| 401 | Not signed in |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"TypeError: Cannot read properties of undefined (reading 'id')\",\n  \"stack\": \"TypeError: Cannot read properties of undefined (reading 'id')\\n    at ProductForm (https://beta.gazeboo.cloud/product/12)\",\n  \"url\": \"https://beta.gazeboo.cloud/product/12\",\n  \"payload\": { \"product_id\": 12 }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List error tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ops/errors/?status=open",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "errors", ""],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "open",
+                  "description": "Optional. `open`, `investigating`, or `resolved`."
+                }
+              ]
+            },
+            "description": "### List error tickets\n\n`GET /ops/errors/`\n\nIT or any Admin area. Newest `last_seen_at` first, capped at 100. Use `status` to filter the maintenance queue (open vs investigating vs resolved).\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `status` | no | `open`, `investigating`, or `resolved` |\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Error tickets fetched.`  \n`data`: array of tickets (`id`, `fingerprint`, `status`, `note`, `message`, `stack`, `url`, `source`, `occurrences`, `actor_username`, `payload`, `created_at`, `last_seen_at`).\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | List returned |\n| 400 | `status` is not a known value |\n| 401 | Not signed in |\n| 403 | Signed in but not IT/admin |"
+          }
+        },
+        {
+          "name": "Update error ticket",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ops/errors/{{ticket_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "errors", "{{ticket_id}}", ""]
+            },
+            "description": "### Update error ticket\n\n`PATCH /ops/errors/:id/`\n\nIT or any Admin area. Sets workflow status and/or the maintenance note. Does not change `occurrences` or `last_seen_at` (those only move when the error is seen again).\n\n### Path parameters\n\n| Param | Meaning |\n|---|---|\n| `id` | Ticket id (`{{ticket_id}}`) |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `status` | no | `open`, `investigating`, or `resolved` |\n| `note` | no | Free-text maintenance note |\n\nOmit a field to leave it unchanged.\n\n### Response body\n\n`message`: `Error ticket updated.`  \n`data`: the updated ticket object.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Updated |\n| 400 | Invalid JSON, unknown `status`, or `note` not text |\n| 401 | Not signed in |\n| 403 | Signed in but not IT/admin |\n| 404 | Ticket id does not exist |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"investigating\",\n  \"note\": \"Null product on ProductForm when flags satellite is missing.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
