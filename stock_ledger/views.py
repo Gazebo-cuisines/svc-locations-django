@@ -19,6 +19,7 @@ from stock_ledger.models import (
     ProductionRun,
     StockBalance,
     StockEntry,
+    StockEntryPostingStatus,
     StockEntryType,
     StockLot,
     StockLotOrigin,
@@ -55,6 +56,7 @@ from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     receipt_meta_by_lot_ids,
     serialize_balance_row,
+    supplier_pack_fields,
 )
 from stock_ledger.util.recall import (
     RecallLookupError,
@@ -1844,6 +1846,12 @@ def audit_timeline_api(request):
             'counterparty_location',
             'lot__product',
         )
+        .exclude(
+            posting__status__in=[
+                StockEntryPostingStatus.QUEUED,
+                StockEntryPostingStatus.CANCELLED,
+            ],
+        )
         .order_by('-recorded_at', '-id')
     )
     try:
@@ -1998,6 +2006,20 @@ def warehouse_remaining_api(request):
         )
         .order_by('location__name', 'lot__product__name')
     )
+    rows = list(rows)
+    product_ids = {row['lot__product_id'] for row in rows}
+    products = {
+        p.id: p
+        for p in Product.objects.filter(pk__in=product_ids).select_related('unit')
+    }
+    mappings = {}
+    for mapping in (
+        ProductSupplier.objects
+        .filter(product_id__in=product_ids, is_active=True)
+        .select_related('outer_unit', 'inner_unit')
+        .order_by('-is_default', '-id')
+    ):
+        mappings.setdefault(mapping.product_id, mapping)
 
     by_location: dict[int, dict] = {}
     for row in rows:
@@ -2010,13 +2032,19 @@ def warehouse_remaining_api(request):
                 'products': [],
             }
             by_location[loc_id] = bucket
+        qty = row['remaining_qty']
+        pid = row['lot__product_id']
+        pack = supplier_pack_fields(
+            qty, products.get(pid), mappings.get(pid),
+        )
         bucket['products'].append({
-            'product_id': row['lot__product_id'],
+            'product_id': pid,
             'product_name': row['lot__product__name'],
             'unit_id': row['lot__product__unit_id'],
             'unit_name': row['lot__product__unit__name'],
-            'remaining_qty': _dec(row['remaining_qty']),
+            'remaining_qty': _dec(qty),
             'lot_count': row['lot_count'],
+            **pack,
         })
 
     data = list(by_location.values())
@@ -2387,6 +2415,112 @@ def scan_resolve_api(request):
         if label is not None:
             data['label'] = entry_labels.label_state_dict(label)
     return api_success('Scan resolved.', data)
+
+
+@csrf_exempt
+@require_GET
+def scan_goods_out_api(request):
+    """Scan a bag for outbound pick: lot qty + FIFO warning, never a FIFO 409."""
+    code = request.GET.get('code')
+    location_id = request.GET.get('location_id')
+    if location_id in (None, ''):
+        return api_error('location_id is required.')
+    try:
+        loc_id = int(location_id)
+    except (TypeError, ValueError):
+        return api_error('location_id must be an integer.')
+
+    try:
+        match = scan.resolve_scan(code)
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+
+    lot = match.get('lot')
+    if lot is None:
+        return api_error('Scan the bag label, not the product barcode.')
+
+    product = match['product']
+    expected_raw = request.GET.get('expected_product_id')
+    if expected_raw not in (None, ''):
+        try:
+            expected_id = int(expected_raw)
+        except (TypeError, ValueError):
+            return api_error('expected_product_id must be an integer.')
+        if product.id != expected_id:
+            expected = (
+                Product.objects.filter(pk=expected_id).only('id', 'name').first()
+            )
+            expected_name = expected.name if expected else f'product {expected_id}'
+            return api_error(
+                f'Please scan the barcode for {expected_name}. '
+                f'The one you scanned is for {product.name}.',
+                data={
+                    'error': 'wrong_product',
+                    'expected_product_id': expected_id,
+                    'expected_product_name': expected_name,
+                    'scanned_product_id': product.id,
+                    'scanned_product_name': product.name,
+                    'scanned_code': (code or '').strip(),
+                },
+                status_code=409,
+            )
+
+    balance = (
+        StockBalance.objects
+        .select_related(*BALANCE_SELECT_RELATED)
+        .filter(lot_id=lot.id, location_id=loc_id, quantity__gt=0)
+        .first()
+    )
+    if balance is None:
+        return api_error(
+            'No stock for this bag at this location.',
+            data={
+                'error': 'no_stock',
+                'lot_id': lot.id,
+                'scanned_code': (code or '').strip(),
+            },
+            status_code=409,
+        )
+
+    qty = balance.quantity
+    pack = supplier_pack_fields(
+        qty, product, getattr(lot, 'product_supplier', None),
+    )
+    batches = _fifo_batch_rows(product_id=product.id, location_id=loc_id)
+    oldest = batches[0] if batches else None
+    fifo_ok = oldest is not None and oldest['lot_id'] == lot.id
+    entry = match.get('entry')
+    data = {
+        'scanned_code': (code or '').strip(),
+        'match_type': match['match_type'],
+        'entry_id': entry.id if entry is not None else None,
+        'entry_code': (
+            entry_labels.entry_code(entry.id) if entry is not None else None
+        ),
+        'product': {
+            'product_id': product.id,
+            'name': product.name,
+            'recipe_code': product.recipe_code,
+            'unit': product.unit.name if product.unit_id else None,
+        },
+        'lot_id': lot.id,
+        'trace_number': lot.trace_number,
+        'use_by': lot.use_by.isoformat() if lot.use_by else None,
+        'production_date': (
+            lot.production_date.isoformat() if lot.production_date else None
+        ),
+        'location_id': loc_id,
+        'quantity': _dec(qty),
+        **pack,
+        'fifo_ok': fifo_ok,
+    }
+    if not fifo_ok and oldest is not None:
+        data['recommended_lot_id'] = oldest['lot_id']
+        data['recommended_trace'] = oldest.get('trace_number')
+        data['recommended_use_by'] = oldest.get('use_by')
+    return api_success('Scan resolved.', data)
+
 
 @csrf_exempt
 @require_GET

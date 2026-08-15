@@ -179,6 +179,12 @@ class PoReceiveParityTests(TestCase):
             self.assertEqual(tx['label']['label_format'], 'box')
             self.assertEqual(tx['posting_status'], 'queued')
         self.assertEqual(row['entry_code'], row['transactions'][0]['entry_code'])
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(self.line.qty_received, Decimal('0'))
+        self.assertFalse(self.line.line_closed)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+        self.assertEqual(Decimal(row['qty_queued']), Decimal('2'))
 
     def test_admin_line_label_drives_receive_split(self):
         self.line.label_format = 'box'
@@ -208,6 +214,90 @@ class PoReceiveParityTests(TestCase):
         row = data['receive_results'][0]
         self.assertEqual(row['label_format'], 'box')
         self.assertEqual(row['transaction_count'], 2)
+
+    def test_queued_receive_completes_po_only_after_post(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '2',
+                    'idempotency_key': f'po-qpost-{uuid4()}',
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                }],
+            },
+        )
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(self.line.qty_received, Decimal('0'))
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+        with self.assertRaises(ReceiveError):
+            receive_purchase_order(
+                self.po.id,
+                body={
+                    'location_id': self.wh.id,
+                    'lines': [{
+                        'line_id': self.line.id,
+                        'quantity': '2',
+                        'idempotency_key': f'po-qpost-dup-{uuid4()}',
+                        'label_format': 'pallet',
+                        'label_count': 1,
+                    }],
+                },
+            )
+        entry_id = data['receive_results'][0]['stock_entry_id']
+        verify = Client().post(
+            f'/stock/entries/{entry_id}/labels/verify/',
+            data=(
+                f'{{"code":"E{entry_id}","post_stock":true}}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(verify.status_code, 200, verify.content)
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(self.line.qty_received, Decimal('2'))
+        self.assertTrue(self.line.line_closed)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.RECEIVED)
+
+    def test_cancel_queued_receive_allows_receive_again(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '2',
+                    'idempotency_key': f'po-qcan-{uuid4()}',
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                }],
+            },
+        )
+        entry_id = data['receive_results'][0]['stock_entry_id']
+        cancel = Client().post(f'/stock/entries/{entry_id}/cancel/')
+        self.assertEqual(cancel.status_code, 200, cancel.content)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.qty_received, Decimal('0'))
+        again = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '2',
+                    'idempotency_key': f'po-qcan2-{uuid4()}',
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                }],
+            },
+        )
+        self.assertEqual(
+            Decimal(again['receive_results'][0]['qty_queued']),
+            Decimal('2'),
+        )
 
     def test_idempotent_replay_does_not_double_qty(self):
         key = f'po-idem-{uuid4()}'

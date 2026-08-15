@@ -94,6 +94,15 @@ class EntryPostingQueueTests(TestCase):
         self.assertEqual(queued.status_code, 200)
         self.assertGreaterEqual(queued.json()['data']['count'], 1)
 
+        hidden = self.client.get(
+            f'/stock/audit/timeline/?product_id={self.product.id}',
+        )
+        self.assertEqual(hidden.status_code, 200)
+        self.assertNotIn(
+            entry_id,
+            [row['entry_id'] for row in hidden.json()['data']],
+        )
+
         # Post blocked until label verified.
         blocked = self.client.post(
             f'/stock/entries/{entry_id}/post/',
@@ -114,6 +123,11 @@ class EntryPostingQueueTests(TestCase):
 
         bal = StockBalance.objects.get(lot_id=data['lot_id'], location_id=self.wh.id)
         self.assertEqual(bal.quantity, Decimal('100'))
+
+        live = self.client.get(
+            f'/stock/audit/timeline/?product_id={self.product.id}',
+        )
+        self.assertIn(entry_id, [row['entry_id'] for row in live.json()['data']])
 
         # Idempotent re-post.
         again = entry_posting.post_entry(entry_id=entry_id)
