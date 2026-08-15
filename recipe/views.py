@@ -16,11 +16,13 @@ from recipe.models import (
     RecipeVersion,
     RecipeVersionStatus,
 )
+from recipe.permissions import gate_recipe_activate, gate_recipe_write
 from recipe.utils import (
     RecipeValidationError,
     activate_version,
     assert_not_self_loop,
     build_recipe_tree,
+    clone_version,
     get_or_create_recipe_with_draft,
     next_version_number,
     sync_has_recipe,
@@ -203,6 +205,7 @@ def recipe_product_tree_api(request, product_id: int):
 
 @require_http_methods(['GET', 'POST'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_by_product_api(request, product_id: int):
     if not active_products().filter(pk=product_id).exists():
         return api_error('Product not found.', status_code=404)
@@ -217,6 +220,7 @@ def recipe_by_product_api(request, product_id: int):
 
 @require_http_methods(['GET', 'POST'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_collection_api(request):
     if request.method == 'GET':
         recipes = (
@@ -267,6 +271,7 @@ def recipe_create_api(request):
 
 @require_http_methods(['GET', 'PATCH', 'DELETE'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_detail_api(request, pk: int):
     try:
         recipe = _recipe_detail_qs().get(pk=pk)
@@ -311,8 +316,17 @@ def recipe_delete_api(recipe: Recipe):
     return api_success('Recipe deleted successfully.', data=None)
 
 
+def _version_detail_qs():
+    return RecipeVersion.objects.prefetch_related(
+        'components__recipe_version',
+        'components__component_product',
+        'components__unit',
+    )
+
+
 @require_http_methods(['POST'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_version_collection_api(request, pk: int):
     try:
         recipe = Recipe.objects.get(pk=pk)
@@ -332,7 +346,20 @@ def recipe_version_collection_api(request, pk: int):
     if status not in RecipeVersionStatus.values:
         return api_error('Invalid status.', status_code=400)
 
-    version_number = next_version_number(recipe)
+    source = None
+    copy_from_version_id = body.get('copy_from_version_id')
+    if copy_from_version_id not in (None, ''):
+        try:
+            source = RecipeVersion.objects.prefetch_related('components').get(
+                pk=copy_from_version_id,
+            )
+        except RecipeVersion.DoesNotExist:
+            return api_error('Recipe version not found.', status_code=404)
+        if source.recipe_id != recipe.id:
+            return api_error(
+                'That version does not belong to this recipe.',
+                status_code=400,
+            )
 
     batch_unit_id = body.get('batch_unit_id')
     if batch_unit_id is not None and not Unit.objects.filter(pk=batch_unit_id).exists():
@@ -343,43 +370,91 @@ def recipe_version_collection_api(request, pk: int):
         return api_error(f'location_id={location_id} not found.', status_code=400)
 
     try:
-        version = RecipeVersion.objects.create(
-            recipe=recipe,
-            version_number=version_number,
-            status=status,
-            process_loss=_parse_decimal(
-                body.get('process_loss', '1.0000'), 'process_loss',
-            ) or Decimal('1.0000'),
-            batch_quantity=_parse_decimal(body.get('batch_quantity'), 'batch_quantity'),
-            batch_unit_id=batch_unit_id,
-            sum_batch_quantity=_parse_decimal(
-                body.get('sum_batch_quantity'), 'sum_batch_quantity',
-            ),
-            sum_net_quantity=_parse_decimal(
-                body.get('sum_net_quantity'), 'sum_net_quantity',
-            ),
-            sum_gross_quantity=_parse_decimal(
-                body.get('sum_gross_quantity'), 'sum_gross_quantity',
-            ),
-            location_id=location_id,
-            effective_from=_parse_date(body.get('effective_from'), 'effective_from'),
-            effective_to=_parse_date(body.get('effective_to'), 'effective_to'),
-            remarks=body.get('remarks'),
-        )
+        with transaction.atomic():
+            if source is not None:
+                version = clone_version(source)
+                if 'process_loss' in body:
+                    version.process_loss = _parse_decimal(
+                        body.get('process_loss', '1.0000'), 'process_loss',
+                    ) or Decimal('1.0000')
+                if 'batch_quantity' in body:
+                    version.batch_quantity = _parse_decimal(
+                        body['batch_quantity'], 'batch_quantity',
+                    )
+                if 'batch_unit_id' in body:
+                    version.batch_unit_id = batch_unit_id
+                if 'sum_batch_quantity' in body:
+                    version.sum_batch_quantity = _parse_decimal(
+                        body['sum_batch_quantity'], 'sum_batch_quantity',
+                    )
+                if 'sum_net_quantity' in body:
+                    version.sum_net_quantity = _parse_decimal(
+                        body['sum_net_quantity'], 'sum_net_quantity',
+                    )
+                if 'sum_gross_quantity' in body:
+                    version.sum_gross_quantity = _parse_decimal(
+                        body['sum_gross_quantity'], 'sum_gross_quantity',
+                    )
+                if 'location_id' in body:
+                    version.location_id = location_id
+                if 'effective_from' in body:
+                    version.effective_from = _parse_date(
+                        body['effective_from'], 'effective_from',
+                    )
+                if 'effective_to' in body:
+                    version.effective_to = _parse_date(
+                        body['effective_to'], 'effective_to',
+                    )
+                if 'remarks' in body:
+                    version.remarks = body['remarks']
+                version.save()
+            else:
+                version = RecipeVersion.objects.create(
+                    recipe=recipe,
+                    version_number=next_version_number(recipe),
+                    status=status,
+                    process_loss=_parse_decimal(
+                        body.get('process_loss', '1.0000'), 'process_loss',
+                    ) or Decimal('1.0000'),
+                    batch_quantity=_parse_decimal(
+                        body.get('batch_quantity'), 'batch_quantity',
+                    ),
+                    batch_unit_id=batch_unit_id,
+                    sum_batch_quantity=_parse_decimal(
+                        body.get('sum_batch_quantity'), 'sum_batch_quantity',
+                    ),
+                    sum_net_quantity=_parse_decimal(
+                        body.get('sum_net_quantity'), 'sum_net_quantity',
+                    ),
+                    sum_gross_quantity=_parse_decimal(
+                        body.get('sum_gross_quantity'), 'sum_gross_quantity',
+                    ),
+                    location_id=location_id,
+                    effective_from=_parse_date(
+                        body.get('effective_from'), 'effective_from',
+                    ),
+                    effective_to=_parse_date(body.get('effective_to'), 'effective_to'),
+                    remarks=body.get('remarks'),
+                )
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
     except IntegrityError as exc:
         return api_error(f'Could not create recipe version: {exc}', status_code=400)
 
+    version = _version_detail_qs().get(pk=version.pk)
+    data = recipe_version_detail_dict(version)
+    if source is not None:
+        data['copied_from_version_id'] = source.id
     return api_success(
         'Recipe version created successfully.',
-        recipe_version_detail_dict(version),
+        data,
         status_code=201,
     )
 
 
 @require_http_methods(['GET', 'PATCH'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_version_detail_api(request, pk: int):
     try:
         version = RecipeVersion.objects.prefetch_related(
@@ -482,6 +557,7 @@ def recipe_version_update_api(request, version: RecipeVersion):
 
 @require_http_methods(['POST'])
 @csrf_exempt
+@gate_recipe_activate
 def recipe_version_activate_api(request, pk: int):
     try:
         version = RecipeVersion.objects.get(pk=pk)
@@ -502,6 +578,7 @@ def recipe_version_activate_api(request, pk: int):
 
 @require_http_methods(['POST'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_component_collection_api(request, pk: int):
     try:
         version = RecipeVersion.objects.select_related('recipe').get(pk=pk)
@@ -573,6 +650,7 @@ def recipe_component_collection_api(request, pk: int):
 
 @require_http_methods(['PATCH', 'DELETE'])
 @csrf_exempt
+@gate_recipe_write
 def recipe_component_detail_api(request, pk: int):
     try:
         component = RecipeComponent.objects.select_related(

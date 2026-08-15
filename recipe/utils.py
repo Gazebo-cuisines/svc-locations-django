@@ -49,10 +49,10 @@ def get_or_create_recipe_with_draft(
 @transaction.atomic
 def clone_version(source: RecipeVersion) -> RecipeVersion:
     """New draft on the same recipe with source header fields + all component lines."""
-    Recipe.objects.select_for_update().get(pk=source.recipe_id)
+    recipe = Recipe.objects.select_for_update().get(pk=source.recipe_id)
     clone = RecipeVersion.objects.create(
-        recipe_id=source.recipe_id,
-        version_number=next_version_number(source.recipe),
+        recipe=recipe,
+        version_number=next_version_number(recipe),
         status=RecipeVersionStatus.DRAFT,
         process_loss=source.process_loss,
         batch_quantity=source.batch_quantity,
@@ -77,7 +77,7 @@ def clone_version(source: RecipeVersion) -> RecipeVersion:
         )
         for component in source.components.all()
     ])
-    sync_has_recipe(source.recipe.product_id)
+    sync_has_recipe(recipe.product_id)
     return clone
 
 

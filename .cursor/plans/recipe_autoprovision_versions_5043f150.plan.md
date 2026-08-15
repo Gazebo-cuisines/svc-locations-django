@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: chunk-3-version-copy
     content: "Chunk 3: copy_from_version_id on version create, cloning header fields and all component lines into a new draft."
-    status: in_progress
+    status: completed
   - id: chunk-4-permissions
     content: "Chunk 4: recipe/permissions.py with require_recipe_approver, and gate recipe write endpoints behind auth. Breaking for the frontend, needs JWT on writes."
     status: pending
