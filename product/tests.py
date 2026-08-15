@@ -204,7 +204,6 @@ class ProductApiTests(TestCase):
         resp = self._post('/product/high-risk/', self._core_body(
             'High Risk Tray',
             pack_weight='1.25',
-            shelf_life_days=3,
         ))
         self.assertEqual(resp.status_code, 201, resp.content)
         data = resp.json()['data']
@@ -212,6 +211,6 @@ class ProductApiTests(TestCase):
         self.assertTrue(data['packaging']['is_gas_flush'])
         self.assertIsNone(data['packaging']['tray_id'])
         self.assertIsNone(data['packaging']['container_vessel_id'])
-        self.assertEqual(data['shelf_life']['shelf_life_days'], 3)
+        self.assertIsNone(data['shelf_life'])
         self.assertFalse(data['flags']['is_sales_item'])
         self.assertFalse(data['flags']['include_in_projections'])

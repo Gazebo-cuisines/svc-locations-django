@@ -1,13 +1,12 @@
 """Private recipe photos in S3 (gazebo-media-files / Recipe-version/)."""
 
-import os
 import uuid
 
-import boto3
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.db import transaction
 
+from core.s3 import s3_client as _s3_client
 from recipe.models import (
     RecipeAttachment,
     RecipeAttachmentKind,
@@ -101,20 +100,6 @@ class AttachmentError(ValueError):
     pass
 
 
-def _s3_client():
-    profile = os.getenv('AWS_PROFILE') or getattr(settings, 'AWS_PROFILE', None)
-    region = (
-        os.getenv('AWS_DEFAULT_REGION')
-        or getattr(settings, 'AWS_DEFAULT_REGION', None)
-        or 'eu-west-2'
-    )
-    try:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    except Exception:
-        session = boto3.Session()
-    return session.client('s3', region_name=region)
-
-
 def _bucket() -> str:
     return getattr(settings, 'MEDIA_S3_BUCKET', None) or 'gazebo-media-files'
 
@@ -134,7 +119,7 @@ def attachment_url(
         return None
 
 
-def attachment_dict(row: RecipeAttachment) -> dict:
+def attachment_dict(row: RecipeAttachment, *, include_url: bool = True) -> dict:
     return {
         'id': row.id,
         'recipe_version_id': row.recipe_version_id,
@@ -146,7 +131,7 @@ def attachment_dict(row: RecipeAttachment) -> dict:
         'sort_order': row.sort_order,
         'uploaded_by_sub': row.uploaded_by_sub,
         'created_at': row.created_at.isoformat() if row.created_at else None,
-        'url': attachment_url(row),
+        'url': attachment_url(row) if include_url else None,
     }
 
 

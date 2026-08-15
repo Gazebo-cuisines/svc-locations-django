@@ -89,7 +89,7 @@ def _optional_decimal(body: dict, field: str) -> Decimal | None:
 def _template_response_data(
     product: Product,
     packaging: ProductPackaging,
-    shelf_life: ProductShelfLife,
+    shelf_life: ProductShelfLife | None,
     flags: ProductFlags,
     production: ProductProduction,
     costing: ProductCosting,
@@ -98,7 +98,7 @@ def _template_response_data(
         'ref': product.id,
         **product_detail_dict(product),
         'packaging': packaging_dict(packaging),
-        'shelf_life': shelf_life_dict(shelf_life),
+        'shelf_life': shelf_life_dict(shelf_life) if shelf_life else None,
         'flags': flags_dict(flags),
         'production': production_dict(production),
         'costing': costing_dict(costing),
@@ -176,7 +176,7 @@ def _parse_high_risk_extras(body: dict) -> dict:
     return {
         'pack_weight': _positive_decimal(body, 'pack_weight'),
         'is_gas_flush': is_gas_flush,
-        'shelf_life_days': _require_int(body, 'shelf_life_days'),
+        'shelf_life_days': _optional_int(body, 'shelf_life_days'),
         'avg_staff_min_per_unit': _optional_decimal(body, 'avg_staff_min_per_unit'),
         'avg_staff_per_minute': _optional_decimal(body, 'avg_staff_per_minute'),
     }
@@ -188,10 +188,12 @@ def _create_high_risk_satellites(product: Product, extras: dict) -> dict:
         pack_weight=extras['pack_weight'],
         is_gas_flush=extras['is_gas_flush'],
     )
-    shelf_life = ProductShelfLife.objects.create(
-        product=product,
-        shelf_life_days=extras['shelf_life_days'],
-    )
+    shelf_life = None
+    if extras['shelf_life_days'] is not None:
+        shelf_life = ProductShelfLife.objects.create(
+            product=product,
+            shelf_life_days=extras['shelf_life_days'],
+        )
     flags = ProductFlags.objects.create(
         product=product,
         is_sales_item=False,

@@ -43,7 +43,9 @@ def product_class_list_api(request):
     return api_success('Product classes fetched successfully.', _rows(ProductClass.objects.all()))
 
 
-def _category_dict(row: Category, *, include_children: bool = True) -> dict:
+def _category_dict(
+    row: Category, *, include_children: bool = True, include_image_url: bool = True,
+) -> dict:
     data = {
         'id': row.id,
         'name': row.name,
@@ -52,7 +54,7 @@ def _category_dict(row: Category, *, include_children: bool = True) -> dict:
         'code_generator': row.code_generator,
         'remarks': row.remarks,
         'image_key': row.image_key,
-        'image_url': category_image_url(row),
+        'image_url': category_image_url(row) if include_image_url else None,
     }
     if include_children:
         data['children'] = []
@@ -61,7 +63,7 @@ def _category_dict(row: Category, *, include_children: bool = True) -> dict:
 
 def _category_tree(root_parent_id=None) -> list:
     nodes = {
-        row.id: _category_dict(row)
+        row.id: _category_dict(row, include_image_url=False)
         for row in Category.objects.all().order_by('name')
     }
     roots = []

@@ -1,14 +1,13 @@
 """Private category images in S3 (gazebo-media-files / Product-category/)."""
 
-import os
 import uuid
 from io import BytesIO
 
-import boto3
 from botocore.exceptions import ClientError
 from django.conf import settings
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from core.s3 import s3_client as _s3_client
 from product.models import Category
 
 ALLOWED_CONTENT_TYPES = {
@@ -23,20 +22,6 @@ MAX_EDGE = 2048
 JPEG_QUALITY = 85
 PRESIGN_SECONDS = 3600
 PREFIX = 'Product-category'
-
-
-def _s3_client():
-    profile = os.getenv('AWS_PROFILE') or getattr(settings, 'AWS_PROFILE', None)
-    region = (
-        os.getenv('AWS_DEFAULT_REGION')
-        or getattr(settings, 'AWS_DEFAULT_REGION', None)
-        or 'eu-west-2'
-    )
-    try:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    except Exception:
-        session = boto3.Session()
-    return session.client('s3', region_name=region)
 
 
 def _bucket() -> str:

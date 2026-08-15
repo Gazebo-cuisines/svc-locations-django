@@ -1,13 +1,12 @@
 """Private goods-in attachments in S3 (gazebo-media-files / Goods-in/)."""
 
-import os
 import uuid
 
-import boto3
 from botocore.exceptions import ClientError
 from django.conf import settings
 from django.db import transaction
 
+from core.s3 import s3_client as _s3_client
 from purchasing.models import (
     GoodsInAttachment,
     GoodsInAttachmentKind,
@@ -16,7 +15,6 @@ from purchasing.models import (
     PurchaseOrderLine,
 )
 from users_rbac.models import RbacUser
-from users_rbac.photos import photo_url
 
 ALLOWED_CONTENT_TYPES = {
     'image/jpeg': 'jpg',
@@ -31,20 +29,6 @@ PREFIX = 'Goods-in'
 
 class AttachmentError(ValueError):
     pass
-
-
-def _s3_client():
-    profile = os.getenv('AWS_PROFILE') or getattr(settings, 'AWS_PROFILE', None)
-    region = (
-        os.getenv('AWS_DEFAULT_REGION')
-        or getattr(settings, 'AWS_DEFAULT_REGION', None)
-        or 'eu-west-2'
-    )
-    try:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    except Exception:
-        session = boto3.Session()
-    return session.client('s3', region_name=region)
 
 
 def _bucket() -> str:
@@ -86,7 +70,7 @@ def _uploader_block(user: RbacUser | None, *, user_id: int | None) -> dict:
             (user.display_name or user.username) if user else None
         ),
         'uploaded_by_email': user.email if user else None,
-        'uploaded_by_photo_url': photo_url(user) if user else None,
+        'uploaded_by_photo_url': None,
         # FE: navigate(uploaded_by_profile_path)
         'uploaded_by_profile_path': (
             f'/configuration/users/{uid}' if uid is not None else None
