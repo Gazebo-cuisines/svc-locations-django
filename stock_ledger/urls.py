@@ -12,7 +12,11 @@ urlpatterns = [
     path('lots/', views.lots_collection_api, name='stock-lots'),
     path('lots/<int:pk>/', views.lot_detail_api, name='stock-lot-detail'),
     path('unit-conversions/', views.unit_conversions_api, name='stock-unit-conversions'),
+
+    # Goods In logic
     path('receipt/', views.receipt_api, name='stock-receipt'),
+
+    # Goods Out logic
     path('issue/', views.issue_api, name='stock-issue'),
     path('production/', views.production_api, name='stock-production'),
     path(
@@ -36,10 +40,16 @@ urlpatterns = [
         views.production_consume_api,
         name='stock-production-consume',
     ),
+
+    # goods transfer logic from one container to another
     path('transfer/', views.transfer_api, name='stock-transfer'),
     path('disposal/', views.disposal_api, name='stock-disposal'),
+
+    # stock reconciliation logic
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
+
+    # goods out scan logic
     path('scan/goods-out/', views.scan_goods_out_api, name='stock-scan-goods-out'),
     path('scan/', views.scan_resolve_api, name='stock-scan'),
     path('recall/', views.recall_api, name='stock-recall'),
@@ -73,16 +83,9 @@ urlpatterns = [
         views.entry_label_activity_api,
         name='stock-entry-label-activity',
     ),
-    path(
-        'entries/<int:entry_id>/post/',
-        views.entry_post_api,
-        name='stock-entry-post',
-    ),
-    path(
-        'entries/<int:entry_id>/cancel/',
-        views.entry_cancel_api,
-        name='stock-entry-cancel',
-    ),
+    path('entries/<int:entry_id>/post/', views.entry_post_api, name='stock-entry-post'),
+    path('entries/<int:entry_id>/cancel/', views.entry_cancel_api, name='stock-entry-cancel'),
+    path('entries/queued/', views.entry_queued_list_api, name='stock-entry-queued'),
     path(
         'entries/queued/',
         views.entry_queued_list_api,
