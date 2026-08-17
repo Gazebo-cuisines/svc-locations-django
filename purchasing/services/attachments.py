@@ -11,6 +11,7 @@ from purchasing.models import (
     GoodsInAttachment,
     GoodsInAttachmentKind,
     PurchaseOrder,
+    PurchaseOrderDelivery,
     PurchaseOrderHistory,
     PurchaseOrderLine,
 )
@@ -100,6 +101,7 @@ def attachment_dict(
     data = {
         'id': attachment.id,
         'purchase_order_id': attachment.purchase_order_id,
+        'delivery_id': attachment.delivery_id,
         'line_id': attachment.line_id,
         'history_id': attachment.history_id,
         'kind': attachment.kind,
@@ -115,12 +117,13 @@ def attachment_dict(
     return data
 
 
-def list_attachments(po_id: int) -> list[dict]:
+def list_attachments(po_id: int, delivery_id: int | None = None) -> list[dict]:
     if not PurchaseOrder.objects.filter(pk=po_id).exists():
         raise AttachmentError('Purchase order not found.')
-    rows = list(
-        GoodsInAttachment.objects.filter(purchase_order_id=po_id).order_by('-id'),
-    )
+    qs = GoodsInAttachment.objects.filter(purchase_order_id=po_id)
+    if delivery_id is not None:
+        qs = qs.filter(delivery_id=delivery_id)
+    rows = list(qs.order_by('-id'))
     users = _users_by_id([r.uploaded_by_user_id for r in rows])
     return [attachment_dict(row, users=users) for row in rows]
 
@@ -133,6 +136,7 @@ def upload_attachment(
     kind: str = GoodsInAttachmentKind.PHOTO,
     line_id=None,
     history_id=None,
+    delivery_id=None,
     uploaded_by_user_id=None,
 ) -> dict:
     try:
@@ -165,6 +169,24 @@ def upload_attachment(
                 f'history_id={history_id} not found on this PO.',
             ) from exc
 
+    delivery = None
+    if delivery_id not in (None, ''):
+        try:
+            delivery = PurchaseOrderDelivery.objects.get(
+                pk=int(delivery_id), purchase_order_id=po.id,
+            )
+        except (
+            PurchaseOrderDelivery.DoesNotExist, TypeError, ValueError,
+        ) as exc:
+            raise AttachmentError(
+                f'delivery_id={delivery_id} not found on this PO.',
+            ) from exc
+    else:
+        delivery = PurchaseOrderDelivery.objects.filter(
+            purchase_order_id=po.id,
+            status='open',
+        ).first()
+
     content_type = (getattr(uploaded_file, 'content_type', None) or '').lower()
     ext = ALLOWED_CONTENT_TYPES.get(content_type)
     if not ext:
@@ -190,6 +212,7 @@ def upload_attachment(
 
     row = GoodsInAttachment.objects.create(
         purchase_order=po,
+        delivery=delivery,
         line=line,
         history=history,
         kind=kind,

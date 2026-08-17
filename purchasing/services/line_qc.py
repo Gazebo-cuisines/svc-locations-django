@@ -13,6 +13,11 @@ from purchasing.models import (
     PurchaseOrderLine,
     PurchaseOrderStatus,
 )
+from purchasing.services.delivery import (
+    DeliveryError,
+    get_or_create_delivery_line,
+    resolve_open_delivery,
+)
 from purchasing.services.goods_in_form import (
     resolve_goods_in_form,
     resolve_template,
@@ -60,7 +65,13 @@ def _shelf_life_ok(
 
 
 @transaction.atomic
-def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
+def submit_line_qc(
+    po_id: int,
+    line_id: int,
+    *,
+    body: dict,
+    delivery_id: int | None = None,
+) -> dict:
     try:
         po = (
             PurchaseOrder.objects.select_for_update()
@@ -78,9 +89,13 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
             f'Line QC only allowed when status is ordered or partial '
             f'(current={po.status}).',
         )
-    if po.reject_delivery:
+    try:
+        delivery = resolve_open_delivery(po, delivery_id=delivery_id)
+    except DeliveryError as exc:
+        raise LineQcError(str(exc)) from exc
+    if delivery.reject_delivery:
         raise LineQcError('Cannot run line QC on a rejected delivery.')
-    if po.checked_at is None:
+    if delivery.checked_at is None:
         raise LineQcError('Complete header QC before line QC.')
 
     try:
@@ -143,7 +158,7 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
         elif fails:
             warnings.append(item.code)
 
-    delivery_date = po.delivery_at or po.expected_at or date.today()
+    delivery_date = delivery.delivery_at or po.expected_at or date.today()
 
     use_by = None
     if 'use_by' in normalized and normalized['use_by'].get('value'):
@@ -193,11 +208,22 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
     else:
         trace_number = (
             body.get('trace_number')
-            or po.delivery_trace_number
+            or delivery.delivery_trace_number
             or line.trace_number
         )
 
     line_ok = len(failed_codes) == 0
+    dline = get_or_create_delivery_line(delivery, line)
+    dline.line_checks = normalized
+    dline.line_template_id = template.id
+    dline.line_template_version = template.version
+    dline.line_check_ok = line_ok
+    dline.use_by = use_by
+    dline.product_temperature = product_temp
+    dline.production_date = production_date
+    dline.trace_number = trace_number
+    dline.save()
+
     line.line_checks = normalized
     line.line_template_id = template.id
     line.line_template_version = template.version
@@ -215,6 +241,7 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
     )
     PurchaseOrderHistory.objects.create(
         purchase_order=po,
+        delivery=delivery,
         event_type=event,
         remarks=(
             None
@@ -222,6 +249,7 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
             else f'Line {line.line_no} QC fail: {", ".join(failed_codes)}'
         ),
         payload={
+            'delivery_id': delivery.id,
             'line_id': line.id,
             'line_no': line.line_no,
             'line_check_ok': line_ok,
@@ -233,4 +261,4 @@ def submit_line_qc(po_id: int, line_id: int, *, body: dict) -> dict:
         actor_user_id=body.get('checked_by_user_id'),
     )
 
-    return resolve_goods_in_form(po.id)
+    return resolve_goods_in_form(po.id, delivery_id=delivery.id)

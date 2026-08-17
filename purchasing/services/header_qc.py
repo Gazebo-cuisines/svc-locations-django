@@ -7,9 +7,15 @@ from django.utils import timezone
 from product.models import ProductTechnical
 from purchasing.models import (
     PurchaseOrder,
+    PurchaseOrderDeliveryStatus,
     PurchaseOrderHistory,
     PurchaseOrderHistoryEvent,
     PurchaseOrderStatus,
+)
+from purchasing.services.delivery import (
+    DeliveryError,
+    resolve_open_delivery,
+    sync_po_from_delivery,
 )
 from purchasing.services.goods_in_form import (
     _header_key,
@@ -30,7 +36,12 @@ class HeaderQcError(ValueError):
 
 
 @transaction.atomic
-def submit_header_qc(po_id: int, *, body: dict) -> dict:
+def submit_header_qc(
+    po_id: int,
+    *,
+    body: dict,
+    delivery_id: int | None = None,
+) -> dict:
     try:
         po = (
             PurchaseOrder.objects.select_for_update()
@@ -49,6 +60,11 @@ def submit_header_qc(po_id: int, *, body: dict) -> dict:
             f'Header QC only allowed when status is ordered or partial '
             f'(current={po.status}).',
         )
+
+    try:
+        delivery = resolve_open_delivery(po, delivery_id=delivery_id)
+    except DeliveryError as exc:
+        raise HeaderQcError(str(exc)) from exc
 
     lines = list(po.lines.all())
     tech_by_product = {
@@ -86,6 +102,7 @@ def submit_header_qc(po_id: int, *, body: dict) -> dict:
     try:
         delivery_date = parse_date(
             body.get('delivery_date')
+            or delivery.delivery_at
             or po.delivery_at
             or po.expected_at
             or date.today(),
@@ -124,28 +141,35 @@ def submit_header_qc(po_id: int, *, body: dict) -> dict:
     except (TypeError, ValueError) as exc:
         raise HeaderQcError('checked_by_user_id must be an integer.') from exc
 
-    po.delivery_at = delivery_date
-    po.delivery_trace_number = trace_number
-    po.vehicle_temperature = vehicle_temp
-    po.reject_delivery = reject
-    po.header_checks = normalized
-    po.header_template_id = template.id
-    po.header_template_version = template.version
-    po.checked_by_user_id = checked_by
-    po.checked_at = now
+    delivery.delivery_at = delivery_date
+    delivery.delivery_trace_number = trace_number
+    delivery.vehicle_temperature = vehicle_temp
+    delivery.reject_delivery = reject
+    delivery.header_checks = normalized
+    delivery.header_template_id = template.id
+    delivery.header_template_version = template.version
+    delivery.checked_by_user_id = checked_by
+    delivery.checked_at = now
+    delivery.status = (
+        PurchaseOrderDeliveryStatus.REJECTED
+        if reject
+        else PurchaseOrderDeliveryStatus.OPEN
+    )
 
     qc_tl = body.get('qc_tl_checked_by_user_id')
     if qc_tl not in (None, ''):
-        po.qc_tl_checked_by_user_id = int(qc_tl)
-        po.qc_tl_checked_at = now
-        po.qc_tl_comment = body.get('qc_tl_comment') or None
+        delivery.qc_tl_checked_by_user_id = int(qc_tl)
+        delivery.qc_tl_checked_at = now
+        delivery.qc_tl_comment = body.get('qc_tl_comment') or None
     elif body.get('qc_tl_comment'):
-        po.qc_tl_comment = body.get('qc_tl_comment')
+        delivery.qc_tl_comment = body.get('qc_tl_comment')
 
     if reject and body.get('remarks'):
         po.remarks = str(body.get('remarks'))[:256]
+        po.save(update_fields=['remarks', 'updated_at'])
 
-    po.save()
+    delivery.save()
+    sync_po_from_delivery(delivery)
 
     event = (
         PurchaseOrderHistoryEvent.REJECT
@@ -162,9 +186,11 @@ def submit_header_qc(po_id: int, *, body: dict) -> dict:
 
     PurchaseOrderHistory.objects.create(
         purchase_order=po,
+        delivery=delivery,
         event_type=event,
         remarks='; '.join(remarks_parts) or None,
         payload={
+            'delivery_id': delivery.id,
             'delivery_date': delivery_date.isoformat(),
             'delivery_trace_number': trace_number,
             'failed_codes': failed_codes,
@@ -174,4 +200,4 @@ def submit_header_qc(po_id: int, *, body: dict) -> dict:
         actor_user_id=checked_by,
     )
 
-    return resolve_goods_in_form(po.id)
+    return resolve_goods_in_form(po.id, delivery_id=delivery.id)

@@ -64,8 +64,6 @@ def release_from_quarantine(po_id: int, *, body: dict) -> dict:
     except PurchaseOrder.DoesNotExist as exc:
         raise ReleaseError('Purchase order not found.') from exc
 
-    if po.reject_delivery:
-        raise ReleaseError('Cannot release stock for a rejected delivery.')
     if po.status not in (
         PurchaseOrderStatus.ORDERED,
         PurchaseOrderStatus.PARTIAL,
