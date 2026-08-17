@@ -12,7 +12,7 @@ from planning.models import Plan, PlanLine, PlanLineSource
 from planning.services.chain_net import _apply_min_batch, chain_net_plan
 from product.models import Category, Product, ProductClass, ProductYield, Range, Unit
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
-from stock_ledger.models import StockLot, StockLotOrigin, StockPeriod, StockPeriodStatus
+from stock_ledger.models import StockLot, StockLotOrigin
 from stock_ledger.util import services as stock_services
 
 
@@ -120,11 +120,6 @@ class ChainNetPlanTests(TestCase):
             unit=self.unit,
         )
 
-        StockPeriod.objects.create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            status=StockPeriodStatus.OPEN,
-        )
         lot = StockLot.objects.create(
             product=self.fg,
             trace_number='20215',

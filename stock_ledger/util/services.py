@@ -24,14 +24,13 @@ from stock_ledger.models import (
     StockGenealogy,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
 )
 from stock_ledger.stream import publish_balance_delta
 from stock_ledger.util.conversions import (
     StockValidationError,
     packs_to_stock,
     resolve_to_kg,
+    to_product_unit,
 )
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
@@ -141,18 +140,6 @@ def resolve_lot(
         return lot
 
 
-def resolve_open_period(effective_at):
-    day = timezone.localtime(effective_at).date() if timezone.is_aware(effective_at) else effective_at.date()
-    period = StockPeriod.objects.filter(
-        period_start__lte=day,
-        period_end__gte=day,
-        status=StockPeriodStatus.OPEN,
-    ).first()
-    if period is None:
-        raise StockValidationError(f'No open stock_period for date={day}')
-    return period
-
-
 def _mass_fields(*, product_id: int, unit_id: int, quantity: Decimal):
     """Resolve kg base when conversion exists; else leave null (MVP: stock unit only)."""
     if not active_products().filter(pk=product_id).exists():
@@ -171,6 +158,14 @@ def _resolve_unit_id(lot: StockLot, unit_id: int | None) -> int:
     if lot.product.unit_id is None:
         raise StockValidationError(f'product_id={lot.product_id} has no stock unit')
     return lot.product.unit_id
+
+
+def _to_stock_qty(
+    lot: StockLot, quantity: Decimal, unit_id: int | None,
+) -> tuple[Decimal, int]:
+    """Inbound qty → product.unit. Fail if conversion is missing."""
+    unit_id = _resolve_unit_id(lot, unit_id)
+    return to_product_unit(quantity, unit_id, lot.product), lot.product.unit_id
 
 
 def _existing(idempotency_key: str) -> StockEntry | None:
@@ -303,7 +298,10 @@ def _insert_entry(
     if existing is not None:
         return existing
 
-    period = resolve_open_period(effective_at)
+    # Reversal copies stored qty/unit as-is. Every other write is product.unit.
+    if entry_type != StockEntryType.REVERSAL:
+        quantity, unit_id = _to_stock_qty(lot, quantity, unit_id)
+
     if entry_type == StockEntryType.DOWNTIME:
         factor, qty_base = None, None
         project_balance = False
@@ -330,7 +328,6 @@ def _insert_entry(
                 unit_id=unit_id,
                 base_unit_factor=factor,
                 quantity_base=qty_base,
-                period=period,
                 effective_at=effective_at,
                 recorded_at=timezone.now(),
                 reverses_entry=reverses_entry,
@@ -484,8 +481,8 @@ def count_adjustment(
     effective_at=None,
     **kwargs,
 ) -> StockEntry:
-    unit_id = _resolve_unit_id(lot, unit_id)
     if counted_quantity is not None:
+        counted_quantity, unit_id = _to_stock_qty(lot, counted_quantity, unit_id)
         balance = (
             StockBalance.objects
             .filter(lot_id=lot.id, location_id=location_id)
@@ -494,6 +491,8 @@ def count_adjustment(
         )
         current = balance.quantity if balance is not None else Decimal('0')
         quantity_delta = counted_quantity - current
+    elif quantity_delta is not None:
+        quantity_delta, unit_id = _to_stock_qty(lot, quantity_delta, unit_id)
     if quantity_delta is None:
         raise StockValidationError(
             'counted_quantity or quantity_delta is required'
@@ -531,7 +530,7 @@ def transfer(
         raise StockValidationError('transfer quantity must be positive')
     if from_location_id == to_location_id:
         raise StockValidationError('transfer locations must differ')
-    unit_id = _resolve_unit_id(lot, unit_id)
+    quantity, unit_id = _to_stock_qty(lot, quantity, unit_id)
 
     out_key = f'{idempotency_key}:out'
     in_key = f'{idempotency_key}:in'

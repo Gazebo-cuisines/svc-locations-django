@@ -3,49 +3,6 @@ from decimal import Decimal
 from django.db import models
 
 
-class StockPeriodStatus(models.TextChoices):
-    OPEN = 'open', 'Open'
-    CLOSED = 'closed', 'Closed'
-
-
-class StockPeriod(models.Model):
-    id = models.AutoField(primary_key=True)
-    period_start = models.DateField()
-    period_end = models.DateField()
-    status = models.CharField(
-        max_length=8,
-        choices=StockPeriodStatus.choices,
-        default=StockPeriodStatus.OPEN,
-    )
-    closed_at = models.DateTimeField(null=True, blank=True)
-    closed_by_user_id = models.IntegerField(null=True, blank=True)
-
-    class Meta:
-        db_table = 'stock_period'
-        constraints = [
-            models.UniqueConstraint(
-                fields=['period_start', 'period_end'],
-                name='uq_stock_period_range',
-            ),
-            models.CheckConstraint(
-                check=models.Q(
-                    status__in=[
-                        StockPeriodStatus.OPEN,
-                        StockPeriodStatus.CLOSED,
-                    ]
-                ),
-                name='chk_stock_period_status',
-            ),
-            models.CheckConstraint(
-                check=models.Q(period_end__gte=models.F('period_start')),
-                name='chk_stock_period_order',
-            ),
-        ]
-
-    def __str__(self):
-        return f'stock_period:{self.id}:{self.period_start}:{self.status}'
-
-
 class StockChainHead(models.Model):
     """Singleton row (id=1); head_entry_id FK to stock_entry added in a later migration."""
 
@@ -303,11 +260,6 @@ class StockEntry(models.Model):
     )
     quantity_base = models.DecimalField(
         max_digits=16, decimal_places=6, null=True, blank=True,
-    )
-    period = models.ForeignKey(
-        StockPeriod,
-        on_delete=models.PROTECT,
-        related_name='entries',
     )
     effective_at = models.DateTimeField()
     recorded_at = models.DateTimeField()

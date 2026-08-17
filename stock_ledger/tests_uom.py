@@ -17,9 +17,20 @@ from product.models import (
     Range,
     Unit,
 )
-from stock_ledger.models import StockEntry, StockLot, StockLotOrigin, StockPeriod, StockPeriodStatus
+from stock_ledger.models import (
+    StockBalance,
+    StockEntry,
+    StockLot,
+    StockLotOrigin,
+)
 from stock_ledger.util import services
-from stock_ledger.util.conversions import packs_to_stock, seed_global_unit_conversions, stock_to_kg, stock_to_packs
+from stock_ledger.util.conversions import (
+    StockValidationError,
+    packs_to_stock,
+    seed_global_unit_conversions,
+    stock_to_kg,
+    stock_to_packs,
+)
 
 
 class UomConversionTests(TestCase):
@@ -61,11 +72,6 @@ class UomConversionTests(TestCase):
             inner_unit=self.kg,
             is_default=True,
             is_active=True,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
 
     def test_five_boxes_of_10kg_are_50000_grams(self):
@@ -140,3 +146,86 @@ class UomConversionTests(TestCase):
         self.assertEqual(product['pack_unit_name'], 'Box')
         self.assertEqual(Decimal(product['display_kg']), Decimal('20'))
         self.assertTrue(product['shape_format_label'])
+
+    def _lot(self, suffix: str) -> StockLot:
+        return StockLot.objects.create(
+            product=self.product,
+            trace_number=f'T-{suffix}',
+            origin=StockLotOrigin.PURCHASE,
+            use_by=date(2026, 12, 1),
+        )
+
+    def test_receipt_converts_kg_into_product_grams(self):
+        lot = self._lot('KG-IN')
+        entry = services.receipt(
+            idempotency_key=f'uom-kg-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('10'),
+            unit_id=self.kg.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        self.assertEqual(entry.quantity, Decimal('10000.000000'))
+        self.assertEqual(entry.unit_id, self.grams.id)
+        bal = StockBalance.objects.get(lot=lot, location_id=self.wh.id)
+        self.assertEqual(bal.quantity, Decimal('10000.000000'))
+
+    def test_issue_grams_against_kg_receipt(self):
+        lot = self._lot('MIX-ISSUE')
+        services.receipt(
+            idempotency_key=f'uom-mix-in-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('10'),
+            unit_id=self.kg.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        issue = services.issue(
+            idempotency_key=f'uom-mix-out-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('500'),
+            unit_id=self.grams.id,
+        )
+        self.assertEqual(issue.quantity, Decimal('-500.000000'))
+        self.assertEqual(issue.unit_id, self.grams.id)
+        bal = StockBalance.objects.get(lot=lot, location_id=self.wh.id)
+        self.assertEqual(bal.quantity, Decimal('9500.000000'))
+
+    def test_count_counted_kg_against_gram_on_hand(self):
+        lot = self._lot('COUNT-KG')
+        services.receipt(
+            idempotency_key=f'uom-cnt-in-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('10'),
+            unit_id=self.kg.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        adj = services.count_adjustment(
+            idempotency_key=f'uom-cnt-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            counted_quantity=Decimal('9'),
+            unit_id=self.kg.id,
+        )
+        self.assertEqual(adj.quantity, Decimal('-1000.000000'))
+        self.assertEqual(adj.unit_id, self.grams.id)
+        bal = StockBalance.objects.get(lot=lot, location_id=self.wh.id)
+        self.assertEqual(bal.quantity, Decimal('9000.000000'))
+
+    def test_unknown_unit_conversion_fails(self):
+        lot = self._lot('BAD-UNIT')
+        with self.assertRaises(StockValidationError):
+            services.receipt(
+                idempotency_key=f'uom-bad-{uuid4()}',
+                lot=lot,
+                location_id=self.wh.id,
+                quantity=Decimal('1'),
+                unit_id=self.box.id,
+                effective_at=timezone.now(),
+                counterparty_location_id=self.supplier.id,
+            )
