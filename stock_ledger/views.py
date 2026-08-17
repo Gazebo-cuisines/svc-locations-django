@@ -320,6 +320,9 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'action': entry.entry_type,
         'quantity': _dec(entry.quantity),
+        # Base unit (KG) amount: the only figure comparable across mixed
+        # entry units (grams, Kg, Box) on the same product.
+        'quantity_base': _dec(entry.quantity_base),
         'unit_id': entry.unit_id,
         'unit_name': entry.unit.name if entry.unit_id else None,
         'product_id': product.id,

@@ -9,17 +9,26 @@ from stock_ledger import views
 #   - S3 chain anchors / hash verify commands
 
 urlpatterns = [
+    # lots
     path('lots/', views.lots_collection_api, name='stock-lots'),
     path('lots/<int:pk>/', views.lot_detail_api, name='stock-lot-detail'),
+
+    # unit conversions
     path('unit-conversions/', views.unit_conversions_api, name='stock-unit-conversions'),
+
+    # movements
     path('receipt/', views.receipt_api, name='stock-receipt'),
     path('issue/', views.issue_api, name='stock-issue'),
     path('production/', views.production_api, name='stock-production'),
     path('production/<int:entry_id>/', views.production_detail_api, name='stock-production-detail'),
+    # downtime
     path('downtime/', views.downtime_api, name='stock-downtime'),
+    
+    # production
     path('production/<int:entry_id>/requirements/', views.production_requirements_api, name='stock-production-requirements'),
     path('production/<int:entry_id>/allocation-status/',views.production_allocation_status_api, name='stock-production-allocation-status',),
     path('production/<int:entry_id>/consume/', views.production_consume_api, name='stock-production-consume'),
+   
     path('transfer/', views.transfer_api, name='stock-transfer'),
     path('disposal/', views.disposal_api, name='stock-disposal'),
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
