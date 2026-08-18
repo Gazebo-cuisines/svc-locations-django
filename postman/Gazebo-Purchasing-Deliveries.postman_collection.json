@@ -148,6 +148,19 @@
         },
         "description": "### Print delivery PDF\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/print/`\n\nGFF001F-style PDF for **this visit’s** saved header/line answers (not the whole PO history).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`application/pdf` (`goods-in-{po_id}-{delivery_id}.pdf`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | PDF |\n| 404 | PO or delivery not found |"
       }
+    },
+    {
+      "name": "PO timeline",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/timeline/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "timeline", ""]
+        },
+        "description": "### PO timeline\n\n`GET /purchasing/pos/:po_id/timeline/`\n\nSame event shape as product (`GET /product/:id/timeline/`) and recipe audit: newest first. Each event has `before_json` / `after_json` / `changed_fields` plus an `actor` object recorded at write time (JWT sub, name, email, workstation, IP).\n\nComposes PO create/update, goods-in QC (`accept` / `reject` / `non_conformance` / `note`), stock receive (`goods_in`), label print/scan, and stock post.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Purchase order timeline fetched successfully.`\n\n`data` is an array of events:\n\n| Field | Meaning |\n| --- | --- |\n| `at` | ISO datetime |\n| `entity` | `purchase_order`, `delivery`, `po_line`, or `stock_entry` |\n| `action` | `create`, `update`, `accept`, `reject`, `non_conformance`, `note`, `goods_in`, `label_printed`, `label_scanned`, `stock_posted` |\n| `actor` | `{ user_id, sub, name, email, source_workstation, source_workstation_ip }` |\n| `before_json` | State before this step |\n| `after_json` | State after this step |\n| `changed_fields` | Keys that differ |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
+      }
     }
   ]
 }

@@ -23,6 +23,7 @@ from product.models import (
     PurchaseShapeFormat,
     Unit,
 )
+from product.product_images import product_photos
 from product.query import active_products
 from recipe.models import RecipeVersion
 from recipe.utils import active_or_latest_version
@@ -110,6 +111,9 @@ def product_detail_dict(product: Product) -> dict:
         'created_at': product.created_at.isoformat() if product.created_at else None,
         'updated_at': product.updated_at.isoformat() if product.updated_at else None,
     })
+    image_url, images = product_photos(product)
+    data['image_url'] = image_url
+    data['images'] = images
     return data
 
 

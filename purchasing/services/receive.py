@@ -9,7 +9,6 @@ from purchasing.models import (
     LineShortfallReason,
     PurchaseOrder,
     PurchaseOrderDeliveryStatus,
-    PurchaseOrderHistory,
     PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
     PurchaseOrderStatus,
@@ -27,6 +26,7 @@ from purchasing.services.po_qty import (
 )
 from purchasing.serialize import _qty_str
 from purchasing.services.goods_in_form import resolve_goods_in_form
+from purchasing.services.timeline import actor_json, record_history
 from purchasing.services.release import is_quarantine_location
 from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
@@ -479,6 +479,14 @@ def receive_purchase_order(
 
         # Reused key: return existing stock, do not advance PO qty again.
         if prior_entry is None and last_entry is not None:
+            before_qty = {
+                'delivery_id': delivery.id,
+                'line_id': line.id,
+                'line_no': line.line_no,
+                'qty_received': _qty_str(line.qty_received),
+                'qty_rejected': _qty_str(line.qty_rejected),
+                'qty_balance': _qty_str(line.qty_balance),
+            }
             reject_qty = (
                 leftover
                 if shortfall_reason and shortfall_reason not in SHORTFALL_AWAIT_REASONS
@@ -535,8 +543,8 @@ def receive_purchase_order(
             did_receive = True
             if leftover > 0 and shortfall_reason:
                 needs_credit = shortfall_reason not in SHORTFALL_AWAIT_REASONS
-                PurchaseOrderHistory.objects.create(
-                    purchase_order=po,
+                record_history(
+                    po=po,
                     delivery=delivery,
                     event_type=(
                         PurchaseOrderHistoryEvent.NON_CONFORMANCE
@@ -552,7 +560,8 @@ def receive_purchase_order(
                             f'rest coming later'
                         )
                     ),
-                    payload={
+                    before=before_qty,
+                    after={
                         'delivery_id': delivery.id,
                         'line_id': line.id,
                         'line_no': line.line_no,
@@ -563,7 +572,7 @@ def receive_purchase_order(
                         'needs_credit_note': needs_credit,
                         'remarks': raw.get('remarks'),
                     },
-                    actor_user_id=receipt_audit.get('actor_user_id'),
+                    actor=audit.get('actor') or actor_json(audit=receipt_audit),
                 )
 
         first = transactions[0]

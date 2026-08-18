@@ -8,7 +8,6 @@ from product.goods_in import effective_goods_in_type
 from product.models import ProductStorageRegime, ProductTechnical
 from purchasing.models import (
     PurchaseOrder,
-    PurchaseOrderHistory,
     PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
     PurchaseOrderStatus,
@@ -28,6 +27,7 @@ from purchasing.services.qc_answers import (
     normalize_answer,
     parse_date,
 )
+from purchasing.services.timeline import actor_json, record_history
 
 
 class LineQcError(ValueError):
@@ -71,6 +71,7 @@ def submit_line_qc(
     *,
     body: dict,
     delivery_id: int | None = None,
+    actor=None,
 ) -> dict:
     try:
         po = (
@@ -106,6 +107,16 @@ def submit_line_qc(
         )
     except PurchaseOrderLine.DoesNotExist as exc:
         raise LineQcError('Purchase order line not found.') from exc
+
+    before = {
+        'delivery_id': delivery.id,
+        'line_id': line.id,
+        'line_no': line.line_no,
+        'line_check_ok': line.line_check_ok,
+        'trace_number': line.trace_number,
+        'use_by': line.use_by.isoformat() if line.use_by else None,
+        'line_checks': line.line_checks or {},
+    }
 
     try:
         technical = line.product.technical
@@ -239,8 +250,8 @@ def submit_line_qc(
         if line_ok
         else PurchaseOrderHistoryEvent.NON_CONFORMANCE
     )
-    PurchaseOrderHistory.objects.create(
-        purchase_order=po,
+    record_history(
+        po=po,
         delivery=delivery,
         event_type=event,
         remarks=(
@@ -248,7 +259,8 @@ def submit_line_qc(
             if line_ok
             else f'Line {line.line_no} QC fail: {", ".join(failed_codes)}'
         ),
-        payload={
+        before=before,
+        after={
             'delivery_id': delivery.id,
             'line_id': line.id,
             'line_no': line.line_no,
@@ -258,7 +270,7 @@ def submit_line_qc(
             'answers': normalized,
             'trace_number': trace_number,
         },
-        actor_user_id=body.get('checked_by_user_id'),
+        actor=actor or actor_json(user_id=body.get('checked_by_user_id')),
     )
 
     return resolve_goods_in_form(po.id, delivery_id=delivery.id)

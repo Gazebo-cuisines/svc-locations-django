@@ -4,6 +4,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from purchasing.models import (
+    GoodsInAttachmentKind,
+    PurchaseOrder,
+    PurchaseOrderStatus,
+)
 from purchasing.serialize import po_detail_dict, po_list_dict
 from purchasing.services.attachments import (
     AttachmentError,
@@ -35,7 +40,8 @@ from purchasing.services.po import (
     list_purchase_orders,
     update_purchase_order,
 )
-from purchasing.models import GoodsInAttachmentKind, PurchaseOrder, PurchaseOrderStatus
+from purchasing.services.timeline import actor_json, po_timeline
+from stock_ledger.views import _common_write_kwargs
 from users_rbac.auth import attach_user
 from users_rbac.permissions import gate_warehouse_write
 
@@ -87,6 +93,7 @@ def po_collection_api(request):
             ordered_at=body.get('ordered_at'),
             remarks=body.get('remarks'),
             created_by_user_id=body.get('created_by_user_id'),
+            actor=actor_json(request, user_id=body.get('created_by_user_id')),
             status=body.get('status') or 'draft',
             sage_po_number=body.get('sage_po_number'),
             external_number=body.get('external_number'),
@@ -101,6 +108,17 @@ def po_collection_api(request):
         'Purchase order created successfully.',
         po_detail_dict(po),
         status_code=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def po_timeline_api(request, po_id: int):
+    if not PurchaseOrder.objects.filter(pk=po_id).exists():
+        return api_error('Purchase order not found.', status_code=404)
+    return api_success(
+        'Purchase order timeline fetched successfully.',
+        po_timeline(po_id),
     )
 
 
@@ -122,7 +140,7 @@ def po_detail_api(request, po_id: int):
         return api_error('Invalid JSON body.', status_code=400)
 
     try:
-        po = update_purchase_order(po_id, body=body)
+        po = update_purchase_order(po_id, body=body, actor=actor_json(request))
     except PoValidationError as exc:
         msg = str(exc)
         status = 404 if msg == 'Purchase order not found.' else 400
@@ -150,7 +168,11 @@ def po_header_qc_api(request, po_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_header_qc(po_id, body=body)
+        data = submit_header_qc(
+            po_id,
+            body=body,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
     except HeaderQcError as exc:
         msg = str(exc)
         status = 404 if 'not found' in msg.lower() else 400
@@ -165,7 +187,12 @@ def po_line_qc_api(request, po_id: int, line_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_line_qc(po_id, line_id, body=body)
+        data = submit_line_qc(
+            po_id,
+            line_id,
+            body=body,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
     except LineQcError as exc:
         msg = str(exc)
         if 'not found' in msg.lower():
@@ -184,10 +211,8 @@ def po_receive_api(request, po_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        # Reuse stock receipt audit helpers (JWT / workstation / IP).
-        from stock_ledger.views import _common_write_kwargs
-
         audit = _common_write_kwargs(request, body)
+        audit['actor'] = actor_json(request, audit=audit)
         data = receive_purchase_order(po_id, body=body, audit=audit)
     except ReceiveError as exc:
         msg = str(exc)
@@ -203,7 +228,9 @@ def po_release_api(request, po_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = release_from_quarantine(po_id, body=body)
+        data = release_from_quarantine(
+            po_id, body=body, actor=actor_json(request),
+        )
     except ReleaseError as exc:
         msg = str(exc)
         status = 404 if msg == 'Purchase order not found.' else 400
@@ -373,7 +400,12 @@ def po_delivery_header_qc_api(request, po_id: int, delivery_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_header_qc(po_id, body=body, delivery_id=delivery_id)
+        data = submit_header_qc(
+            po_id,
+            body=body,
+            delivery_id=delivery_id,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
     except HeaderQcError as exc:
         msg = str(exc)
         status = 404 if 'not found' in msg.lower() else 400
@@ -389,7 +421,11 @@ def po_delivery_line_qc_api(request, po_id: int, delivery_id: int, line_id: int)
         return api_error('Invalid JSON body.', status_code=400)
     try:
         data = submit_line_qc(
-            po_id, line_id, body=body, delivery_id=delivery_id,
+            po_id,
+            line_id,
+            body=body,
+            delivery_id=delivery_id,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
         )
     except LineQcError as exc:
         msg = str(exc)
@@ -406,9 +442,8 @@ def po_delivery_receive_api(request, po_id: int, delivery_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        from stock_ledger.views import _common_write_kwargs
-
         audit = _common_write_kwargs(request, body)
+        audit['actor'] = actor_json(request, audit=audit)
         data = receive_purchase_order(
             po_id, body=body, audit=audit, delivery_id=delivery_id,
         )

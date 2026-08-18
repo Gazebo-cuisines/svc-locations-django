@@ -240,6 +240,28 @@ class Product(models.Model):
         return f'{self.id}:{self.name}'
 
 
+class ProductImage(models.Model):
+    """One of several photos for a product. Exactly one is_main while any exist (enforced in service)."""
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='images',
+    )
+    image_key = models.CharField(max_length=512)
+    is_main = models.BooleanField(default=False)
+    sort_order = models.IntegerField(default=0)
+    original_filename = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'product_image'
+        ordering = ['-is_main', 'sort_order', 'id']
+
+    def __str__(self):
+        return f'product_image:{self.id}:product:{self.product_id}'
+
+
 class ProductSupplier(models.Model):
     """Supplier buy-pack for a product. Shape: outer_qty x outer_unit x inner_qty x inner_unit."""
 

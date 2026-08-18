@@ -10,7 +10,7 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from locations.models import Location
-from product.models import Category, Product, ProductAudit, ProductClass, Range, Unit
+from product.models import Category, Product, ProductAudit, ProductClass, ProductImage, Range, Unit
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
 from users_rbac.models import AdminAccess, AdminArea, Department, RbacUser, UserDepartment
 
@@ -84,12 +84,12 @@ class RecipeTreeApiTests(TestCase):
         Location.objects.create(id=2, name='Mixers', visible=True)
         Location.objects.create(id=3, name='Dispatch', visible=True)
 
-    def _product(self, name, *, source_id=1, dest_id=2, recipe_code=None):
+    def _product(self, name, *, source_id=1, dest_id=2, recipe_code=None, category_id=1):
         return Product.objects.create(
             name=name,
             recipe_code=recipe_code,
             product_class_id=1,
-            category_id=1,
+            category_id=category_id,
             range_id=1,
             unit_id=1,
             source_container_id=source_id,
@@ -108,6 +108,11 @@ class RecipeTreeApiTests(TestCase):
         self.assertFalse(data['tree']['has_recipe'])
         self.assertEqual(data['tree']['children'], [])
         self.assertEqual(data['tree']['from_location_name'], 'Spice Room')
+        self.assertEqual(data['tree']['category_id'], 1)
+        self.assertEqual(data['tree']['category_name'], 'Meals')
+        self.assertIsNone(data['tree']['category_image_url'])
+        self.assertIsNone(data['tree']['image_url'])
+        self.assertEqual(data['tree']['images'], [])
 
     def test_tree_nested_component(self):
         child = self._product('Spice Mix', source_id=1, dest_id=2, recipe_code='SPICE')
@@ -148,6 +153,90 @@ class RecipeTreeApiTests(TestCase):
     def test_tree_product_not_found(self):
         resp = self.client.get('/recipe/product/999999/tree/')
         self.assertEqual(resp.status_code, 404)
+
+    @patch('recipe.utils.category_image_url', side_effect=lambda cat: f'https://img/{cat.image_key}')
+    def test_tree_includes_own_category_image(self, _mock):
+        packed = Category.objects.create(
+            id=2, name='Packed Items', image_key='Product-category/tray.jpg',
+        )
+        cased = Category.objects.create(
+            id=3, name='Cased Items', image_key='Product-category/box.jpg',
+        )
+        Location.objects.create(id=4, name='High Risk', visible=True)
+        Location.objects.create(id=5, name='Sleeving', visible=True)
+        tray = self._product(
+            'Tray pack', source_id=4, dest_id=5, recipe_code='TRAY',
+            category_id=packed.id,
+        )
+        case = self._product(
+            'Outer case', source_id=5, dest_id=3, recipe_code='CASE',
+            category_id=cased.id,
+        )
+        recipe = Recipe.objects.create(product=case, name='Case')
+        version = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=tray,
+            quantity=Decimal('6.000000'),
+            unit_id=1,
+        )
+
+        resp = self.client.get(f'/recipe/product/{case.id}/tree/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        by_id = {n['product_id']: n for n in data['nodes']}
+        self.assertEqual(by_id[case.id]['category_name'], 'Cased Items')
+        self.assertEqual(
+            by_id[case.id]['category_image_url'], 'https://img/Product-category/box.jpg',
+        )
+        self.assertEqual(by_id[tray.id]['category_name'], 'Packed Items')
+        self.assertEqual(
+            by_id[tray.id]['category_image_url'], 'https://img/Product-category/tray.jpg',
+        )
+        self.assertEqual(data['tree']['category_image_url'], by_id[case.id]['category_image_url'])
+        self.assertEqual(
+            data['tree']['children'][0]['category_image_url'],
+            by_id[tray.id]['category_image_url'],
+        )
+        self.assertEqual(by_id[case.id]['image_url'], by_id[case.id]['category_image_url'])
+        self.assertEqual(by_id[tray.id]['image_url'], by_id[tray.id]['category_image_url'])
+
+    @patch('recipe.utils.category_image_url', side_effect=lambda cat: f'https://img/{cat.image_key}')
+    def test_tree_raw_material_uses_category_image(self, _mock):
+        Category.objects.filter(pk=1).update(image_key='Product-category/potato.jpg')
+        raw = self._product('POTATO DICED', source_id=1, dest_id=1, recipe_code='RM-POT')
+        resp = self.client.get(f'/recipe/product/{raw.id}/tree/')
+        self.assertEqual(resp.status_code, 200)
+        node = resp.json()['data']['tree']
+        self.assertFalse(node['has_recipe'])
+        self.assertEqual(node['image_url'], 'https://img/Product-category/potato.jpg')
+        self.assertEqual(node['image_url'], node['category_image_url'])
+
+    @patch('recipe.utils.category_image_url', side_effect=lambda cat: f'https://img/{cat.image_key}')
+    @patch('product.product_images.product_image_url', side_effect=lambda row, **_: f'https://img/{row.image_key}')
+    def test_tree_product_main_image_beats_category(self, _product_img, _cat):
+        Category.objects.filter(pk=1).update(image_key='Product-category/potato.jpg')
+        raw = self._product('POTATO DICED', source_id=1, dest_id=1, recipe_code='RM-POT')
+        extra = ProductImage.objects.create(
+            product=raw, image_key='Product/side.jpg', is_main=False, sort_order=1,
+        )
+        main = ProductImage.objects.create(
+            product=raw, image_key='Product/main.jpg', is_main=True, sort_order=0,
+        )
+        resp = self.client.get(f'/recipe/product/{raw.id}/tree/')
+        self.assertEqual(resp.status_code, 200)
+        node = resp.json()['data']['tree']
+        self.assertEqual(node['image_url'], 'https://img/Product/main.jpg')
+        self.assertEqual(node['category_image_url'], 'https://img/Product-category/potato.jpg')
+        self.assertEqual(len(node['images']), 2)
+        self.assertEqual(node['images'][0]['id'], main.id)
+        self.assertTrue(node['images'][0]['is_main'])
+        self.assertEqual(node['images'][1]['id'], extra.id)
 
 
 class RecipeVersionNumberTests(RecipeAuthMixin, TestCase):

@@ -8,10 +8,12 @@ from locations.models import Location, LocationRole
 from product.models import Product, ProductSupplier
 from purchasing.models import (
     PurchaseOrder,
+    PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
     PurchaseOrderSource,
     PurchaseOrderStatus,
 )
+from purchasing.services.timeline import actor_json, po_snapshot, record_history
 
 
 class PoValidationError(ValueError):
@@ -230,6 +232,7 @@ def create_purchase_order(
     ordered_at=None,
     remarks=None,
     created_by_user_id=None,
+    actor=None,
     status: str = PurchaseOrderStatus.DRAFT,
     source: str = PurchaseOrderSource.MANUAL,
     external_number: str | None = None,
@@ -271,10 +274,18 @@ def create_purchase_order(
     PurchaseOrderLine.objects.bulk_create([
         PurchaseOrderLine(purchase_order=po, **row) for row in line_rows
     ])
-    return get_purchase_order(po.id)
+    po = get_purchase_order(po.id)
+    record_history(
+        po=po,
+        event_type=PurchaseOrderHistoryEvent.CREATE,
+        before={},
+        after=po_snapshot(po),
+        actor=actor or actor_json(user_id=created_by_user_id),
+    )
+    return po
 
 @transaction.atomic
-def update_purchase_order(po_id: int, *, body: dict) -> PurchaseOrder:
+def update_purchase_order(po_id: int, *, body: dict, actor=None) -> PurchaseOrder:
     try:
         po = PurchaseOrder.objects.select_for_update().get(pk=po_id)
     except PurchaseOrder.DoesNotExist as exc:
@@ -284,6 +295,7 @@ def update_purchase_order(po_id: int, *, body: dict) -> PurchaseOrder:
         raise PoValidationError(
             f'Purchase order status={po.status} cannot be edited.',
         )
+    before = po_snapshot(po)
 
     new_status = body.get('status')
     marking_ordered = new_status == PurchaseOrderStatus.ORDERED
@@ -333,7 +345,15 @@ def update_purchase_order(po_id: int, *, body: dict) -> PurchaseOrder:
             po.ordered_at = date.today()
 
     po.save()
-    return get_purchase_order(po.id)
+    po = get_purchase_order(po.id)
+    record_history(
+        po=po,
+        event_type=PurchaseOrderHistoryEvent.UPDATE,
+        before=before,
+        after=po_snapshot(po),
+        actor=actor or actor_json(user_id=po.created_by_user_id),
+    )
+    return po
 
 
 def get_purchase_order(po_id: int) -> PurchaseOrder:
@@ -358,7 +378,13 @@ def list_purchase_orders(*, status=None, supplier_id=None, sage_po_number=None):
         'supplier', 'ship_to_location',
     ).order_by('-id')
     if status not in (None, ''):
-        qs = qs.filter(status=status)
+        statuses = [
+            part.strip()
+            for part in str(status).replace('|', ',').split(',')
+            if part.strip()
+        ]
+        if statuses:
+            qs = qs.filter(status__in=statuses)
     if supplier_id not in (None, ''):
         qs = qs.filter(supplier_id=int(supplier_id))
     if sage_po_number not in (None, ''):
