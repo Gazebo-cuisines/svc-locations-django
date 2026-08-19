@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stock_ledger', '0016_stock_entry_source_entry'),
+        ('stock_ledger', '0017_stock_entry_source_entry'),
     ]
 
     operations = [
