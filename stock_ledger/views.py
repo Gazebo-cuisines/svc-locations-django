@@ -286,7 +286,6 @@ def entry_dict(entry: StockEntry) -> dict:
         'quantity_base': _dec(entry.quantity_base),
         'unit_cost': _dec(entry.unit_cost),
         'line_cost': _dec(entry.line_cost),
-        'period_id': entry.period_id,
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'recorded_at': entry.recorded_at.isoformat() if entry.recorded_at else None,
         'reverses_entry_id': entry.reverses_entry_id,

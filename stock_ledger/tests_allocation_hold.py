@@ -15,8 +15,6 @@ from stock_ledger.models import (
     StockBalance,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
 )
 from stock_ledger.util import services
 from stock_ledger.util.allocation_status import (
@@ -46,11 +44,6 @@ class IncompleteAllocationHoldTests(TestCase):
             stock_identifier='STK',
             production_identifier='PROD',
             show_incomplete_stock=False,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.resource = Resource.objects.create(
             id=71, code='IA-L1', name='IA Line 1', location=self.sleeving,

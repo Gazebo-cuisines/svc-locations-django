@@ -22,7 +22,6 @@ from stock_ledger.models import (
     StockEntryType,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
 )
 
 class PickingListApiTests(TestCase):
@@ -245,10 +244,6 @@ class PickingListApiTests(TestCase):
         req_id = PlanRequirement.objects.filter(
             run=self.run, product=self.box, closed=False,
         ).order_by('id').values_list('id', flat=True).first()
-        period, _ = StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-        )
         lot = StockLot.objects.create(
             product=self.box,
             trace_number='T-GO-1',
@@ -263,7 +258,6 @@ class PickingListApiTests(TestCase):
             counterparty_location=self.sleeving,
             quantity=Decimal('-20'),
             unit_id=1,
-            period=period,
             effective_at=now,
             recorded_at=now,
             entry_hash='hash-go-progress-1',
@@ -493,10 +487,6 @@ class PlanProgressApiTests(TestCase):
             name='Spice line',
             location=self.spice,
         )
-        period = StockPeriod.objects.create(
-            period_start=date(2026, 8, 1),
-            period_end=date(2026, 8, 31),
-        )
         lot = StockLot.objects.create(
             product=self.spice_mix,
             trace_number='T1',
@@ -513,7 +503,6 @@ class PlanProgressApiTests(TestCase):
                 counterparty_location=self.spice,
                 quantity=qty,
                 unit=self.unit,
-                period=period,
                 effective_at=now,
                 recorded_at=now,
                 entry_hash=f'hash-prog-{i}',
@@ -560,10 +549,6 @@ class PlanProgressApiTests(TestCase):
         req_id = PlanRequirement.objects.filter(run=self.run).values_list(
             'id', flat=True,
         ).first()
-        period = StockPeriod.objects.get(
-            period_start=date(2026, 8, 1),
-            period_end=date(2026, 8, 31),
-        )
         lot = StockLot.objects.get(trace_number='T1')
         now = timezone.now()
         entry = StockEntry.objects.create(
@@ -574,7 +559,6 @@ class PlanProgressApiTests(TestCase):
             counterparty_location=self.mixers,
             quantity=Decimal('-4'),
             unit=self.unit,
-            period=period,
             effective_at=now,
             recorded_at=now,
             entry_hash='hash-prog-issue-1',

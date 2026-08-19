@@ -23,8 +23,6 @@ from stock_ledger.models import (
     StockEntryType,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
     StockUnit,
     StockUnitPrintEvent,
     StockUnitPrintReason,
@@ -54,11 +52,6 @@ class StockUnitTests(TestCase):
             label_mode=ProductLabelMode.PER_UNIT,
             source_container=self.wh,
             destination_container=self.kitchen,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.lot = StockLot.objects.create(
             product=self.product,
@@ -390,7 +383,7 @@ class StockUnitTests(TestCase):
         lookup = client.get(f'/stock/stock-units/{bags[0].unit_serial}/')
         detail = lookup.json().get('data') or lookup.json()
         self.assertEqual(detail['location']['id'], self.kitchen.id)
-        self.assertEqual(detail['quantity_remaining'], '20.000000')
+        self.assertEqual(Decimal(detail['quantity_remaining']), Decimal('20'))
 
 
 class ProductBarcodeTests(TestCase):
@@ -408,11 +401,6 @@ class ProductBarcodeTests(TestCase):
         )
         LocationRoleAssignment.objects.create(
             location=self.supplier, role=LocationRole.SUPPLIER,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.today = timezone.localdate()
         self.product = self._product(ProductLabelMode.PRODUCT)

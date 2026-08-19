@@ -21,8 +21,6 @@ from product.models import Product, Unit
 from stock_ledger.models import (
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
 )
 from stock_ledger.util import reservations, services
 from stock_ledger.util.verify import run_all_verifications
@@ -44,12 +42,6 @@ class Command(BaseCommand):
         product = Product.objects.filter(is_downtime=False).order_by('id').first()
         if product is None:
             raise CommandError('need at least one non-downtime product')
-
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
-        )
 
         tag = uuid4().hex[:8]
         now = timezone.now()

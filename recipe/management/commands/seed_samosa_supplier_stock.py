@@ -10,7 +10,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -33,8 +33,6 @@ from stock_ledger.models import (
     StockBalance,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
 )
 from stock_ledger.util import services
 from stock_ledger.util.conversions import StockValidationError
@@ -210,7 +208,6 @@ class Command(BaseCommand):
                     f'RM store location {LOC_RM_SRC} missing. '
                     'Run seed_demo_recipe_samosa --locations-only'
                 )
-            self._ensure_open_period()
             tag = uuid4().hex[:8]
             for product in products:
                 mapping = mappings[product.id]
@@ -335,21 +332,6 @@ class Command(BaseCommand):
             f'stock={product.unit.name} inner={mapping.inner_unit.name}'
         )
 
-    def _ensure_open_period(self) -> None:
-        today = timezone.now().date()
-        open_period = StockPeriod.objects.filter(
-            status=StockPeriodStatus.OPEN,
-            period_start__lte=today,
-            period_end__gte=today,
-        ).first()
-        if open_period is not None:
-            return
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
-        )
-
     def _goods_in(self, product: Product, quantity: Decimal, tag: str):
         use_by = timezone.now().date() + timedelta(days=365)
         lot = StockLot.objects.create(
@@ -370,7 +352,6 @@ class Command(BaseCommand):
         )
 
     def _run_production_e2e(self) -> None:
-        self._ensure_open_period()
         intermediate_ids = [row[0] for row in INTERMEDIATES]
         n = Product.objects.filter(pk__in=intermediate_ids, is_active=False).update(
             is_active=True,

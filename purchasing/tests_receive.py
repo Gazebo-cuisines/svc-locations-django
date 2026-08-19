@@ -30,8 +30,6 @@ from purchasing.models import (
 from purchasing.services.receive import ReceiveError, receive_purchase_order
 from stock_ledger.models import (
     StockEntry,
-    StockPeriod,
-    StockPeriodStatus,
     StockUnit,
 )
 
@@ -71,11 +69,6 @@ class PoReceiveParityTests(TestCase):
             inner_unit=self.kg,
             is_default=True,
             is_active=True,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.po = PurchaseOrder.objects.create(
             number=f'POT-{uuid4().hex[:6]}',
@@ -441,11 +434,6 @@ class StockReceiptPoGateTests(TestCase):
             unit=self.unit,
             source_container=self.wh,
             destination_container=self.wh,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
 
     def test_stock_receipt_rejects_po_number(self):

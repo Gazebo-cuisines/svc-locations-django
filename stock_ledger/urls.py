@@ -17,7 +17,10 @@ urlpatterns = [
     path('unit-conversions/', views.unit_conversions_api, name='stock-unit-conversions'),
 
     # movements
+    # Goods In logic
     path('receipt/', views.receipt_api, name='stock-receipt'),
+
+    # Goods Out logic
     path('issue/', views.issue_api, name='stock-issue'),
     path('production/', views.production_api, name='stock-production'),
     path('production/<int:entry_id>/', views.production_detail_api, name='stock-production-detail'),
@@ -31,8 +34,12 @@ urlpatterns = [
    
     path('transfer/', views.transfer_api, name='stock-transfer'),
     path('disposal/', views.disposal_api, name='stock-disposal'),
+
+    # stock reconciliation logic
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
+
+    # goods out scan logic
     path('scan/goods-out/', views.scan_goods_out_api, name='stock-scan-goods-out'),
     
     path('scan/', views.scan_resolve_api, name='stock-scan'),
