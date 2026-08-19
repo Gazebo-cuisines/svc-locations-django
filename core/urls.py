@@ -16,4 +16,5 @@ urlpatterns = [
     path('planning/', include('planning.urls')),
     path('purchasing/', include('purchasing.urls')),
     path('auth/', include('users_rbac.urls')),
+    path('hardware/', include('hardware.urls')),
 ]

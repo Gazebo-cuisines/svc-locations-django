@@ -69,6 +69,7 @@ from stock_ledger.util.trace import (
     trace_backward,
     trace_forward,
 )
+from hardware.services import codes_for_serials, serial_from_request, touch_from_request
 from users_rbac.auth import attach_user, client_ip
 from users_rbac.permissions import (
     gate_floor_write,
@@ -305,6 +306,8 @@ def entry_dict(entry: StockEntry) -> dict:
         'lan_username': entry.lan_username,
         'source_workstation': entry.source_workstation,
         'source_workstation_ip': entry.source_workstation_ip,
+        'device_serial': entry.device_serial,
+        'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
         'remarks': entry.remarks,
         'entry_hash': entry.entry_hash,
         'prev_hash': entry.prev_hash,
@@ -348,6 +351,8 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'lan_username': entry.lan_username,
         'source_workstation': entry.source_workstation,
         'source_workstation_ip': entry.source_workstation_ip,
+        'device_serial': entry.device_serial,
+        'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
     }
 
 
@@ -829,6 +834,16 @@ def _common_write_kwargs(request, body: dict) -> dict:
         if source_workstation_ip is not None:
             source_workstation_ip = str(source_workstation_ip)[:45]
 
+    device_serial = serial_from_request(request, body)
+    if device_serial:
+        touch_from_request(
+            request,
+            action='heartbeat',
+            body=body,
+            user=user,
+            record_event=False,
+        )
+
     kwargs = {
         'override_reason': body.get('override_reason'),
         'authorised_by_user_id': body.get('authorised_by_user_id'),
@@ -836,6 +851,7 @@ def _common_write_kwargs(request, body: dict) -> dict:
         'lan_username': lan_username,
         'source_workstation': source_workstation,
         'source_workstation_ip': source_workstation_ip,
+        'device_serial': device_serial,
         'remarks': body.get('remarks'),
         'source_document_type': body.get('source_document_type'),
         'source_document_id': body.get('source_document_id'),
@@ -2448,6 +2464,7 @@ def scan_resolve_api(request):
         data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
         if label is not None:
             data['label'] = entry_labels.label_state_dict(label)
+    touch_from_request(request, action='scan', location_id=loc_id)
     return api_success('Scan resolved.', data)
 
 
@@ -2575,6 +2592,7 @@ def scan_goods_out_api(request):
         data['recommended_lot_id'] = oldest['lot_id']
         data['recommended_trace'] = oldest.get('trace_number')
         data['recommended_use_by'] = oldest.get('use_by')
+    touch_from_request(request, action='scan', location_id=loc_id)
     return api_success('Scan resolved.', data)
 
 

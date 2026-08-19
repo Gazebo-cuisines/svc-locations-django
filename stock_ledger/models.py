@@ -342,6 +342,7 @@ class StockEntry(models.Model):
     lan_username = models.CharField(max_length=64, null=True, blank=True)
     source_workstation = models.CharField(max_length=64, null=True, blank=True)
     source_workstation_ip = models.CharField(max_length=45, null=True, blank=True)
+    device_serial = models.CharField(max_length=32, null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
     prev_hash = models.CharField(max_length=64, null=True, blank=True)
     entry_hash = models.CharField(max_length=64)
@@ -440,6 +441,10 @@ class StockEntry(models.Model):
             models.Index(
                 fields=['source_entry'],
                 name='idx_stock_entry_source_entry',
+            ),
+            models.Index(
+                fields=['device_serial'],
+                name='idx_stock_entry_device',
             ),
         ]
 

@@ -292,6 +292,7 @@ def _insert_entry(
     lan_username: str | None = None,
     source_workstation: str | None = None,
     source_workstation_ip: str | None = None,
+    device_serial: str | None = None,
     remarks: str | None = None,
     project_balance: bool = True,
     mass_factor: Decimal | None = None,
@@ -348,6 +349,7 @@ def _insert_entry(
                 lan_username=lan_username,
                 source_workstation=source_workstation,
                 source_workstation_ip=source_workstation_ip,
+                device_serial=device_serial,
                 remarks=remarks,
                 # Overwritten by the stock_entry_bi trigger. Derived from the
                 # idempotency key so the unique column never collides.
