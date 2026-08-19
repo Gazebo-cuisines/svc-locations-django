@@ -270,6 +270,14 @@ class StockEntry(models.Model):
         blank=True,
         related_name='reversed_by',
     )
+    # Goods-in sticker (E{id}) this outbound row draws stock from.
+    source_entry = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='sticker_draws',
+    )
     override_reason = models.CharField(max_length=255, null=True, blank=True)
     authorised_by_user_id = models.IntegerField(null=True, blank=True)
     source_document_type = models.CharField(max_length=24, null=True, blank=True)
@@ -286,6 +294,7 @@ class StockEntry(models.Model):
     lan_username = models.CharField(max_length=64, null=True, blank=True)
     source_workstation = models.CharField(max_length=64, null=True, blank=True)
     source_workstation_ip = models.CharField(max_length=45, null=True, blank=True)
+    device_serial = models.CharField(max_length=32, null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
     prev_hash = models.CharField(max_length=64, null=True, blank=True)
     entry_hash = models.CharField(max_length=64)
@@ -380,6 +389,14 @@ class StockEntry(models.Model):
             models.Index(
                 fields=['transfer_group_id'],
                 name='idx_stock_entry_transfer',
+            ),
+            models.Index(
+                fields=['source_entry'],
+                name='idx_stock_entry_source_entry',
+            ),
+            models.Index(
+                fields=['device_serial'],
+                name='idx_stock_entry_device',
             ),
         ]
 

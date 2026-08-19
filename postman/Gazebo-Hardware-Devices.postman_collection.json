@@ -1,0 +1,227 @@
+{
+  "info": {
+    "name": "Gazebo - Hardware Devices",
+    "description": "# Gazebo Hardware Devices\n\nEstate register for Zebra TC22F scanner guns (`hw_device`, `hw_device_event`, `hw_device_post`).\n\nWarehouse guns send `X-Device-Serial`. Admin PCs omit it.\n\nPeople use sticker **code** (`GUN-03`). Device photos live as Instagram-style posts (`cover_url` on the device card is the latest post).\n\nSeeded unit: **GUN-01** / serial `26202524703110` / BT `BSD01_Gazeboo_cloud`.\n\n## Routes\n`GET|POST /hardware/devices/`, `GET|PATCH /hardware/devices/:id/`, `GET /hardware/usage/`, `GET /hardware/feed/`, `GET|POST /hardware/devices/:id/posts/`, `DELETE /hardware/devices/:id/posts/:post_id/`\n\n`:id` is `GUN-03` **or** the hardware serial.\n\n## Auth\n1. Run **Login** in Gazebo - RBAC Users (`POST /auth/login/`)\n2. Copy `data.id_token` into `{{id_token}}`\n3. List / get / feed / post — any signed-in user\n4. Create / patch device / usage — IT or any Admin area\n\n## Envelope\nSuccess: `{ \"status\": \"success\", \"message\": \"...\", \"data\": ... }`\nError: `{ \"status\": \"error\", \"message\": \"...\", \"data\": null }`\n\n## Vars\n`{{base_url}}`, `{{id_token}}`, `{{device_code}}`, `{{user_id}}`, `{{post_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "id_token", "value": "" },
+    { "key": "device_code", "value": "GUN-01" },
+    { "key": "user_id", "value": "1" },
+    { "key": "post_id", "value": "1" }
+  ],
+  "item": [
+    {
+      "name": "Scanner guns",
+      "description": "Physical TC22F guns used on the warehouse floor.\n\n**Tables:** `hw_device`, `hw_device_event`\n\n**Vars:** `{{id_token}}`, `{{device_code}}`, `{{user_id}}`\n\nGun clients also send `X-Device-Serial` on `/auth/login/` and `/stock/*` (not required for this folder).",
+      "item": [
+        {
+          "name": "List devices",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", ""]
+            },
+            "description": "### List devices\n\n`GET /hardware/devices/`\n\nAny signed-in user. Returns every scanner gun (sticker code, serial, who should pick it up, last seen). Filter by home warehouse or assigned user when handing out guns at the start of a shift.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `location_id` | no | Home warehouse (`8` Unit 2, `2` Unit 11) |\n| `assigned_user_id` | no | RBAC user currently allocated this gun |\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Devices fetched successfully.`\n\n`data[]`:\n\n| Field | Meaning |\n|---|---|---|\n| `code` | Sticker / barcode (`GUN-01`) |\n| `serial` | Zebra serial, or null until the gun phones home |\n| `nickname` | BT name, e.g. `BSD01_Gazeboo_cloud` |\n| `assigned_user_id` | Who should pick this gun up |\n| `cover_url` | Latest post photo (presigned, ~1h) or null |\n| `post_count` | Number of feed posts |\n| `last_user_id` | Who last used it |\n| `status` | `active`, `repair`, or `retired` |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | List returned |\n| 401 | Not signed in |"
+          }
+        },
+        {
+          "name": "Get device",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/{{device_code}}/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", "{{device_code}}", ""]
+            },
+            "description": "### Get device\n\n`GET /hardware/devices/:id/`\n\nAny signed-in user. `:id` is the sticker code (`GUN-01`) or the hardware serial (`26202524703110`). Use this after scanning the sticker barcode on the gun body.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `GUN-03` or Zebra serial |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Device fetched successfully.`\n\n`data`: one device object (same fields as list), including `identity_json` from USB/ADB enroll.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Found |\n| 401 | Not signed in |\n| 404 | Unknown code or serial |"
+          }
+        },
+        {
+          "name": "Register device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('device_code', String(response.data.code || ''));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", ""]
+            },
+            "description": "### Register device\n\n`POST /hardware/devices/`\n\nIT or any Admin area. Pre-register a gun before it is on USB, so you can print sticker `GUN-03` and hang it on the rack. Leave `serial` empty until the gun first logs in, or set it from the Zebra label / ADB.\n\nOmit `code` to auto-assign the next `GUN-nn`.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `code` | no | Sticker code `GUN-03`. Auto `GUN-nn` if omitted |\n| `serial` | no | Zebra serial (unique when set) |\n| `nickname` | no | Human / BT name |\n| `model` | no | Defaults to `TC22F` |\n| `home_location_id` | no | Home warehouse |\n| `assigned_user_id` | no | Who should pick it up |\n| `status` | no | `active` (default), `repair`, `retired` |\n| `identity_json` | no | Optional ADB dump |\n\n### Response body\n\n`message`: `Device registered.`\n\n`data`: the new device object.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | Created |\n| 400 | Invalid JSON or `code` not `GUN-n` |\n| 401 | Not signed in |\n| 403 | Signed in but not IT/admin |\n| 409 | Code or serial already used |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"GUN-03\",\n  \"nickname\": \"Dock 3\",\n  \"model\": \"TC22F\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Allocate device",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/{{device_code}}/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", "{{device_code}}", ""]
+            },
+            "description": "### Allocate device\n\n`PATCH /hardware/devices/:id/`\n\nIT or any Admin area. Point the sticker at a person: “Amit, pick up device 3” is `assigned_user_id` on `GUN-03`. Also used to rename the sticker `code`, set home warehouse, or mark `repair` / `retired`.\n\nOmit a field to leave it unchanged. Set `assigned_user_id` to `null` to clear the allocation.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `GUN-03` or Zebra serial |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `assigned_user_id` | no | RBAC user PK, or null to clear |\n| `code` | no | New sticker code (`GUN-03`) |\n| `nickname` | no | Display / BT name |\n| `home_location_id` | no | Home warehouse |\n| `serial` | no | Bind Zebra serial |\n| `status` | no | `active`, `repair`, `retired` |\n\n### Response body\n\n`message`: `Device updated.`\n\n`data`: the updated device object.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Updated |\n| 400 | Invalid JSON, bad `code`/`status`, or empty patch |\n| 401 | Not signed in |\n| 403 | Signed in but not IT/admin |\n| 404 | Device or user not found |\n| 409 | Code or serial already used |",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assigned_user_id\": {{user_id}}\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "List usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/usage/?code=GUN-01",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "usage", ""],
+              "query": [
+                { "key": "code", "value": "GUN-01", "description": "Sticker code" },
+                { "key": "serial", "value": "", "description": "Zebra serial", "disabled": true },
+                { "key": "user_id", "value": "", "description": "Who used it", "disabled": true },
+                { "key": "location_id", "value": "", "description": "Warehouse at the time", "disabled": true },
+                { "key": "from", "value": "", "description": "ISO datetime", "disabled": true },
+                { "key": "to", "value": "", "description": "ISO datetime", "disabled": true }
+              ]
+            },
+            "description": "### List usage\n\n`GET /hardware/usage/`\n\nIT or any Admin area. Company-wide trail: who logged in or scanned on which gun, at which warehouse, when. Filter by sticker code, serial, user, site, or date range.\n\nStock receipts/transfers also store `device_serial` (and resolved `device_code`) on `stock_entry` when the gun sent the header.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `code` | no | Sticker `GUN-01` |\n| `serial` | no | Zebra serial |\n| `device` | no | Code or serial |\n| `user_id` | no | RBAC user PK |\n| `location_id` | no | Warehouse at event time |\n| `from` | no | ISO datetime (inclusive) |\n| `to` | no | ISO datetime (inclusive) |\n| `limit` | no | Page size, default 50, max 200 |\n| `offset` | no | Skip N rows |\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Device usage fetched.`\n\n`data.items[]`: `action` (`enroll` / `login` / `scan` / `allocate`), `device_code`, `device_serial`, `username`, `location_id`, `at`.\n\n`data.count`, `data.limit`, `data.offset` for paging.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | List returned |\n| 400 | Bad datetime / limit / offset |\n| 401 | Not signed in |\n| 403 | Signed in but not IT/admin |"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Device feed",
+      "description": "Instagram-style posts on a gun: photo/video, caption, who posted, when.\n\n**Table:** `hw_device_post`\n\n**Vars:** `{{id_token}}`, `{{device_code}}`, `{{post_id}}`\n\n`cover_url` on the device card is the newest post. Refetch URLs; they expire in about an hour.",
+      "item": [
+        {
+          "name": "List company feed",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/feed/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "feed", ""]
+            },
+            "description": "### List company feed\n\n`GET /hardware/feed/`\n\nAny signed-in user. Newest posts first across every gun — the admin website wall. Filter by sticker, user, or date when you want one person’s or one gun’s history.\n\n### Path parameters\n\nNone.\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `code` or `device` | no | Sticker or serial |\n| `user_id` | no | Who posted |\n| `from` | no | ISO datetime inclusive |\n| `to` | no | ISO datetime inclusive |\n| `limit` | no | Default 50, max 200 |\n| `offset` | no | Skip N rows |\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Device feed fetched.`\n\n`data.items[]`:\n\n| Field | Meaning |\n|---|---|---|\n| `id` | Post PK |\n| `media_url` | Presigned image/video (~1h) |\n| `kind` | `image` or `video` |\n| `caption` | Text |\n| `username` / `display_name` / `user_photo_url` | Who posted |\n| `device_code` / `device_nickname` | Which gun |\n| `created_at` | ISO datetime |\n\n`data.count`, `data.limit`, `data.offset`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | List returned |\n| 400 | Bad datetime / paging |\n| 401 | Not signed in |\n| 404 | `code` does not match a gun |"
+          }
+        },
+        {
+          "name": "List device posts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/{{device_code}}/posts/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", "{{device_code}}", "posts", ""]
+            },
+            "description": "### List device posts\n\n`GET /hardware/devices/:id/posts/`\n\nAny signed-in user. Timeline for one gun (same shape as the company feed, filtered to this sticker).\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `GUN-01` or Zebra serial |\n\n### Query parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `limit` | no | Default 50, max 200 |\n| `offset` | no | Skip N rows |\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Device posts fetched.`\n\n`data.items[]` same fields as company feed. `data.count` / `limit` / `offset`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | List returned |\n| 401 | Not signed in |\n| 404 | Unknown device |"
+          }
+        },
+        {
+          "name": "Create device post",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('post_id', String(response.data.id || ''));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/{{device_code}}/posts/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", "{{device_code}}", "posts", ""]
+            },
+            "description": "### Create device post\n\n`POST /hardware/devices/:id/posts/`\n\nAny signed-in user. Multipart upload of a photo or short video onto this gun’s feed (who / when is taken from the login). The newest post becomes `cover_url` on the device card.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `GUN-01` or Zebra serial |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n`multipart/form-data`\n\n| Field | Required | Meaning |\n|---|---|---|\n| `file` (or `image`) | yes | JPEG, PNG, WebP, GIF, MP4, MOV, or WebM. Max 20 MB |\n| `caption` | no | Text, max 512 chars |\n\n### Response body\n\n`message`: `Device post created.`\n\n`data`: the post object (`id`, `media_url`, `kind`, `caption`, `username`, `created_at`, `device_code`).\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | Created |\n| 400 | Missing/invalid file |\n| 401 | Not signed in |\n| 404 | Unknown device |",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "JPEG / PNG / WebP / GIF / MP4 / MOV / WebM"
+                },
+                {
+                  "key": "caption",
+                  "type": "text",
+                  "value": "Docked at Unit 2"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete device post",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{id_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/hardware/devices/{{device_code}}/posts/{{post_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["hardware", "devices", "{{device_code}}", "posts", "{{post_id}}", ""]
+            },
+            "description": "### Delete device post\n\n`DELETE /hardware/devices/:id/posts/:post_id/`\n\nAuthor or IT/admin. Removes the post and best-effort deletes the S3 object. The next-newest post becomes the card `cover_url`.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `GUN-01` or Zebra serial |\n| `post_id` | yes | Post PK (`{{post_id}}`) |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Device post deleted.`\n\n`data.id`: the deleted post PK.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Deleted |\n| 401 | Not signed in |\n| 403 | Not the author and not admin |\n| 404 | Device or post not found |"
+          }
+        }
+      ]
+    }
+  ]
+}

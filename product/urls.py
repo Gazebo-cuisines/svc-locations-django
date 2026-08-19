@@ -8,6 +8,7 @@ from product.views.allergen_views import (
 from product.views.audit_views import product_stock_overrides_api, product_timeline_api
 from product.views.costing_views import product_costing_api
 from product.views.flags_views import product_flags_api
+from product.views.image_views import product_image_detail_api, product_images_api
 from product.views.ingredient_label_views import product_ingredient_label_api
 from product.views.lookups_views import (
     product_allergen_code_list_api,
@@ -73,6 +74,8 @@ urlpatterns = [
     path('high-risk/', product_high_risk_create_api, name='product-high-risk-create'),
     path('', product_collection_api, name='product-collection'),
     path('<int:pk>/', product_detail_api, name='product-detail'),
+    path('<int:pk>/images/', product_images_api, name='product-images'),
+    path('images/<int:pk>/', product_image_detail_api, name='product-image-detail'),
     path('<int:pk>/flags/', product_flags_api, name='product-flags'),
     path('<int:pk>/technical/', product_technical_api, name='product-technical'),
     path('<int:pk>/allergens/', product_allergens_api, name='product-allergens'),

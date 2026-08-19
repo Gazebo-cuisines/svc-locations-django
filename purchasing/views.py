@@ -4,12 +4,24 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
+from purchasing.models import (
+    GoodsInAttachmentKind,
+    PurchaseOrder,
+    PurchaseOrderStatus,
+)
 from purchasing.serialize import po_detail_dict, po_list_dict
 from purchasing.services.attachments import (
     AttachmentError,
     delete_attachment,
     list_attachments,
     upload_attachment,
+)
+from purchasing.services.delivery import (
+    DeliveryError,
+    create_delivery,
+    delivery_list_dict,
+    get_delivery,
+    list_deliveries,
 )
 from purchasing.services.goods_in_form import (
     GoodsInFormError,
@@ -28,7 +40,8 @@ from purchasing.services.po import (
     list_purchase_orders,
     update_purchase_order,
 )
-from purchasing.models import GoodsInAttachmentKind, PurchaseOrder, PurchaseOrderStatus
+from purchasing.services.timeline import actor_json, po_timeline
+from stock_ledger.views import _common_write_kwargs
 from users_rbac.auth import attach_user
 from users_rbac.permissions import gate_warehouse_write
 
@@ -80,6 +93,7 @@ def po_collection_api(request):
             ordered_at=body.get('ordered_at'),
             remarks=body.get('remarks'),
             created_by_user_id=body.get('created_by_user_id'),
+            actor=actor_json(request, user_id=body.get('created_by_user_id')),
             status=body.get('status') or 'draft',
             sage_po_number=body.get('sage_po_number'),
             external_number=body.get('external_number'),
@@ -94,6 +108,17 @@ def po_collection_api(request):
         'Purchase order created successfully.',
         po_detail_dict(po),
         status_code=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def po_timeline_api(request, po_id: int):
+    if not PurchaseOrder.objects.filter(pk=po_id).exists():
+        return api_error('Purchase order not found.', status_code=404)
+    return api_success(
+        'Purchase order timeline fetched successfully.',
+        po_timeline(po_id),
     )
 
 
@@ -115,7 +140,7 @@ def po_detail_api(request, po_id: int):
         return api_error('Invalid JSON body.', status_code=400)
 
     try:
-        po = update_purchase_order(po_id, body=body)
+        po = update_purchase_order(po_id, body=body, actor=actor_json(request))
     except PoValidationError as exc:
         msg = str(exc)
         status = 404 if msg == 'Purchase order not found.' else 400
@@ -143,10 +168,14 @@ def po_header_qc_api(request, po_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_header_qc(po_id, body=body)
+        data = submit_header_qc(
+            po_id,
+            body=body,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
     except HeaderQcError as exc:
         msg = str(exc)
-        status = 404 if msg == 'Purchase order not found.' else 400
+        status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
     return api_success('Header QC saved successfully.', data)
 
@@ -158,13 +187,15 @@ def po_line_qc_api(request, po_id: int, line_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_line_qc(po_id, line_id, body=body)
+        data = submit_line_qc(
+            po_id,
+            line_id,
+            body=body,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
     except LineQcError as exc:
         msg = str(exc)
-        if msg in (
-            'Purchase order not found.',
-            'Purchase order line not found.',
-        ):
+        if 'not found' in msg.lower():
             status = 404
         else:
             status = 400
@@ -180,14 +211,12 @@ def po_receive_api(request, po_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        # Reuse stock receipt audit helpers (JWT / workstation / IP).
-        from stock_ledger.views import _common_write_kwargs
-
         audit = _common_write_kwargs(request, body)
+        audit['actor'] = actor_json(request, audit=audit)
         data = receive_purchase_order(po_id, body=body, audit=audit)
     except ReceiveError as exc:
         msg = str(exc)
-        status = 404 if msg == 'Purchase order not found.' else 400
+        status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
     return api_success('Goods received successfully.', data, status_code=201)
 
@@ -199,7 +228,9 @@ def po_release_api(request, po_id: int):
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = release_from_quarantine(po_id, body=body)
+        data = release_from_quarantine(
+            po_id, body=body, actor=actor_json(request),
+        )
     except ReleaseError as exc:
         msg = str(exc)
         status = 404 if msg == 'Purchase order not found.' else 400
@@ -221,40 +252,7 @@ def po_attachments_api(request, po_id: int):
             'Attachments fetched successfully.',
             {'count': len(data), 'results': data},
         )
-
-    uploaded = request.FILES.get('file') or request.FILES.get('image')
-    if not uploaded:
-        return api_error('File is required (multipart field: file).', status_code=400)
-
-    kind = request.POST.get('kind') or GoodsInAttachmentKind.PHOTO
-    uploaded_by = request.POST.get('uploaded_by_user_id')
-    if uploaded_by not in (None, ''):
-        try:
-            uploaded_by = int(uploaded_by)
-        except (TypeError, ValueError):
-            return api_error('uploaded_by_user_id must be an integer.', status_code=400)
-    else:
-        uploaded_by = None
-        # Prefer Cognito actor when FE sends Authorization Bearer JWT
-        attach_user(request, missing='ok', invalid='ok')
-        actor = getattr(request, 'rbac_user', None)
-        if actor is not None:
-            uploaded_by = actor.id
-
-    try:
-        data = upload_attachment(
-            po_id,
-            uploaded_file=uploaded,
-            kind=kind,
-            line_id=request.POST.get('line_id'),
-            history_id=request.POST.get('history_id'),
-            uploaded_by_user_id=uploaded_by,
-        )
-    except AttachmentError as exc:
-        msg = str(exc)
-        status = 404 if msg == 'Purchase order not found.' else 400
-        return api_error(msg, status_code=status)
-    return api_success('Attachment uploaded successfully.', data, status_code=201)
+    return _attachment_post(request, po_id)
 
 
 @csrf_exempt
@@ -315,5 +313,169 @@ def legacy_csv_import_api(request):
 def po_print_api(request, po_id: int):
     try:
         return pdf_http_response(po_id)
+    except GoodsInFormError as exc:
+        return api_error(str(exc), status_code=404)
+
+
+def _attachment_post(request, po_id, *, delivery_id=None):
+    uploaded = request.FILES.get('file') or request.FILES.get('image')
+    if not uploaded:
+        return api_error('File is required (multipart field: file).', status_code=400)
+    kind = request.POST.get('kind') or GoodsInAttachmentKind.PHOTO
+    uploaded_by = request.POST.get('uploaded_by_user_id')
+    if uploaded_by not in (None, ''):
+        try:
+            uploaded_by = int(uploaded_by)
+        except (TypeError, ValueError):
+            return api_error('uploaded_by_user_id must be an integer.', status_code=400)
+    else:
+        uploaded_by = None
+        attach_user(request, missing='ok', invalid='ok')
+        actor = getattr(request, 'rbac_user', None)
+        if actor is not None:
+            uploaded_by = actor.id
+    try:
+        data = upload_attachment(
+            po_id,
+            uploaded_file=uploaded,
+            kind=kind,
+            line_id=request.POST.get('line_id'),
+            history_id=request.POST.get('history_id'),
+            delivery_id=delivery_id,
+            uploaded_by_user_id=uploaded_by,
+        )
+    except AttachmentError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Attachment uploaded successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def po_delivery_collection_api(request, po_id: int):
+    if request.method == 'GET':
+        try:
+            rows = list_deliveries(po_id)
+        except DeliveryError as exc:
+            msg = str(exc)
+            status = 404 if 'not found' in msg.lower() else 400
+            return api_error(msg, status_code=status)
+        return api_success(
+            'Deliveries fetched successfully.',
+            {
+                'count': len(rows),
+                'results': [delivery_list_dict(row) for row in rows],
+            },
+        )
+    try:
+        delivery = create_delivery(po_id)
+    except DeliveryError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success(
+        'Delivery created successfully.',
+        delivery_list_dict(delivery),
+        status_code=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def po_delivery_detail_api(request, po_id: int, delivery_id: int):
+    try:
+        data = resolve_goods_in_form(po_id, delivery_id=delivery_id)
+    except (GoodsInFormError, DeliveryError) as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Goods inward form resolved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_delivery_header_qc_api(request, po_id: int, delivery_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = submit_header_qc(
+            po_id,
+            body=body,
+            delivery_id=delivery_id,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
+    except HeaderQcError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Header QC saved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_delivery_line_qc_api(request, po_id: int, delivery_id: int, line_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = submit_line_qc(
+            po_id,
+            line_id,
+            body=body,
+            delivery_id=delivery_id,
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
+    except LineQcError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Line QC saved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
+def po_delivery_receive_api(request, po_id: int, delivery_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        audit = _common_write_kwargs(request, body)
+        audit['actor'] = actor_json(request, audit=audit)
+        data = receive_purchase_order(
+            po_id, body=body, audit=audit, delivery_id=delivery_id,
+        )
+    except ReceiveError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Goods received successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def po_delivery_attachments_api(request, po_id: int, delivery_id: int):
+    if request.method == 'GET':
+        try:
+            get_delivery(po_id, delivery_id)
+            data = list_attachments(po_id, delivery_id=delivery_id)
+        except (AttachmentError, DeliveryError) as exc:
+            msg = str(exc)
+            status = 404 if 'not found' in msg.lower() else 400
+            return api_error(msg, status_code=status)
+        return api_success(
+            'Attachments fetched successfully.',
+            {'count': len(data), 'results': data},
+        )
+    return _attachment_post(request, po_id, delivery_id=delivery_id)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def po_delivery_print_api(request, po_id: int, delivery_id: int):
+    try:
+        return pdf_http_response(po_id, delivery_id=delivery_id)
     except GoodsInFormError as exc:
         return api_error(str(exc), status_code=404)

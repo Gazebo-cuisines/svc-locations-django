@@ -83,6 +83,29 @@ class SagePoNumberTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['sage_po_number'], self.sage_no)
 
+    def test_list_pipe_statuses(self):
+        ordered = create_purchase_order(
+            supplier_id=self.supplier.id,
+            lines=[self._line()],
+            sage_po_number=f'{self.sage_no}-O',
+            status=PurchaseOrderStatus.ORDERED,
+            require_sage_po_number=True,
+        )
+        create_purchase_order(
+            supplier_id=self.supplier.id,
+            lines=[self._line()],
+            sage_po_number=f'{self.sage_no}-D',
+            status=PurchaseOrderStatus.DRAFT,
+            require_sage_po_number=True,
+        )
+        listed = self.client.get(
+            '/purchasing/pos/?status=ordered|partial|received',
+        )
+        self.assertEqual(listed.status_code, 200)
+        ids = {row['id'] for row in listed.json()['data']['results']}
+        self.assertIn(ordered.id, ids)
+        self.assertEqual(len(ids), 1)
+
     def test_create_with_line_label_plan(self):
         resp = self.client.post(
             '/purchasing/pos/',

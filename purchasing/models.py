@@ -18,6 +18,8 @@ class PurchaseOrderSource(models.TextChoices):
 
 
 class PurchaseOrderHistoryEvent(models.TextChoices):
+    CREATE = 'create', 'Create'
+    UPDATE = 'update', 'Update'
     ACCEPT = 'accept', 'Accept'
     REJECT = 'reject', 'Reject'
     NON_CONFORMANCE = 'non_conformance', 'Non-conformance'
@@ -243,10 +245,127 @@ class PurchaseOrderLine(models.Model):
         return f'po_line:{self.purchase_order_id}:{self.line_no}'
 
 
+class PurchaseOrderDeliveryStatus(models.TextChoices):
+    OPEN = 'open', 'Open'
+    REJECTED = 'rejected', 'Rejected'
+    RECEIVED = 'received', 'Received'
+
+
+class PurchaseOrderDelivery(models.Model):
+    purchase_order = models.ForeignKey(
+        PurchaseOrder,
+        on_delete=models.CASCADE,
+        related_name='deliveries',
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=PurchaseOrderDeliveryStatus.choices,
+        default=PurchaseOrderDeliveryStatus.OPEN,
+    )
+    delivery_at = models.DateField(null=True, blank=True)
+    delivery_trace_number = models.CharField(max_length=64, null=True, blank=True)
+    vehicle_temperature = models.DecimalField(
+        max_digits=5, decimal_places=1, null=True, blank=True,
+    )
+    reject_delivery = models.BooleanField(default=False)
+    header_checks = models.JSONField(default=dict, blank=True)
+    header_template_id = models.BigIntegerField(null=True, blank=True)
+    header_template_version = models.IntegerField(null=True, blank=True)
+    checked_by_user_id = models.IntegerField(null=True, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+    qc_tl_checked_by_user_id = models.IntegerField(null=True, blank=True)
+    qc_tl_checked_at = models.DateTimeField(null=True, blank=True)
+    qc_tl_comment = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'po_purchase_order_delivery'
+        ordering = ['id']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        PurchaseOrderDeliveryStatus.OPEN,
+                        PurchaseOrderDeliveryStatus.REJECTED,
+                        PurchaseOrderDeliveryStatus.RECEIVED,
+                    ],
+                ),
+                name='chk_po_delivery_status',
+            ),
+            models.UniqueConstraint(
+                fields=['purchase_order'],
+                condition=models.Q(status=PurchaseOrderDeliveryStatus.OPEN),
+                name='uniq_po_one_open_delivery',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['purchase_order', 'status'],
+                name='idx_po_delivery_po_status',
+            ),
+        ]
+
+    def __str__(self):
+        return f'po_delivery:{self.purchase_order_id}:{self.id}:{self.status}'
+
+
+class PurchaseOrderDeliveryLine(models.Model):
+    delivery = models.ForeignKey(
+        PurchaseOrderDelivery,
+        on_delete=models.CASCADE,
+        related_name='lines',
+    )
+    po_line = models.ForeignKey(
+        PurchaseOrderLine,
+        on_delete=models.CASCADE,
+        related_name='delivery_lines',
+    )
+    qty_received = models.DecimalField(
+        max_digits=16, decimal_places=6, default=Decimal('0'),
+    )
+    qty_rejected = models.DecimalField(
+        max_digits=16, decimal_places=6, default=Decimal('0'),
+    )
+    production_date = models.DateField(null=True, blank=True)
+    use_by = models.DateField(null=True, blank=True)
+    trace_number = models.CharField(max_length=64, null=True, blank=True)
+    product_temperature = models.DecimalField(
+        max_digits=5, decimal_places=1, null=True, blank=True,
+    )
+    line_checks = models.JSONField(default=dict, blank=True)
+    line_template_id = models.BigIntegerField(null=True, blank=True)
+    line_template_version = models.IntegerField(null=True, blank=True)
+    line_check_ok = models.BooleanField(default=False)
+    last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'po_purchase_order_delivery_line'
+        ordering = ['delivery_id', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['delivery', 'po_line'],
+                name='uniq_po_delivery_line',
+            ),
+        ]
+
+    def __str__(self):
+        return f'po_dline:{self.delivery_id}:{self.po_line_id}'
+
+
 class PurchaseOrderHistory(models.Model):
     purchase_order = models.ForeignKey(
         PurchaseOrder,
         on_delete=models.CASCADE,
+        related_name='history',
+    )
+    delivery = models.ForeignKey(
+        'PurchaseOrderDelivery',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='history',
     )
     event_type = models.CharField(
@@ -294,6 +413,13 @@ class GoodsInAttachment(models.Model):
     )
     history = models.ForeignKey(
         PurchaseOrderHistory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='attachments',
+    )
+    delivery = models.ForeignKey(
+        PurchaseOrderDelivery,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

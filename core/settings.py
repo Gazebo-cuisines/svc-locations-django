@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'planning',
     'purchasing',
     'users_rbac',
+    'hardware',
 ]
 
 MIDDLEWARE = [
@@ -128,4 +129,6 @@ CORS_ALLOW_HEADERS = (
     'x-csrftoken',
     'x-requested-with',
     'x-api-token',
+    'x-device-serial',
+    'x-device-nickname',
 )

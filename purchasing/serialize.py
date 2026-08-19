@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from locations.location_images import location_image_url
 from purchasing.models import (
     LineShortfallReason,
     PurchaseOrder,
@@ -41,12 +42,26 @@ def _qty_str(value) -> str | None:
 
 
 def rbac_names(user_ids: set[int | None]) -> dict[int, str]:
+    return {
+        uid: actor['name']
+        for uid, actor in rbac_actors(user_ids).items()
+    }
+
+
+def rbac_actors(user_ids: set[int | None]) -> dict[int, dict]:
     ids = {uid for uid in user_ids if uid is not None}
     if not ids:
         return {}
     return {
-        u.id: (u.display_name or u.username)
-        for u in RbacUser.objects.filter(pk__in=ids).only('id', 'display_name', 'username')
+        u.id: {
+            'user_id': u.id,
+            'sub': u.cognito_sub,
+            'name': u.display_name or u.username,
+            'email': u.email,
+        }
+        for u in RbacUser.objects.filter(pk__in=ids).only(
+            'id', 'display_name', 'username', 'email', 'cognito_sub',
+        )
     }
 
 
@@ -87,6 +102,7 @@ def line_dict(line: PurchaseOrderLine, qty_queued=None) -> dict:
 
 
 def po_list_dict(po: PurchaseOrder) -> dict:
+    image_url = location_image_url(po.supplier) if po.supplier_id else None
     return {
         'id': po.id,
         # Internal system number (PO{id}). Prefer sage_po_number on UI.
@@ -96,6 +112,10 @@ def po_list_dict(po: PurchaseOrder) -> dict:
         'status': po.status,
         'supplier_id': po.supplier_id,
         'supplier_name': po.supplier.name if po.supplier_id else None,
+        'supplier_image_url': image_url,
+        'image_url': image_url,
+        'image': image_url,
+        'logo': image_url,
         'ship_to_location_id': po.ship_to_location_id,
         'ship_to_location_name': (
             po.ship_to_location.name if po.ship_to_location_id else None

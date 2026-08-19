@@ -6,11 +6,11 @@ from django.utils import timezone
 from locations.models import Location, LocationStockProfile
 from purchasing.models import (
     PurchaseOrder,
-    PurchaseOrderHistory,
     PurchaseOrderHistoryEvent,
     PurchaseOrderStatus,
 )
 from purchasing.services.goods_in_form import resolve_goods_in_form
+from purchasing.services.timeline import actor_json, record_history
 from stock_ledger.models import StockLot
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util import services as stock_services
@@ -58,14 +58,12 @@ def _parse_decimal(value, field_name: str) -> Decimal:
 
 
 @transaction.atomic
-def release_from_quarantine(po_id: int, *, body: dict) -> dict:
+def release_from_quarantine(po_id: int, *, body: dict, actor=None) -> dict:
     try:
         po = PurchaseOrder.objects.select_for_update().get(pk=po_id)
     except PurchaseOrder.DoesNotExist as exc:
         raise ReleaseError('Purchase order not found.') from exc
 
-    if po.reject_delivery:
-        raise ReleaseError('Cannot release stock for a rejected delivery.')
     if po.status not in (
         PurchaseOrderStatus.ORDERED,
         PurchaseOrderStatus.PARTIAL,
@@ -146,25 +144,30 @@ def release_from_quarantine(po_id: int, *, body: dict) -> dict:
             'to_location_id': to_location_id,
         })
 
-    actor = body.get('actor_user_id') or body.get('checked_by_user_id')
-    if actor not in (None, ''):
+    actor_user_id = body.get('actor_user_id') or body.get('checked_by_user_id')
+    if actor_user_id not in (None, ''):
         try:
-            actor = int(actor)
+            actor_user_id = int(actor_user_id)
         except (TypeError, ValueError):
-            actor = None
+            actor_user_id = None
     else:
-        actor = None
+        actor_user_id = None
 
-    PurchaseOrderHistory.objects.create(
-        purchase_order=po,
+    record_history(
+        po=po,
         event_type=PurchaseOrderHistoryEvent.NOTE,
         remarks=body.get('remarks') or 'QA release from quarantine',
-        payload={
+        before={
+            'from_location_id': from_location_id,
+            'to_location_id': to_location_id,
+            'releases': [],
+        },
+        after={
             'from_location_id': from_location_id,
             'to_location_id': to_location_id,
             'releases': results,
         },
-        actor_user_id=actor,
+        actor=actor or actor_json(user_id=actor_user_id),
     )
 
     form = resolve_goods_in_form(po.id)

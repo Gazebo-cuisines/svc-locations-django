@@ -274,6 +274,7 @@ def _insert_entry(
     counterparty_location_id: int | None = None,
     transfer_group_id: str | None = None,
     reverses_entry: StockEntry | None = None,
+    source_entry: StockEntry | None = None,
     override_reason: str | None = None,
     authorised_by_user_id: int | None = None,
     source_document_type: str | None = None,
@@ -286,6 +287,7 @@ def _insert_entry(
     lan_username: str | None = None,
     source_workstation: str | None = None,
     source_workstation_ip: str | None = None,
+    device_serial: str | None = None,
     remarks: str | None = None,
     project_balance: bool = True,
     mass_factor: Decimal | None = None,
@@ -331,6 +333,7 @@ def _insert_entry(
                 effective_at=effective_at,
                 recorded_at=timezone.now(),
                 reverses_entry=reverses_entry,
+                source_entry=source_entry,
                 override_reason=override_reason,
                 authorised_by_user_id=authorised_by_user_id,
                 source_document_type=source_document_type,
@@ -343,6 +346,7 @@ def _insert_entry(
                 lan_username=lan_username,
                 source_workstation=source_workstation,
                 source_workstation_ip=source_workstation_ip,
+                device_serial=device_serial,
                 remarks=remarks,
                 # Overwritten by the stock_entry_bi trigger. Derived from the
                 # idempotency key so the unique column never collides.
@@ -524,6 +528,7 @@ def transfer(
     effective_at=None,
     unit_moves: list | None = None,
     defer_balance: bool = False,
+    source_entry: StockEntry | None = None,
     **kwargs,
 ) -> tuple[StockEntry, StockEntry]:
     if quantity <= 0:
@@ -571,6 +576,9 @@ def transfer(
             quantity=-quantity,
             unit_id=unit_id,
             effective_at=effective_at,
+            # Sticker belongs to the outbound leg only; the inbound leg is new
+            # stock at the destination.
+            source_entry=source_entry,
             **insert_kw,
         )
         in_entry = _insert_entry(
