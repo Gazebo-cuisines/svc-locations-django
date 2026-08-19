@@ -1,6 +1,7 @@
 from decimal import Decimal
 import time
 from datetime import date
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import jwt
@@ -8,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import TestCase
+from PIL import Image
 
 from locations.models import Location
 from product.models import Category, Product, ProductAudit, ProductClass, ProductImage, Range, Unit
@@ -734,8 +736,10 @@ class RecipeAttachmentTests(RecipeAuthMixin, TestCase):
         self._recipe_auth()
 
     def _jpeg(self):
+        buf = BytesIO()
+        Image.new('RGB', (8, 8), (200, 40, 40)).save(buf, format='JPEG')
         return SimpleUploadedFile(
-            'hero.jpg', b'\xff\xd8\xfffakejpeg', content_type='image/jpeg',
+            'hero.jpg', buf.getvalue(), content_type='image/jpeg',
         )
 
     def _s3(self, s3_factory):

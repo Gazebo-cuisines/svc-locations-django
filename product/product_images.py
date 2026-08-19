@@ -6,8 +6,9 @@ from botocore.exceptions import ClientError
 from django.conf import settings
 from django.db import DatabaseError, transaction
 
+from core.images import prepare_webp, s3_image_args
 from core.s3 import s3_client as _s3_client
-from product.category_images import PRESIGN_SECONDS, _prepare_category_image
+from product.category_images import PRESIGN_SECONDS
 from product.models import ProductImage
 
 PREFIX = 'Product'
@@ -73,17 +74,11 @@ def upload_product_image(
     is_main: bool = False,
     sort_order: int = 0,
 ) -> dict:
-    body, content_type, ext = _prepare_category_image(uploaded_file)
-    key = f'{PREFIX}/{product.id}/image-{uuid.uuid4().hex}.{ext}'
+    body, meta = prepare_webp(uploaded_file)
+    key = f'{PREFIX}/{product.id}/image-{uuid.uuid4().hex}.webp'
     client = _s3_client()
     try:
-        client.put_object(
-            Bucket=_bucket(),
-            Key=key,
-            Body=body,
-            ContentType=content_type,
-            ServerSideEncryption='AES256',
-        )
+        client.put_object(Bucket=_bucket(), Key=key, **s3_image_args(body, meta))
     except ClientError as exc:
         raise ValueError("We couldn't save that image. Please try again.") from exc
 
