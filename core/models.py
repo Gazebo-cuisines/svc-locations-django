@@ -45,3 +45,17 @@ class ErrorTicket(models.Model):
 
     def __str__(self):
         return f'{self.status}:{self.fingerprint}'
+
+
+class AppVersion(models.Model):
+    platform = models.CharField(max_length=16, unique=True)
+    min_version = models.CharField(max_length=32)
+    latest_version = models.CharField(max_length=32, blank=True, default='')
+    message = models.CharField(max_length=256, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'app_version'
+
+    def __str__(self):
+        return f'{self.platform}:{self.min_version}'

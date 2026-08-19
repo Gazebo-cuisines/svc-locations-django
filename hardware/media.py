@@ -3,9 +3,9 @@
 import uuid
 
 from botocore.exceptions import ClientError
-from django.conf import settings
 
-from core.s3 import s3_client as _s3_client
+from core.images import prepare_webp, prepare_webp_bytes, s3_image_args
+from core.s3 import media_bucket, presigned_get, s3_client as _s3_client
 from hardware.models import HardwareDevice, HardwareDevicePost
 from users_rbac.photos import photo_url
 
@@ -24,20 +24,13 @@ PREFIX = 'Hardware'
 
 
 def _bucket() -> str:
-    return getattr(settings, 'MEDIA_S3_BUCKET', None) or 'gazebo-media-files'
+    return media_bucket()
 
 
 def media_url(row: HardwareDevicePost | None, *, expires_in: int = PRESIGN_SECONDS) -> str | None:
     if row is None or not row.media_key:
         return None
-    try:
-        return _s3_client().generate_presigned_url(
-            'get_object',
-            Params={'Bucket': _bucket(), 'Key': row.media_key},
-            ExpiresIn=expires_in,
-        )
-    except Exception:
-        return None
+    return presigned_get(row.media_key, expires_in=expires_in)
 
 
 def post_dict(row: HardwareDevicePost) -> dict:
@@ -53,6 +46,7 @@ def post_dict(row: HardwareDevicePost) -> dict:
         'media_url': media_url(row),
         'content_type': row.content_type,
         'kind': kind,
+        'metadata': row.metadata_json,
         'user_id': row.user_id,
         'username': user.username if user else None,
         'display_name': user.display_name if user else None,
@@ -69,15 +63,21 @@ def upload_post(device: HardwareDevice, uploaded_file, *, user, caption: str = '
     size = getattr(uploaded_file, 'size', None)
     if size is not None and size > MAX_BYTES:
         raise ValueError('File must be 20 MB or smaller.')
+    meta = None
+    if content_type.startswith('image/'):
+        body, meta = prepare_webp(uploaded_file, max_upload=MAX_BYTES)
+        content_type = 'image/webp'
+        ext = 'webp'
+        put = s3_image_args(body, meta)
+    else:
+        put = {
+            'Body': uploaded_file.read(),
+            'ContentType': content_type,
+            'ServerSideEncryption': 'AES256',
+        }
     key = f'{PREFIX}/{device.code}/post-{uuid.uuid4().hex}.{ext}'
     try:
-        _s3_client().put_object(
-            Bucket=_bucket(),
-            Key=key,
-            Body=uploaded_file.read(),
-            ContentType=content_type,
-            ServerSideEncryption='AES256',
-        )
+        _s3_client().put_object(Bucket=_bucket(), Key=key, **put)
     except ClientError as exc:
         raise ValueError("We couldn't save that file. Please try again.") from exc
     return HardwareDevicePost.objects.create(
@@ -86,7 +86,36 @@ def upload_post(device: HardwareDevice, uploaded_file, *, user, caption: str = '
         caption=(caption or '')[:512],
         media_key=key,
         content_type=content_type,
+        metadata_json=meta,
     )
+
+
+def recompress_post(row: HardwareDevicePost) -> bool:
+    """Rewrite a JPEG/PNG feed object as WebP. No-op for video or already-webp."""
+    if not row.media_key or (row.content_type or '').startswith('video/'):
+        return False
+    if row.media_key.endswith('.webp') and (row.content_type or '') == 'image/webp':
+        return False
+    client = _s3_client()
+    bucket = _bucket()
+    try:
+        raw = client.get_object(Bucket=bucket, Key=row.media_key)['Body'].read()
+    except ClientError:
+        return False
+    body, meta = prepare_webp_bytes(raw, content_type=row.content_type or '')
+    new_key = f'{PREFIX}/{row.device.code}/post-{uuid.uuid4().hex}.webp'
+    client.put_object(Bucket=bucket, Key=new_key, **s3_image_args(body, meta))
+    old_key = row.media_key
+    row.media_key = new_key
+    row.content_type = 'image/webp'
+    row.metadata_json = meta
+    row.save(update_fields=['media_key', 'content_type', 'metadata_json'])
+    if old_key != new_key:
+        try:
+            client.delete_object(Bucket=bucket, Key=old_key)
+        except ClientError:
+            pass
+    return True
 
 
 def delete_post(row: HardwareDevicePost) -> None:

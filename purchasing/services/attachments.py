@@ -6,6 +6,7 @@ from botocore.exceptions import ClientError
 from django.conf import settings
 from django.db import transaction
 
+from core.images import prepare_webp, s3_image_args
 from core.s3 import s3_client as _s3_client
 from purchasing.models import (
     GoodsInAttachment,
@@ -200,13 +201,22 @@ def upload_attachment(
     client = _s3_client()
     bucket = _bucket()
     try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=uploaded_file.read(),
-            ContentType=content_type,
-            ServerSideEncryption='AES256',
-        )
+        if content_type.startswith('image/'):
+            try:
+                body, _meta = prepare_webp(uploaded_file, max_upload=MAX_BYTES)
+            except ValueError as exc:
+                raise AttachmentError(str(exc)) from exc
+            content_type = 'image/webp'
+            key = f'{PREFIX}/{po.id}/{kind}-{uuid.uuid4().hex}.webp'
+            client.put_object(Bucket=bucket, Key=key, **s3_image_args(body, _meta))
+        else:
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=uploaded_file.read(),
+                ContentType=content_type,
+                ServerSideEncryption='AES256',
+            )
     except ClientError as exc:
         raise AttachmentError("We couldn't save that file. Please try again.") from exc
 

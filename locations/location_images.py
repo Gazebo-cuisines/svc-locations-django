@@ -5,6 +5,7 @@ import uuid
 from botocore.exceptions import ClientError
 from django.conf import settings
 
+from core.images import prepare_webp, s3_image_args
 from core.s3 import s3_client as _s3_client
 from locations.models import Location
 
@@ -53,17 +54,12 @@ def upload_location_image(location: Location, uploaded_file) -> str:
     if size is not None and size > MAX_BYTES:
         raise ValueError('Image must be 2 MB or smaller.')
 
-    key = f'{PREFIX}/{location.id}/image-{uuid.uuid4().hex}.{ext}'
+    body, meta = prepare_webp(uploaded_file, max_upload=MAX_BYTES)
+    key = f'{PREFIX}/{location.id}/image-{uuid.uuid4().hex}.webp'
     client = _s3_client()
     bucket = _bucket()
     try:
-        client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=uploaded_file.read(),
-            ContentType=content_type,
-            ServerSideEncryption='AES256',
-        )
+        client.put_object(Bucket=bucket, Key=key, **s3_image_args(body, meta))
     except ClientError as exc:
         raise ValueError("We couldn't save that image. Please try again.") from exc
 

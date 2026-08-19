@@ -1,6 +1,7 @@
 import json
 
 from django.db.models import Count, Q
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
@@ -11,6 +12,7 @@ from hardware.models import (
     HardwareDevice,
     HardwareDeviceAction,
     HardwareDeviceEvent,
+    HardwareDeviceMessage,
     HardwareDevicePost,
     HardwareDeviceStatus,
 )
@@ -18,8 +20,12 @@ from hardware.services import (
     device_dict,
     event_dict,
     get_device,
+    message_dict,
     next_code,
     normalise_code,
+    pull_pending_messages,
+    serial_from_request,
+    touch_from_request,
 )
 from users_rbac.auth import attach_user, require_admin
 from users_rbac.grants import is_admin_user
@@ -352,4 +358,87 @@ def device_post_detail(request, ident: str, post_id: int):
         return error_response('You do not have permission to do that.', status_code=403)
     delete_post(row)
     return success_response('Device post deleted.', data={'id': post_id})
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def heartbeat(request):
+    denied = attach_user(request)
+    if denied:
+        return denied
+    body = _parse_body(request)
+    if body is None:
+        if request.body:
+            return error_response('Invalid request body.', status_code=400)
+        body = {}
+    if not serial_from_request(request, body):
+        return error_response('X-Device-Serial is required.', status_code=400)
+    device = touch_from_request(
+        request,
+        action=HardwareDeviceAction.HEARTBEAT,
+        body=body,
+        record_event=False,
+    )
+    device = _device_qs().get(pk=device.pk)
+    data = device_dict(device)
+    data['messages'] = pull_pending_messages(device)
+    return success_response('Heartbeat recorded.', data=data)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def device_messages(request, ident: str):
+    device = get_device(ident)
+    if device is None:
+        return error_response("We couldn't find that device.", status_code=404)
+    denied = attach_user(request)
+    if denied:
+        return denied
+    denied = require_any_admin(request)
+    if denied:
+        return denied
+    if request.method == 'GET':
+        qs = HardwareDeviceMessage.objects.filter(device=device).select_related(
+            'device', 'created_by',
+        )
+        return success_response(
+            'Device messages fetched.',
+            data=[message_dict(row) for row in qs],
+        )
+    body = _parse_body(request)
+    if body is None:
+        return error_response('Invalid request body.', status_code=400)
+    title = str(body.get('title') or '').strip()
+    if not title:
+        return error_response('title is required.', status_code=400)
+    row = HardwareDeviceMessage.objects.create(
+        device=device,
+        created_by=request.rbac_user,
+        title=title[:128],
+        body=str(body.get('body') or '')[:512],
+    )
+    row = HardwareDeviceMessage.objects.select_related('device', 'created_by').get(pk=row.pk)
+    return success_response('Message sent.', data=message_dict(row), status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def message_ack(request, message_id: int):
+    denied = attach_user(request)
+    if denied:
+        return denied
+    serial = serial_from_request(request)
+    if not serial:
+        return error_response('X-Device-Serial is required.', status_code=400)
+    row = (
+        HardwareDeviceMessage.objects.select_related('device', 'created_by')
+        .filter(pk=message_id, device__serial=serial)
+        .first()
+    )
+    if row is None:
+        return error_response("We couldn't find that message.", status_code=404)
+    if row.acked_at is None:
+        row.acked_at = timezone.now()
+        row.save(update_fields=['acked_at'])
+    return success_response('Message acknowledged.', data=message_dict(row))
 
