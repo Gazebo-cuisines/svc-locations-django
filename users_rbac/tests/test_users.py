@@ -6,7 +6,15 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.test import Client, TestCase
 
-from users_rbac.models import AdminAccess, AdminArea, Department, RbacUser, UserDepartment
+from users_rbac.models import (
+    AdminAccess,
+    AdminArea,
+    Department,
+    RbacUser,
+    UserDepartment,
+    WarehouseAccess,
+    WarehouseUnit,
+)
 
 POOL = 'eu-west-2_testpool'
 CLIENT_ID = 'client-id'
@@ -76,6 +84,30 @@ class UserApiTests(TestCase):
         self.assertEqual(data['username'], 'amit01')
         self.assertEqual(data['departments'], ['production'])
         self.assertFalse(data['is_admin'])
+
+    def test_me_warehouse_includes_location_id(self):
+        UserDepartment.objects.filter(user=self.floor).delete()
+        UserDepartment.objects.create(user=self.floor, department=Department.WAREHOUSE)
+        WarehouseAccess.objects.create(
+            user=self.floor,
+            unit=WarehouseUnit.UNIT_2,
+            can_goods_in=True,
+            goods_in_previous=True,
+            goods_in_today=True,
+        )
+        response = self.client.get('/auth/me/', HTTP_AUTHORIZATION=self.floor_auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()['data']['warehouse'],
+            [
+                {
+                    'unit': 'unit_2',
+                    'actions': ['goods_in'],
+                    'goods_in_periods': ['previous', 'today'],
+                    'location_id': 8,
+                }
+            ],
+        )
 
     def test_floor_cannot_create_user(self):
         response = self.client.post(

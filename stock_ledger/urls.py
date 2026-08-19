@@ -34,6 +34,7 @@ urlpatterns = [
     path('count-adjustment/', views.count_adjustment_api, name='stock-count-adjustment'),
     path('reversal/', views.reversal_api, name='stock-reversal'),
     path('scan/goods-out/', views.scan_goods_out_api, name='stock-scan-goods-out'),
+    
     path('scan/', views.scan_resolve_api, name='stock-scan'),
     path('recall/', views.recall_api, name='stock-recall'),
     path('products/<int:product_id>/genealogy/', views.product_genealogy_api, name='stock-product-genealogy'),
