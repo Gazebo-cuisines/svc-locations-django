@@ -1,7 +1,9 @@
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase
+from PIL import Image
 
 from users_rbac.models import AdminAccess, AdminArea, Department, RbacUser, UserDepartment
 from users_rbac.tests.test_users import ENV, _token, _rsa_keypair
@@ -37,10 +39,13 @@ class UserPhotoTests(TestCase):
         self.floor_auth = f'Bearer {_token(self.private_key, sub="sub-amit")}'
 
     def _jpeg(self, name='face.jpg'):
-        return SimpleUploadedFile(name, b'\xff\xd8\xfffakejpeg', content_type='image/jpeg')
+        buf = BytesIO()
+        Image.new('RGB', (8, 8), (20, 80, 180)).save(buf, format='JPEG')
+        return SimpleUploadedFile(name, buf.getvalue(), content_type='image/jpeg')
 
+    @patch('users_rbac.photos.presigned_get', return_value='https://s3.example/signed')
     @patch('users_rbac.photos._s3_client')
-    def test_me_photo_upload(self, s3_factory):
+    def test_me_photo_upload(self, s3_factory, _presign):
         s3 = MagicMock()
         s3.generate_presigned_url.return_value = 'https://s3.example/signed'
         s3_factory.return_value = s3
@@ -53,15 +58,16 @@ class UserPhotoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.floor.refresh_from_db()
         self.assertTrue(self.floor.photo_key.startswith('User-profile/sub-amit/photo-'))
-        self.assertTrue(self.floor.photo_key.endswith('.jpg'))
+        self.assertTrue(self.floor.photo_key.endswith('.webp'))
         s3.put_object.assert_called_once()
         put_kwargs = s3.put_object.call_args.kwargs
         self.assertEqual(put_kwargs['Bucket'], 'gazebo-media-files')
         self.assertEqual(put_kwargs['ServerSideEncryption'], 'AES256')
         self.assertEqual(response.json()['data']['photo_url'], 'https://s3.example/signed')
 
+    @patch('users_rbac.photos.presigned_get', return_value='https://s3.example/signed')
     @patch('users_rbac.photos._s3_client')
-    def test_admin_can_set_user_photo(self, s3_factory):
+    def test_admin_can_set_user_photo(self, s3_factory, _presign):
         s3 = MagicMock()
         s3.generate_presigned_url.return_value = 'https://s3.example/signed'
         s3_factory.return_value = s3

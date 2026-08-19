@@ -2,7 +2,6 @@ On every new stock movement (stock_entry)
 stock_entry_bi (before insert)
 Runs before the row is saved:
 
-Period check — period_id must be an open period. Closed period → reject.
 Future-date check — effective_at can’t be more than ~1 minute in the future → reject.
 Lock the chain head — locks stock_chain_head (id=1) so two inserts can’t race.
 Fill audit fields — sets recorded_at to now, copies current head hash into prev_hash.

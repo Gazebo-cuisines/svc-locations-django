@@ -1,6 +1,6 @@
 """
 Prove each verifier fails on deliberately corrupted state, then restore.
-Requires an open period + at least one location/unit; creates ephemeral product/lot/entries.
+Requires at least one location/unit; creates ephemeral product/lot/entries.
 """
 from __future__ import annotations
 
@@ -27,8 +27,6 @@ from stock_ledger.models import (
     StockEntryType,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
     StockReservation,
     StockReservationStatus,
 )
@@ -49,12 +47,6 @@ class Command(BaseCommand):
         location = Location.objects.order_by('id').first()
         if unit is None or location is None:
             raise CommandError('Need product_unit and loc_location rows')
-
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
-        )
 
         product = self._ensure_product(unit)
         lot = StockLot.objects.create(

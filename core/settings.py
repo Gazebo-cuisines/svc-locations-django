@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'planning',
     'purchasing',
     'users_rbac',
+    'hardware',
 ]
 
 MIDDLEWARE = [
@@ -116,6 +117,13 @@ CSRF_TRUSTED_ORIGINS = [
 
 AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
 MEDIA_S3_BUCKET = os.getenv('MEDIA_S3_BUCKET', 'gazebo-media-files')
+APP_MIN_VERSION_ANDROID = os.getenv('APP_MIN_VERSION_ANDROID', '1.0.1')
+APP_LATEST_VERSION_ANDROID = os.getenv('APP_LATEST_VERSION_ANDROID', '') or APP_MIN_VERSION_ANDROID
+APP_UPDATE_MESSAGE = os.getenv(
+    'APP_UPDATE_MESSAGE',
+    'Hand this device to IT to install the update.',
+)
+APP_VERSION_API_TOKEN = os.getenv('APP_VERSION_API_TOKEN', '')
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 AWS_PROFILE = os.getenv('AWS_PROFILE')
@@ -128,4 +136,7 @@ CORS_ALLOW_HEADERS = (
     'x-csrftoken',
     'x-requested-with',
     'x-api-token',
+    'x-device-serial',
+    'x-device-nickname',
+    'x-device-ip',
 )

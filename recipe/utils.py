@@ -1,7 +1,9 @@
 from django.db import transaction
 from django.utils import timezone
 
+from product.category_images import category_image_url
 from product.models import Product, ProductFlags
+from product.product_images import product_photos
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
 
 MAX_TREE_DEPTH = 20
@@ -140,7 +142,16 @@ def active_or_latest_version(recipe: Recipe) -> RecipeVersion | None:
     return max(versions, key=lambda v: v.version_number) if versions else None
 
 
-def _product_node(product: Product, version: RecipeVersion | None) -> dict:
+def _product_node(
+    product: Product,
+    version: RecipeVersion | None,
+    image_urls: dict[int, str | None],
+) -> dict:
+    category = product.category if product.category_id else None
+    if category is not None and category.id not in image_urls:
+        image_urls[category.id] = category_image_url(category)
+    category_url = image_urls.get(category.id) if category is not None else None
+    main_url, images = product_photos(product)
     return {
         'product_id': product.id,
         'name': product.name,
@@ -155,6 +166,11 @@ def _product_node(product: Product, version: RecipeVersion | None) -> dict:
             if product.destination_container_id
             else None
         ),
+        'category_id': category.id if category is not None else None,
+        'category_name': category.name if category is not None else None,
+        'category_image_url': category_url,
+        'image_url': main_url or category_url,
+        'images': images,
         'has_recipe': version is not None,
         'recipe_id': version.recipe_id if version else None,
         'version_id': version.id if version else None,
@@ -169,6 +185,7 @@ def _walk_product(
     depth: int,
     nodes_by_id: dict[int, dict],
     edges: list[dict],
+    image_urls: dict[int, str | None],
 ) -> dict | None:
     if depth > MAX_TREE_DEPTH or product_id in path:
         return None
@@ -177,6 +194,7 @@ def _walk_product(
         product = Product.objects.select_related(
             'source_container',
             'destination_container',
+            'category',
             'recipe',
         ).prefetch_related(
             'recipe__versions__components__unit',
@@ -192,7 +210,7 @@ def _walk_product(
         pass
     version = active_or_latest_version(recipe) if recipe is not None else None
     if product_id not in nodes_by_id:
-        nodes_by_id[product_id] = _product_node(product, version)
+        nodes_by_id[product_id] = _product_node(product, version, image_urls)
 
     children = []
     if version is None:
@@ -215,6 +233,7 @@ def _walk_product(
             depth=depth + 1,
             nodes_by_id=nodes_by_id,
             edges=edges,
+            image_urls=image_urls,
         )
         if child_tree is not None:
             children.append(child_tree)
@@ -225,8 +244,9 @@ def _walk_product(
                 child = Product.objects.select_related(
                     'source_container',
                     'destination_container',
+                    'category',
                 ).get(pk=child_id)
-                stub = _product_node(child, None)
+                stub = _product_node(child, None, image_urls)
                 nodes_by_id[child_id] = stub
                 children.append({**stub, 'children': [], 'cycle': True})
             except Product.DoesNotExist:
@@ -242,12 +262,14 @@ def build_recipe_tree(product_id: int) -> dict:
     """
     nodes_by_id: dict[int, dict] = {}
     edges: list[dict] = []
+    image_urls: dict[int, str | None] = {}
     tree = _walk_product(
         product_id,
         path=set(),
         depth=0,
         nodes_by_id=nodes_by_id,
         edges=edges,
+        image_urls=image_urls,
     )
     if tree is None:
         raise Product.DoesNotExist(f'product_id={product_id} not found.')

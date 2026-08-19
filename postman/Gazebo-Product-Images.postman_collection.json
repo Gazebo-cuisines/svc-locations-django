@@ -1,0 +1,172 @@
+{
+  "info": {
+    "name": "Gazebo - Product Images",
+    "description": "# Gazebo Product Images\n\nMultiple photos per catalog item, with **one main photo**. Floor UI can scroll `images[]`; recipe tree uses `image_url` (main, else category photo).\n\n**Table:** `product_image` (S3 prefix `Product/{product_id}/`)\n\n## Routes\n`GET|POST /product/:id/images/`, `GET|PATCH|DELETE /product/images/:id/`\n\n## Auth\n1. Run **Login** in Gazebo - RBAC Users (`POST /auth/login/`)\n2. Copy `data.id_token` into `{{id_token}}`\n3. All routes need `Authorization: Bearer {{id_token}}`\n\n## Envelope\nSuccess: `{ \"status\": \"success\", \"message\": \"...\", \"data\": ... }`\nError: `{ \"status\": \"error\", \"message\": \"...\", \"data\": null }`\n\n## Vars\n`{{base_url}}`, `{{id_token}}`, `{{product_id}}`, `{{image_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "id_token",
+      "value": ""
+    },
+    {
+      "key": "product_id",
+      "value": "1"
+    },
+    {
+      "key": "image_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Product Images",
+      "description": "CRUD for item photos. First upload is main. Set another as main with PATCH. Deleting the main photo promotes the next by `sort_order`.\n\n**Table:** `product_image`\n\n**Vars:** `{{product_id}}`, `{{image_id}}`",
+      "item": [
+        {
+          "name": "List product images",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/images/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "images", ""]
+            },
+            "description": "### List product images\n\n`GET /product/:id/images/`\n\nReturns every photo for this item, main first, then `sort_order`. Use this list for the scrolling gallery. `url` is a 1-hour S3 presign.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | Product PK |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Product images fetched successfully.`\n\n`data.count` and `data.results[]`:\n\n| Field | Meaning |\n|---|---|\n| `id` | Image PK |\n| `product_id` | Product PK |\n| `is_main` | True for the hero photo |\n| `sort_order` | Gallery order among non-main (and after main) |\n| `original_filename` | Upload name |\n| `url` | Presigned GET URL, or null |\n| `created_at` | ISO timestamp |\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | List returned (empty `results` if none) |\n| 404 | Product not found or inactive |\n| 401 | Not signed in |"
+          }
+        },
+        {
+          "name": "Upload product image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.status === 'success' && response.data) {",
+                  "    pm.collectionVariables.set('image_id', String(response.data.id || ''));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "JPEG, PNG, or WebP. Under 20 MB."
+                },
+                {
+                  "key": "is_main",
+                  "value": "false",
+                  "type": "text",
+                  "description": "true makes this the hero photo. First photo is always main."
+                },
+                {
+                  "key": "sort_order",
+                  "value": "0",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/product/{{product_id}}/images/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "{{product_id}}", "images", ""]
+            },
+            "description": "### Upload product image\n\n`POST /product/:id/images/`\n\nAdds a photo to the item. JPEG / PNG / WebP. Stored privately in S3 under `Product/{id}/`. The first photo on an item is always main. Send `is_main=true` to replace the current hero.\n\nExample: potato dice raw material — first shot is the bag photo (`is_main` true by default); extra angle shots stay in the scroller.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | Product PK |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n`multipart/form-data`:\n\n| Field | Required | Meaning |\n|---|---|---|\n| `file` | yes | Image file (`file` or `image`) |\n| `is_main` | no | `true` / `false`. Default false. Forced true if this is the first photo |\n| `sort_order` | no | Integer gallery order. Default 0 |\n\n### Response body\n\n`message`: `Product image uploaded successfully.`\n\n`data`: one image object (`id`, `product_id`, `is_main`, `sort_order`, `original_filename`, `url`, `created_at`). Test script saves `id` to `{{image_id}}`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 201 | Photo stored |\n| 400 | Missing file, unsupported type, too large, or bad `sort_order` / `is_main` |\n| 404 | Product not found or inactive |\n| 401 | Not signed in |"
+          }
+        },
+        {
+          "name": "Get product image",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/product/images/{{image_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "images", "{{image_id}}", ""]
+            },
+            "description": "### Get product image\n\n`GET /product/images/:id/`\n\nOne photo row plus a fresh presigned `url`.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `product_image` PK |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Product image fetched successfully.`\n\n`data`: `id`, `product_id`, `is_main`, `sort_order`, `original_filename`, `url`, `created_at`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Found |\n| 404 | Image missing, or parent product inactive |\n| 401 | Not signed in |"
+          }
+        },
+        {
+          "name": "Update product image",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_main\": true,\n  \"sort_order\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/product/images/{{image_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "images", "{{image_id}}", ""]
+            },
+            "description": "### Update product image\n\n`PATCH /product/images/:id/`\n\nSet this photo as the hero (`is_main: true`) and/or change gallery `sort_order`. Setting main unsets the previous main. You cannot set `is_main: false` on the current hero — PATCH another photo to `is_main: true` instead.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `product_image` PK |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n| Field | Required | Meaning |\n|---|---|---|\n| `is_main` | no | `true` makes this the hero. `false` on the current hero is rejected |\n| `sort_order` | no | Integer gallery order |\n\n### Response body\n\n`message`: `Product image updated successfully.`\n\n`data`: the updated image object.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Updated |\n| 400 | Invalid JSON, bad `is_main`/`sort_order`, or attempted to clear the only main |\n| 404 | Image missing, or parent product inactive |\n| 401 | Not signed in |"
+          }
+        },
+        {
+          "name": "Delete product image",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{id_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/product/images/{{image_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["product", "images", "{{image_id}}", ""]
+            },
+            "description": "### Delete product image\n\n`DELETE /product/images/:id/`\n\nRemoves the photo and the S3 object. If it was main, the next remaining photo (`sort_order`, then `id`) becomes main.\n\n### Path parameters\n\n| Param | Required | Meaning |\n|---|---|---|\n| `id` | yes | `product_image` PK |\n\n### Query parameters\n\nNone.\n\n### Request body\n\n**None**.\n\n### Response body\n\n`message`: `Product image deleted successfully.`  \n`data`: `null`.\n\n### Status codes\n\n| Code | When |\n|---|---|\n| 200 | Deleted |\n| 404 | Image missing, or parent product inactive |\n| 401 | Not signed in |"
+          }
+        }
+      ]
+    }
+  ]
+}

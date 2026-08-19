@@ -23,14 +23,12 @@ from stock_ledger.models import (
     StockEntryType,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
     StockUnit,
     StockUnitPrintEvent,
     StockUnitPrintReason,
     StockUnitStatus,
 )
-from stock_ledger.util import services, stock_units
+from stock_ledger.util import entry_labels, entry_posting, services, stock_units
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.scan import parse_gs1
 
@@ -54,11 +52,6 @@ class StockUnitTests(TestCase):
             label_mode=ProductLabelMode.PER_UNIT,
             source_container=self.wh,
             destination_container=self.kitchen,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.lot = StockLot.objects.create(
             product=self.product,
@@ -390,7 +383,7 @@ class StockUnitTests(TestCase):
         lookup = client.get(f'/stock/stock-units/{bags[0].unit_serial}/')
         detail = lookup.json().get('data') or lookup.json()
         self.assertEqual(detail['location']['id'], self.kitchen.id)
-        self.assertEqual(detail['quantity_remaining'], '20.000000')
+        self.assertEqual(Decimal(detail['quantity_remaining']), Decimal('20'))
 
 
 class ProductBarcodeTests(TestCase):
@@ -408,11 +401,6 @@ class ProductBarcodeTests(TestCase):
         )
         LocationRoleAssignment.objects.create(
             location=self.supplier, role=LocationRole.SUPPLIER,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.today = timezone.localdate()
         self.product = self._product(ProductLabelMode.PRODUCT)
@@ -625,6 +613,8 @@ class ProductBarcodeTests(TestCase):
         data = resp.json()['data']
         self.assertEqual(data['lot_id'], later.id)
         self.assertEqual(data['quantity'], '20')
+        self.assertEqual(data['lot_quantity'], '20')
+        self.assertEqual(data['entry_code'], f'E{later_entry.id}')
         self.assertFalse(data['fifo_ok'])
         self.assertEqual(data['recommended_lot_id'], soon.id)
         self.assertEqual(data['recommended_trace'], soon.trace_number)
@@ -633,6 +623,151 @@ class ProductBarcodeTests(TestCase):
             f'/stock/scan/goods-out/?code=P{pid}&location_id={loc}',
         )
         self.assertEqual(product_only.status_code, 400)
+
+    def test_scan_goods_out_quantity_is_this_sticker_not_lot(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag_a = self._receipt(lot, '20')
+        self._receipt(lot, '20')
+
+        resp = self.client.get(
+            f'/stock/scan/goods-out/?code=E{bag_a.id}&location_id={self.wh.id}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['quantity'], '20')
+        self.assertEqual(data['lot_quantity'], '40')
+        self.assertEqual(data['entry_code'], f'E{bag_a.id}')
+
+    def _scan_out(self, entry, *, location=None):
+        loc_id = (location or self.wh).id
+        resp = self.client.get(
+            f'/stock/scan/goods-out/?code=E{entry.id}&location_id={loc_id}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return resp.json()['data']
+
+    def _transfer(self, lot, quantity, *, sticker=None, sender=None, **extra):
+        body = {
+            'idempotency_key': f'bc-draw-{uuid4()}',
+            'lot_id': lot.id,
+            'from_location_id': (sender or self.wh).id,
+            'to_location_id': self.kitchen.id,
+            'quantity': quantity,
+            'unit_id': self.unit.id,
+            **extra,
+        }
+        if sticker is not None:
+            body['source_entry_code'] = f'E{sticker.id}'
+        return self.client.post(
+            '/stock/transfer/', data=body, content_type='application/json',
+        )
+
+    def test_sticker_draw_down_shows_on_rescan(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag_a = self._receipt(lot, '20')
+        bag_b = self._receipt(lot, '20')
+
+        before = self._scan_out(bag_a)
+        self.assertEqual(before['quantity'], '20')
+        self.assertEqual(before['sticker_initial'], '20')
+        self.assertEqual(before['lot_quantity'], '40')
+
+        resp = self._transfer(lot, '5', sticker=bag_a)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        moved = resp.json()['data']
+        self.assertEqual(moved['out']['source_entry_id'], bag_a.id)
+        self.assertEqual(moved['out']['source_entry_code'], f'E{bag_a.id}')
+        # Inbound leg is new stock at the destination, not a draw on the label.
+        self.assertIsNone(moved['in']['source_entry_id'])
+
+        after = self._scan_out(bag_a)
+        self.assertEqual(after['quantity'], '15')
+        self.assertEqual(after['sticker_initial'], '20')
+        self.assertEqual(after['lot_quantity'], '35')
+
+        sibling = self._scan_out(bag_b)
+        self.assertEqual(sibling['quantity'], '20')
+        self.assertEqual(sibling['lot_quantity'], '35')
+
+    def test_sticker_draw_rejects_over_pick_and_mismatch(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag_a = self._receipt(lot, '20')
+        other_lot = self._lot(use_by=self.today + timedelta(days=20))
+        self._receipt(other_lot, '10')
+
+        self.assertEqual(self._transfer(lot, '5', sticker=bag_a).status_code, 201)
+
+        over = self._transfer(lot, '16', sticker=bag_a)
+        self.assertEqual(over.status_code, 400, over.content)
+        self.assertIn(f'E{bag_a.id}', over.json()['message'])
+        self.assertIn('15', over.json()['message'])
+
+        wrong_lot = self._transfer(other_lot, '5', sticker=bag_a)
+        self.assertEqual(wrong_lot.status_code, 400, wrong_lot.content)
+        self.assertIn(other_lot.trace_number, wrong_lot.json()['message'])
+
+        wrong_place = self._transfer(lot, '5', sticker=bag_a, sender=self.kitchen)
+        self.assertEqual(wrong_place.status_code, 400, wrong_place.content)
+        self.assertIn(self.wh.name, wrong_place.json()['message'])
+
+        # Rejects changed nothing: still 15 left on the label.
+        self.assertEqual(self._scan_out(bag_a)['quantity'], '15')
+
+    def test_queued_draw_counts_before_it_posts(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag_a = self._receipt(lot, '20')
+
+        resp = self._transfer(
+            lot, '5', sticker=bag_a, queue_stock=True, lan_username='dave.k',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        out_id = resp.json()['data']['out']['id']
+
+        queued = self._scan_out(bag_a)
+        # Balance waits for the post, but the label is already committed.
+        self.assertEqual(queued['lot_quantity'], '20')
+        self.assertEqual(queued['quantity'], '15')
+        self.assertEqual(queued['queued_quantity'], '5')
+
+        self.assertEqual(len(queued['queued_draws']), 1)
+        draw = queued['queued_draws'][0]
+        self.assertEqual(draw['entry_id'], out_id)
+        self.assertEqual(draw['entry_code'], f'E{out_id}')
+        self.assertEqual(draw['quantity'], '5')
+        self.assertEqual(draw['to_location_name'], self.kitchen.name)
+        self.assertEqual(draw['queued_by'], 'dave.k')
+        self.assertIsNotNone(draw['queued_at'])
+        self.assertEqual(draw['label_status'], 'pending')
+        self.assertEqual(draw['blocked_by'], 'label_not_printed')
+        self.assertIn(f'E{out_id}', draw['next_step'])
+        self.assertEqual(draw['post_endpoint'], f'/stock/entries/{out_id}/post/')
+
+        # Once it posts, the balance catches up and nothing is pending.
+        entry_labels.mark_printed(entry_id=out_id)
+        entry_labels.verify_label(entry_id=out_id, code=f'E{out_id}')
+        entry_posting.post_entry(entry_id=out_id)
+
+        posted = self._scan_out(bag_a)
+        self.assertEqual(posted['quantity'], '15')
+        self.assertEqual(posted['lot_quantity'], '15')
+        self.assertEqual(posted['queued_quantity'], '0')
+        self.assertEqual(posted['queued_draws'], [])
+
+    def test_unlinked_transfer_clamps_sticker_to_lot_balance(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag_a = self._receipt(lot, '20')
+        bag_b = self._receipt(lot, '20')
+
+        resp = self._transfer(lot, '25')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertIsNone(resp.json()['data']['out']['source_entry_id'])
+
+        # 15 kg left on the lot, so neither label may promise its full 20.
+        for bag in (bag_a, bag_b):
+            data = self._scan_out(bag)
+            self.assertEqual(data['quantity'], '15')
+            self.assertEqual(data['sticker_initial'], '20')
+            self.assertEqual(data['lot_quantity'], '15')
 
     def test_scan_returns_fifo_batches_with_supplier_and_days_left(self):
         soon = self._lot(use_by=self.today + timedelta(days=3))

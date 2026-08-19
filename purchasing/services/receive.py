@@ -8,11 +8,17 @@ from locations.models import Location
 from purchasing.models import (
     LineShortfallReason,
     PurchaseOrder,
-    PurchaseOrderHistory,
+    PurchaseOrderDeliveryStatus,
     PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
     PurchaseOrderStatus,
     SHORTFALL_AWAIT_REASONS,
+)
+from purchasing.services.delivery import (
+    DeliveryError,
+    get_or_create_delivery_line,
+    resolve_delivery_for_receive,
+    sync_po_from_delivery,
 )
 from purchasing.services.po_qty import (
     queued_hold_for_line,
@@ -20,6 +26,7 @@ from purchasing.services.po_qty import (
 )
 from purchasing.serialize import _qty_str
 from purchasing.services.goods_in_form import resolve_goods_in_form
+from purchasing.services.timeline import actor_json, record_history
 from purchasing.services.release import is_quarantine_location
 from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util.conversions import StockValidationError
@@ -206,6 +213,7 @@ def receive_purchase_order(
     *,
     body: dict,
     audit: dict | None = None,
+    delivery_id: int | None = None,
 ) -> dict:
     audit = dict(audit or {})
     try:
@@ -217,8 +225,6 @@ def receive_purchase_order(
     except PurchaseOrder.DoesNotExist as exc:
         raise ReceiveError('Purchase order not found.') from exc
 
-    if po.reject_delivery:
-        raise ReceiveError('Cannot receive a rejected delivery.')
     if po.status not in (
         PurchaseOrderStatus.ORDERED,
         PurchaseOrderStatus.PARTIAL,
@@ -227,7 +233,13 @@ def receive_purchase_order(
             f'Receive only allowed when status is ordered or partial '
             f'(current={po.status}).',
         )
-    if po.checked_at is None:
+    try:
+        delivery = resolve_delivery_for_receive(po, delivery_id=delivery_id)
+    except DeliveryError as exc:
+        raise ReceiveError(str(exc)) from exc
+    if delivery.reject_delivery:
+        raise ReceiveError('Cannot receive a rejected delivery.')
+    if delivery.checked_at is None:
         raise ReceiveError('Complete header QC before receive.')
 
     location_id = body.get('location_id') or (
@@ -253,6 +265,7 @@ def receive_purchase_order(
         raise ReceiveError('lines must be a non-empty list.')
 
     results = []
+    did_receive = False
     for index, raw in enumerate(raw_lines, start=1):
         if not isinstance(raw, dict):
             raise ReceiveError(f'lines[{index}] must be an object.')
@@ -276,7 +289,8 @@ def receive_purchase_order(
                 f'lines[{index}].line_id={line_id} not found on this PO.',
             ) from exc
 
-        if not line.line_check_ok:
+        dline = get_or_create_delivery_line(delivery, line)
+        if not dline.line_check_ok:
             raise ReceiveError(
                 f'Line {line.line_no} has not passed QC (line_check_ok=false).',
             )
@@ -312,17 +326,18 @@ def receive_purchase_order(
 
         lot_body = raw.get('lot') if isinstance(raw.get('lot'), dict) else {}
         use_by = _optional_date(
-            lot_body.get('use_by') or line.use_by,
+            lot_body.get('use_by') or dline.use_by or line.use_by,
             f'lines[{index}].lot.use_by',
         )
         production_date = _optional_date(
-            lot_body.get('production_date') or line.production_date,
+            lot_body.get('production_date') or dline.production_date or line.production_date,
             f'lines[{index}].lot.production_date',
         )
         trace_number = (
             lot_body.get('trace_number')
+            or dline.trace_number
             or line.trace_number
-            or po.delivery_trace_number
+            or delivery.delivery_trace_number
         )
 
         try:
@@ -464,6 +479,14 @@ def receive_purchase_order(
 
         # Reused key: return existing stock, do not advance PO qty again.
         if prior_entry is None and last_entry is not None:
+            before_qty = {
+                'delivery_id': delivery.id,
+                'line_id': line.id,
+                'line_no': line.line_no,
+                'qty_received': _qty_str(line.qty_received),
+                'qty_rejected': _qty_str(line.qty_rejected),
+                'qty_balance': _qty_str(line.qty_balance),
+            }
             reject_qty = (
                 leftover
                 if shortfall_reason and shortfall_reason not in SHORTFALL_AWAIT_REASONS
@@ -502,10 +525,27 @@ def receive_purchase_order(
                     'updated_at',
                 ],
             )
+            dline.qty_received = (dline.qty_received + purchase_qty).quantize(
+                Decimal('0.000001'),
+            )
+            dline.qty_rejected = (dline.qty_rejected + reject_qty).quantize(
+                Decimal('0.000001'),
+            )
+            dline.last_receipt_entry_id = last_entry.id
+            dline.save(
+                update_fields=[
+                    'qty_received',
+                    'qty_rejected',
+                    'last_receipt_entry_id',
+                    'updated_at',
+                ],
+            )
+            did_receive = True
             if leftover > 0 and shortfall_reason:
                 needs_credit = shortfall_reason not in SHORTFALL_AWAIT_REASONS
-                PurchaseOrderHistory.objects.create(
-                    purchase_order=po,
+                record_history(
+                    po=po,
+                    delivery=delivery,
                     event_type=(
                         PurchaseOrderHistoryEvent.NON_CONFORMANCE
                         if needs_credit
@@ -520,7 +560,9 @@ def receive_purchase_order(
                             f'rest coming later'
                         )
                     ),
-                    payload={
+                    before=before_qty,
+                    after={
+                        'delivery_id': delivery.id,
                         'line_id': line.id,
                         'line_no': line.line_no,
                         'qty_received': str(purchase_qty),
@@ -530,7 +572,7 @@ def receive_purchase_order(
                         'needs_credit_note': needs_credit,
                         'remarks': raw.get('remarks'),
                     },
-                    actor_user_id=receipt_audit.get('actor_user_id'),
+                    actor=audit.get('actor') or actor_json(audit=receipt_audit),
                 )
 
         first = transactions[0]
@@ -571,6 +613,10 @@ def receive_purchase_order(
         results.append(row)
 
     recompute_po_status(po)
-    form = resolve_goods_in_form(po.id)
+    if did_receive:
+        delivery.status = PurchaseOrderDeliveryStatus.RECEIVED
+        delivery.save(update_fields=['status', 'updated_at'])
+        sync_po_from_delivery(delivery)
+    form = resolve_goods_in_form(po.id, delivery_id=delivery.id)
     form['receive_results'] = results
     return form

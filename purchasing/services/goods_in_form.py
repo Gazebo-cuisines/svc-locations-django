@@ -7,6 +7,12 @@ from purchasing.models import (
     GoodsInCheckTemplate,
     PurchaseOrder,
 )
+from purchasing.services.delivery import (
+    DeliveryError,
+    get_delivery,
+    latest_delivery_for,
+    open_delivery_for,
+)
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
@@ -117,11 +123,28 @@ def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
     return gin_type, tech.storage_regime if tech else None
 
 
-def resolve_goods_in_form(po_id: int) -> dict:
+def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
     try:
         po = get_purchase_order(po_id)
     except PurchaseOrder.DoesNotExist as exc:
         raise GoodsInFormError('Purchase order not found.') from exc
+
+    delivery = None
+    if delivery_id is not None:
+        try:
+            delivery = get_delivery(po.id, delivery_id)
+        except DeliveryError as exc:
+            raise GoodsInFormError(str(exc)) from exc
+    else:
+        delivery = open_delivery_for(po.id) or latest_delivery_for(po.id)
+
+    session = delivery if delivery is not None else po
+    dlines = {}
+    if delivery is not None:
+        dlines = {
+            row.po_line_id: row
+            for row in delivery.lines.all()
+        }
 
     lines = list(po.lines.all())
     tech_by_product = {
@@ -149,6 +172,16 @@ def resolve_goods_in_form(po_id: int) -> dict:
             storage_regime=regime,
             scope=GoodsInCheckScope.LINE,
         )
+        dline = dlines.get(line.id)
+        if dline is not None:
+            saved_answers = dline.line_checks or {}
+            line_check_ok = dline.line_check_ok
+        elif delivery is None:
+            saved_answers = line.line_checks or {}
+            line_check_ok = line.line_check_ok
+        else:
+            saved_answers = {}
+            line_check_ok = False
         line_blocks.append({
             'line_id': line.id,
             'line_no': line.line_no,
@@ -166,24 +199,26 @@ def resolve_goods_in_form(po_id: int) -> dict:
             'pack_size': line.shape_format_label,
             'unit_id': line.unit_id,
             'unit_name': line.unit.name if line.unit_id else None,
-            'saved_answers': line.line_checks or {},
-            'line_check_ok': line.line_check_ok,
+            'saved_answers': saved_answers,
+            'line_check_ok': line_check_ok,
             'label_format': line.label_format,
             'label_count': line.label_count,
             'template': _template_block(line_template),
         })
 
     suggested_delivery_date = (
-        po.delivery_at or po.expected_at or date.today()
+        session.delivery_at or po.expected_at or date.today()
     )
     suggested_trace = (
-        po.delivery_trace_number
+        session.delivery_trace_number
         or julian_trace_number(suggested_delivery_date)
     )
-    names = rbac_names({po.checked_by_user_id, po.qc_tl_checked_by_user_id})
+    names = rbac_names({session.checked_by_user_id, session.qc_tl_checked_by_user_id})
 
     return {
         'purchase_order_id': po.id,
+        'delivery_id': delivery.id if delivery is not None else None,
+        'delivery_status': delivery.status if delivery is not None else None,
         'number': po.external_number or po.number,
         'sage_po_number': po.external_number,
         'system_number': po.number,
@@ -193,27 +228,30 @@ def resolve_goods_in_form(po_id: int) -> dict:
         'ship_to_location_id': po.ship_to_location_id,
         'expected_at': _iso_date(po.expected_at),
         'ordered_at': _iso_date(po.ordered_at),
-        'delivery_at': _iso_date(po.delivery_at),
+        'delivery_at': _iso_date(session.delivery_at),
         'suggested_delivery_date': _iso_date(suggested_delivery_date),
-        'delivery_trace_number': po.delivery_trace_number,
+        'delivery_trace_number': session.delivery_trace_number,
         'suggested_trace_number': suggested_trace,
-        'reject_delivery': po.reject_delivery,
+        'reject_delivery': session.reject_delivery,
         'vehicle_temperature': (
-            str(po.vehicle_temperature)
-            if po.vehicle_temperature is not None else None
+            str(session.vehicle_temperature)
+            if session.vehicle_temperature is not None else None
         ),
-        'checked_by_user_id': po.checked_by_user_id,
-        'checked_by_name': names.get(po.checked_by_user_id),
-        'checked_at': po.checked_at.isoformat() if po.checked_at else None,
-        'qc_tl_checked_by_user_id': po.qc_tl_checked_by_user_id,
-        'qc_tl_checked_by_name': names.get(po.qc_tl_checked_by_user_id),
+        'checked_by_user_id': session.checked_by_user_id,
+        'checked_by_name': names.get(session.checked_by_user_id),
+        'checked_at': session.checked_at.isoformat() if session.checked_at else None,
+        'qc_tl_checked_by_user_id': session.qc_tl_checked_by_user_id,
+        'qc_tl_checked_by_name': names.get(session.qc_tl_checked_by_user_id),
         'qc_tl_checked_at': (
-            po.qc_tl_checked_at.isoformat() if po.qc_tl_checked_at else None
+            session.qc_tl_checked_at.isoformat() if session.qc_tl_checked_at else None
         ),
-        'qc_tl_comment': po.qc_tl_comment,
-        'saved_header_answers': po.header_checks or {},
+        'qc_tl_comment': session.qc_tl_comment,
+        'saved_header_answers': session.header_checks or {},
         'header': _template_block(header_template),
         'shortfall_reasons': shortfall_reason_options(),
         'lines': line_blocks,
-        'attachments': list_attachments(po.id),
+        'attachments': list_attachments(
+            po.id,
+            delivery_id=delivery.id if delivery is not None else None,
+        ),
     }

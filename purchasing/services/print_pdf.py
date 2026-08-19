@@ -114,8 +114,8 @@ def _total_qty(lines: list) -> str:
     return text or '0'
 
 
-def build_goods_in_pdf(po_id: int) -> bytes:
-    form = resolve_goods_in_form(po_id)
+def build_goods_in_pdf(po_id: int, delivery_id: int | None = None) -> bytes:
+    form = resolve_goods_in_form(po_id, delivery_id=delivery_id)
     doc_meta = form['header']['document']
     answers = form.get('saved_header_answers') or {}
     lines = form.get('lines') or []
@@ -398,12 +398,13 @@ def build_goods_in_pdf(po_id: int) -> bytes:
     return buf.getvalue()
 
 
-def pdf_http_response(po_id: int) -> HttpResponse:
+def pdf_http_response(po_id: int, delivery_id: int | None = None) -> HttpResponse:
     try:
-        pdf = build_goods_in_pdf(po_id)
+        pdf = build_goods_in_pdf(po_id, delivery_id=delivery_id)
     except GoodsInFormError:
         raise
-    filename = f'goods-in-{po_id}.pdf'
+    suffix = f'{po_id}-{delivery_id}' if delivery_id else str(po_id)
+    filename = f'goods-in-{suffix}.pdf'
     response = HttpResponse(pdf, content_type='application/pdf')
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     return response

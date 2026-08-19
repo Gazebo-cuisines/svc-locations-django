@@ -35,6 +35,7 @@ from stock_ledger.util import (
     reservations,
     scan,
     services,
+    stickers,
     stock_units,
 )
 from stock_ledger.util.allocation_status import (
@@ -68,6 +69,7 @@ from stock_ledger.util.trace import (
     trace_backward,
     trace_forward,
 )
+from hardware.services import codes_for_serials, serial_from_request, touch_from_request
 from users_rbac.auth import attach_user, client_ip
 from users_rbac.permissions import (
     gate_floor_write,
@@ -284,10 +286,15 @@ def entry_dict(entry: StockEntry) -> dict:
         'quantity_base': _dec(entry.quantity_base),
         'unit_cost': _dec(entry.unit_cost),
         'line_cost': _dec(entry.line_cost),
-        'period_id': entry.period_id,
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'recorded_at': entry.recorded_at.isoformat() if entry.recorded_at else None,
         'reverses_entry_id': entry.reverses_entry_id,
+        'source_entry_id': entry.source_entry_id,
+        'source_entry_code': (
+            entry_labels.entry_code(entry.source_entry_id)
+            if entry.source_entry_id
+            else None
+        ),
         'override_reason': entry.override_reason,
         'authorised_by_user_id': entry.authorised_by_user_id,
         'po_number': entry.po_number,
@@ -298,6 +305,8 @@ def entry_dict(entry: StockEntry) -> dict:
         'lan_username': entry.lan_username,
         'source_workstation': entry.source_workstation,
         'source_workstation_ip': entry.source_workstation_ip,
+        'device_serial': entry.device_serial,
+        'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
         'remarks': entry.remarks,
         'entry_hash': entry.entry_hash,
         'prev_hash': entry.prev_hash,
@@ -313,6 +322,9 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'action': entry.entry_type,
         'quantity': _dec(entry.quantity),
+        # Base unit (KG) amount: the only figure comparable across mixed
+        # entry units (grams, Kg, Box) on the same product.
+        'quantity_base': _dec(entry.quantity_base),
         'unit_id': entry.unit_id,
         'unit_name': entry.unit.name if entry.unit_id else None,
         'product_id': product.id,
@@ -338,6 +350,8 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'lan_username': entry.lan_username,
         'source_workstation': entry.source_workstation,
         'source_workstation_ip': entry.source_workstation_ip,
+        'device_serial': entry.device_serial,
+        'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
     }
 
 
@@ -819,6 +833,16 @@ def _common_write_kwargs(request, body: dict) -> dict:
         if source_workstation_ip is not None:
             source_workstation_ip = str(source_workstation_ip)[:45]
 
+    device_serial = serial_from_request(request, body)
+    if device_serial:
+        touch_from_request(
+            request,
+            action='heartbeat',
+            body=body,
+            user=user,
+            record_event=False,
+        )
+
     kwargs = {
         'override_reason': body.get('override_reason'),
         'authorised_by_user_id': body.get('authorised_by_user_id'),
@@ -826,6 +850,7 @@ def _common_write_kwargs(request, body: dict) -> dict:
         'lan_username': lan_username,
         'source_workstation': source_workstation,
         'source_workstation_ip': source_workstation_ip,
+        'device_serial': device_serial,
         'remarks': body.get('remarks'),
         'source_document_type': body.get('source_document_type'),
         'source_document_id': body.get('source_document_id'),
@@ -1338,6 +1363,20 @@ def receipt_api(request):
         return api_error(str(exc))
     return api_success('Receipt posted.', data, status_code=201)
 
+def _resolve_source_entry(body: dict) -> StockEntry | None:
+    """Goods-in sticker (E{id}) that a goods-out row draws its stock from."""
+    raw = body.get('source_entry_id')
+    if raw in (None, '') and body.get('source_entry_code') not in (None, ''):
+        raw = entry_labels.parse_entry_code(str(body['source_entry_code']))
+        if raw is None:
+            raise StockValidationError('source_entry_code must look like E123.')
+    if raw in (None, ''):
+        return None
+    entry = entry_labels.get_entry_for_label(int(raw))
+    entry_labels.require_receipt_entry(entry)
+    return entry
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 @gate_warehouse_write(action='goods_out')
@@ -1346,15 +1385,8 @@ def issue_api(request):
     if body is None:
         return api_error('Invalid JSON body.')
     try:
-        source_entry = None
-        source_raw = body.get('source_entry_id')
-        if source_raw in (None, '') and body.get('source_entry_code') not in (None, ''):
-            source_raw = entry_labels.parse_entry_code(str(body['source_entry_code']))
-            if source_raw is None:
-                raise StockValidationError('source_entry_code must look like E123.')
-        if source_raw not in (None, ''):
-            source_entry = entry_labels.get_entry_for_label(int(source_raw))
-            entry_labels.require_receipt_entry(source_entry)
+        source_entry = _resolve_source_entry(body)
+        if source_entry is not None:
             lot = source_entry.lot
             location_id = (
                 int(body['location_id'])
@@ -1430,6 +1462,22 @@ def transfer_api(request):
             audit['source_document_id'] = req_ids[0]
         lot = _resolve_lot(body)
         from_location_id = int(body['from_location_id'])
+        quantity = _parse_decimal(body['quantity'], 'quantity')
+        source_entry = _resolve_source_entry(body)
+        if source_entry is not None:
+            balance = (
+                StockBalance.objects
+                .filter(lot_id=lot.id, location_id=from_location_id)
+                .only('quantity')
+                .first()
+            )
+            stickers.check_draw(
+                source_entry=source_entry,
+                lot=lot,
+                location_id=from_location_id,
+                quantity=quantity,
+                lot_quantity=balance.quantity if balance is not None else None,
+            )
         fifo_reason = str(body.get('fifo_override_reason') or '').strip()
         recommended_lot_id = None
         if queue_stock:
@@ -1451,11 +1499,12 @@ def transfer_api(request):
             lot=lot,
             from_location_id=from_location_id,
             to_location_id=int(body['to_location_id']),
-            quantity=_parse_decimal(body['quantity'], 'quantity'),
+            quantity=quantity,
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
             unit_moves=unit_moves,
             defer_balance=queue_stock,
+            source_entry=source_entry,
             **audit,
         )
     except KeyError as exc:
@@ -2414,6 +2463,7 @@ def scan_resolve_api(request):
         data['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
         if label is not None:
             data['label'] = entry_labels.label_state_dict(label)
+    touch_from_request(request, action='scan', location_id=loc_id)
     return api_success('Scan resolved.', data)
 
 
@@ -2483,14 +2533,26 @@ def scan_goods_out_api(request):
             status_code=409,
         )
 
-    qty = balance.quantity
+    lot_qty = balance.quantity
+    unit = match.get('unit')
+    entry = match.get('entry')
+    sticker_initial = None
+    queued_draws = []
+    if unit is not None:
+        qty = unit.quantity_remaining
+        sticker_initial = unit.quantity_initial
+    elif entry is not None:
+        qty = stickers.remaining_for_entry(entry, lot_quantity=lot_qty)
+        sticker_initial = abs(entry.quantity)
+        queued_draws = stickers.queued_draws_for_entry(entry)
+    else:
+        qty = lot_qty
     pack = supplier_pack_fields(
         qty, product, getattr(lot, 'product_supplier', None),
     )
     batches = _fifo_batch_rows(product_id=product.id, location_id=loc_id)
     oldest = batches[0] if batches else None
     fifo_ok = oldest is not None and oldest['lot_id'] == lot.id
-    entry = match.get('entry')
     data = {
         'scanned_code': (code or '').strip(),
         'match_type': match['match_type'],
@@ -2512,13 +2574,24 @@ def scan_goods_out_api(request):
         ),
         'location_id': loc_id,
         'quantity': _dec(qty),
+        'sticker_initial': _dec(sticker_initial),
+        'lot_quantity': _dec(lot_qty),
         **pack,
         'fifo_ok': fifo_ok,
+        # Why the sticker reads lower than the lot: stock committed by an
+        # earlier pick that has not posted yet.
+        'queued_quantity': _dec(
+            sum((row['quantity'] for row in queued_draws), Decimal('0')),
+        ),
+        'queued_draws': [
+            {**row, 'quantity': _dec(row['quantity'])} for row in queued_draws
+        ],
     }
     if not fifo_ok and oldest is not None:
         data['recommended_lot_id'] = oldest['lot_id']
         data['recommended_trace'] = oldest.get('trace_number')
         data['recommended_use_by'] = oldest.get('use_by')
+    touch_from_request(request, action='scan', location_id=loc_id)
     return api_success('Scan resolved.', data)
 
 

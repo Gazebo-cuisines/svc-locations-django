@@ -12,8 +12,6 @@ from product.models import Category, Product, ProductClass, Range, Unit
 from stock_ledger.models import (
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
     StockUnitConversion,
 )
 from stock_ledger.util import services
@@ -53,11 +51,6 @@ class RecallApiTests(TestCase):
             unit=self.unit,
             source_container=self.wh,
             destination_container=self.kitchen,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.client = Client()
 
