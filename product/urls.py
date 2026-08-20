@@ -44,6 +44,7 @@ from product.views.supplier_product_views import (
 )
 from product.views.technical_views import product_technical_api
 from product.views.yield_views import product_yield_api
+from product.views.recipe_links_views import product_children_api, product_parents_api
 
 urlpatterns = [
 
@@ -105,6 +106,11 @@ urlpatterns = [
         product_stock_overrides_api,
         name='product-stock-overrides',
     ),
+
+    # parent items (where this product is used in recipes)
+    path('<int:pk>/parents/', product_parents_api, name='product-parents'),
+    # child items (BOM / what makes this product)
+    path('<int:pk>/children/', product_children_api, name='product-children'),
 
     # departement product urls
     path('list/fromcontainer/<int:container_id>/', product_list_fromcontainer_api, name='product-list-fromcontainer'),
