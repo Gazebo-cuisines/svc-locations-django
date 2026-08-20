@@ -124,6 +124,11 @@ def component_dict(component: RecipeComponent) -> dict:
             if component.component_product_id
             else None
         ),
+        'component_recipe_code': (
+            (component.component_product.recipe_code or None)
+            if component.component_product_id
+            else None
+        ),
         'quantity': dec(component.quantity),
         'unit_id': component.unit_id,
         'unit_name': component.unit.name if component.unit_id else None,

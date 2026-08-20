@@ -296,6 +296,8 @@ class RecipeVersionNumberTests(RecipeAuthMixin, TestCase):
     def test_component_payload_includes_version_number(self):
         parent = self._product('FG')
         child = self._product('Spice')
+        child.recipe_code = 'SUG-01'
+        child.save(update_fields=['recipe_code'])
         recipe = Recipe.objects.create(product=parent, name='FG')
         version = RecipeVersion.objects.create(
             recipe=recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
@@ -312,6 +314,7 @@ class RecipeVersionNumberTests(RecipeAuthMixin, TestCase):
         self.assertEqual(data['version_number'], 1)
         self.assertEqual(data['recipe_id'], recipe.id)
         self.assertEqual(data['recipe_version_id'], version.id)
+        self.assertEqual(data['component_recipe_code'], 'SUG-01')
 
     def test_copy_from_version_clones_header_and_lines(self):
         parent = self._product('FG')

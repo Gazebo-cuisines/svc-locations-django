@@ -1,0 +1,26 @@
+---
+description: Live-202 recipe import — one SKU, PDF grams, no GIGO
+alwaysApply: true
+---
+
+# Live-202 recipe import
+
+When the task is importing or checking recipes from `docs/Recipe-import-task/live-202-product.md`:
+
+Follow `docs/Recipe-import-task/RULEBOOK.md` end to end. Do not invent a shorter path.
+
+## Hard gates
+
+- **One SKU at a time.** Finish it. Hand to a verify agent. Do not start the next code until that verify passes.
+- **PDF is law for mix grams.** Extract with `pypdf`. Every PDF line that maps to an **existing** catalogue code lands with the **same grams in Qty**. Net/gross stay empty. If PDF total ≠ sum of PDF lines, **stop** — do not import.
+- **Never create raw or packing materials.** Omit the line. Log it on the anomaly sheet. Recipe note must ask the user to add it with the catalogue code. Process SKUs (spice/mix/belt/fry/packed/FG) may still be created.
+- **Do not scale.** Veg mixer was 1.25× Pedro vs PDF. Write PDF. Log the scale. Never apply 0.80 / 1.25.
+- **No PDF for that stage** (belt fill, fry, pack counts): Pedro `tblproducttree` only. Log it.
+- **File match:** current signed copy only. Never `NEW OBSOLETE` / `Obsolete` / `~$`. Mixer `harvi/1 LR/Signed copy-Print from here`. Spice `harvi/2 SPICES/Signed copy SPICE`. QAS current folder matching `gffCode`.
+- **Wrong pack SKU:** omit (film wrong width/type) or nearest same artwork (sleeve). Never substitute a different film type. Log every substitution.
+- **Draft only.** Never activate. `process_loss` = 1. Do not copy pack yield 0.99.
+- **Notes:** one or two plain-English sentences. No “Pedro 1.25x… Anomalies: path.md”.
+- **Stamp:** `ProductAudit` `actor_name` = `System Admin`. Recipe `created_by_name` = `System Admin`.
+- **Anomalies:** Excel `docs/Recipe-import-task/anomaly-<STOCKCODE>.xlsx` — every miss, swap, omit, unit clash, missing RM. Then stop.
+
+Pilots: `CVSAL-1G6T` (veg), `CCSAL-1G6T` (chicken). Copy that process, not the demo seed or `Copy of recipe.xlsx`.
