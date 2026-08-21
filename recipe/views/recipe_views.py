@@ -15,6 +15,7 @@ from recipe.views.helpers import (
     recipe_detail_dict,
     recipe_detail_qs,
     recipe_list_dict,
+    recipe_list_qs,
 )
 
 
@@ -64,20 +65,7 @@ def recipe_by_product_api(request, product_id: int):
 @gate_recipe_write
 def recipe_collection_api(request):
     if request.method == 'GET':
-        recipes = (
-            Recipe.objects.filter(product__is_active=True)
-            .select_related(
-                'product__source_container',
-                'product__destination_container',
-            )
-            .prefetch_related(
-                'versions__location',
-                'versions__components__recipe_version',
-                'versions__components__component_product',
-                'versions__components__unit',
-            )
-            .order_by('id')
-        )
+        recipes = recipe_list_qs().order_by('id')
         return api_success(
             'Recipe list fetched successfully.',
             [recipe_list_dict(r) for r in recipes],
