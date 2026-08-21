@@ -15,6 +15,7 @@ from product.models import ProductCosting
 from product.query import active_products
 from planning.models import Resource
 from recipe.models import RecipeComponent, RecipeVersion, RecipeVersionStatus
+from recipe.utils import scaled_child_net
 
 from stock_ledger.models import (
     ProductionRun,
@@ -1040,17 +1041,24 @@ def production_requirements(
     parent_gross = made / process_loss
     consumed_map = _consumed_by_product(output.id)
 
-    components = (
+    components = list(
         RecipeComponent.objects
         .filter(recipe_version_id=version.id)
         .select_related('component_product__yield_data', 'unit')
         .order_by('line_no')
     )
+    bom_sum = sum((c.quantity for c in components), Decimal('0'))
     lines = []
     product_ids = []
     for comp in components:
         yf = _component_yield_factor(comp.component_product)
-        needed = (parent_gross * comp.quantity / yf).quantize(Decimal('0.000001'))
+        needed = scaled_child_net(
+            parent_gross,
+            comp.quantity,
+            yield_factor=yf,
+            batch_quantity=version.batch_quantity,
+            bom_sum=bom_sum,
+        ).quantize(Decimal('0.000001'))
         consumed = consumed_map.get(comp.component_product_id, Decimal('0'))
         product_ids.append(comp.component_product_id)
         lines.append({

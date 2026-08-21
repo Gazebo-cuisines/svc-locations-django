@@ -13,6 +13,7 @@ from planning.adapters import recipe as recipe_adapter
 from planning.adapters import stock as stock_adapter
 from planning.models import Plan, PlanLine
 from planning.services.exceptions import PlanningError
+from recipe.utils import scaled_child_net
 
 MAX_BOM_DEPTH = 20
 
@@ -296,6 +297,7 @@ def _explode_children(
     if version_id is None or to_make <= 0:
         return []
     recipe_spec = recipe_adapter.get_recipe_version(version_id)
+    bom_sum = sum((c.quantity for c in recipe_spec.components), Decimal('0'))
     children: list[dict] = []
     child_ancestry = ancestry | {product_id}
     for component in recipe_spec.components:
@@ -304,7 +306,13 @@ def _explode_children(
             raise PlanningError(
                 f'yield_factor must be > 0 for product {child_product.id}'
             )
-        child_demand = to_make * component.quantity / child_product.yield_factor
+        child_demand = scaled_child_net(
+            to_make,
+            component.quantity,
+            yield_factor=child_product.yield_factor,
+            batch_quantity=recipe_spec.batch_quantity,
+            bom_sum=bom_sum,
+        )
         children.append(
             net_node(
                 product_id=component.product_id,

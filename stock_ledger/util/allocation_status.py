@@ -8,6 +8,7 @@ from django.db.models import Sum
 
 from locations.models import LocationStockProfile
 from recipe.models import RecipeComponent
+from recipe.utils import scaled_child_net
 from stock_ledger.models import StockEntry, StockEntryType
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.services import (
@@ -37,14 +38,22 @@ def _lines_from_components(
     process_loss: Decimal,
     components,
     consumed_map: dict[int, Decimal],
+    batch_quantity: Decimal | None = None,
 ) -> list[dict]:
     if process_loss <= 0:
         process_loss = Decimal('1')
     parent_gross = abs(made) / process_loss
+    bom_sum = sum((c.quantity for c in components), Decimal('0'))
     lines = []
     for comp in components:
         yf = _component_yield_factor(comp.component_product)
-        needed = (parent_gross * comp.quantity / yf).quantize(Decimal('0.000001'))
+        needed = scaled_child_net(
+            parent_gross,
+            comp.quantity,
+            yield_factor=yf,
+            batch_quantity=batch_quantity,
+            bom_sum=bom_sum,
+        ).quantize(Decimal('0.000001'))
         consumed = consumed_map.get(comp.component_product_id, Decimal('0'))
         remaining = max(needed - consumed, Decimal('0')).quantize(Decimal('0.000001'))
         lines.append({
@@ -124,6 +133,7 @@ def allocation_status(*, output_entry_id: int) -> dict:
         process_loss=process_loss,
         components=components,
         consumed_map=consumed_map,
+        batch_quantity=version.batch_quantity,
     )
     return _status_from_lines(output.id, lines)
 
@@ -204,6 +214,7 @@ def allocation_status_for_entries(output_entry_ids: list[int]) -> dict[int, dict
             process_loss=process_loss,
             components=components,
             consumed_map=consumed_by_output.get(oid, {}),
+            batch_quantity=lot.recipe_version.batch_quantity,
         )
         result[oid] = _status_from_lines(oid, lines)
 
