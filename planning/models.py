@@ -60,6 +60,13 @@ class Resource(models.Model):
         blank=True,
         related_name='resources',
     )
+    packing_rate_per_hour = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text='Cases per hour for packing line (Packing Plan Time — Rate Per Hour).',
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -69,6 +76,159 @@ class Resource(models.Model):
 
     def __str__(self):
         return f'resource:{self.id}:{self.code}'
+
+
+class ResourceProductRate(models.Model):
+    """Production speed table: resource × SKU × headcount → units per minute.
+
+    Replaces the Excel VLOOKUP against CONTENT CODES "Master File" sheet
+    (columns Q–U = Number Of Person 5–1, column O = One Mix Qty).
+    One row per (resource, product, staff_count) combination.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    resource = models.ForeignKey(
+        Resource,
+        on_delete=models.CASCADE,
+        related_name='product_rates',
+    )
+    product = models.ForeignKey(
+        'product.Product',
+        on_delete=models.CASCADE,
+        related_name='resource_rates',
+    )
+    staff_count = models.PositiveSmallIntegerField(
+        help_text='Number Of People on the station (1–5).',
+    )
+    units_per_minute = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text='Units produced per minute at this staff count.',
+    )
+    batch_size = models.DecimalField(
+        max_digits=16,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text='One Mix Qty — units per mixer batch (CONTENT CODES col O).',
+    )
+    notes = models.TextField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'resource_product_rate'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['resource', 'product', 'staff_count'],
+                name='uq_resource_product_rate',
+            ),
+            models.CheckConstraint(
+                check=models.Q(staff_count__gte=1) & models.Q(staff_count__lte=5),
+                name='chk_resource_product_rate_staff_count',
+            ),
+            models.CheckConstraint(
+                check=models.Q(units_per_minute__gt=0),
+                name='chk_resource_product_rate_upm',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['product', 'is_active'], name='idx_rpr_product_active'),
+            models.Index(fields=['resource', 'is_active'], name='idx_rpr_resource_active'),
+        ]
+
+    def __str__(self):
+        return (
+            f'resource_product_rate:{self.id}:'
+            f'res:{self.resource_id}:prod:{self.product_id}:staff:{self.staff_count}'
+        )
+
+
+class ResourceShift(models.Model):
+    """Factory shift definition: start time, break schedule, end time.
+
+    Replaces the hardcoded times in the Excel plan template.
+    The engine uses this to:
+    - Calculate available production minutes per shift
+    - Skip break windows when chaining sequential job start/finish times
+
+    Breaks are stored individually (not as a total) so the scheduler can
+    detect when a job crosses a break boundary and defer the next job's
+    start to after the break ends.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    location = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.PROTECT,
+        related_name='shifts',
+    )
+    weekday = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text='0=Mon … 6=Sun. Null = applies every day of the week.',
+    )
+    shift_start = models.TimeField(help_text='e.g. 06:30')
+    shift_end = models.TimeField(help_text='e.g. 18:00')
+    morning_break_start = models.TimeField(
+        null=True, blank=True, help_text='Morning Tea start (e.g. 10:00).',
+    )
+    morning_break_minutes = models.PositiveSmallIntegerField(
+        default=15, help_text='Morning Tea duration in minutes.',
+    )
+    lunch_break_start = models.TimeField(
+        null=True, blank=True, help_text='Lunch break start (e.g. 12:30).',
+    )
+    lunch_break_minutes = models.PositiveSmallIntegerField(
+        default=30, help_text='Lunch break duration in minutes.',
+    )
+    evening_break_start = models.TimeField(
+        null=True, blank=True, help_text='Evening Tea start (e.g. 15:00).',
+    )
+    evening_break_minutes = models.PositiveSmallIntegerField(
+        default=15, help_text='Evening Tea duration in minutes.',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'resource_shift'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['location', 'weekday'],
+                name='uq_resource_shift_location_weekday',
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(weekday__isnull=True)
+                    | (models.Q(weekday__gte=0) & models.Q(weekday__lte=6))
+                ),
+                name='chk_resource_shift_weekday',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['location', 'weekday', 'is_active'],
+                name='idx_resource_shift_lookup',
+            ),
+        ]
+
+    @property
+    def total_break_minutes(self) -> int:
+        return (
+            (self.morning_break_minutes if self.morning_break_start else 0)
+            + (self.lunch_break_minutes if self.lunch_break_start else 0)
+            + (self.evening_break_minutes if self.evening_break_start else 0)
+        )
+
+    def __str__(self):
+        wd = self.weekday if self.weekday is not None else '*'
+        return (
+            f'resource_shift:{self.id}:loc:{self.location_id}:'
+            f'wd:{wd}:{self.shift_start}–{self.shift_end}'
+        )
 
 
 class Plan(models.Model):
