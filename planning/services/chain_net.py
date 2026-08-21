@@ -1,9 +1,11 @@
-﻿"""Chain-net: backward stock netting (chunks 1–8)."""
+﻿"""Chain-net: backward stock netting (chunks 1–8) with batch anomaly detection."""
 
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, Decimal
+from typing import Literal
 
 from locations.models import Location
 from product.models import ProductCosting, ProductSupplier, Unit
@@ -15,6 +17,33 @@ from planning.models import Plan, PlanLine
 from planning.services.exceptions import PlanningError
 
 MAX_BOM_DEPTH = 20
+
+
+@dataclass
+class BatchAnomaly:
+    """Structured anomaly when min batch causes over/under production."""
+
+    product_id: int
+    product_name: str
+    anomaly_type: Literal['over_production', 'cascade_increase', 'planner_decision']
+    required_qty: Decimal
+    actual_qty: Decimal
+    delta_qty: Decimal
+    min_batch: Decimal | None
+    explanation: str
+    affects_parent: bool = False
+    affected_by_child: int | None = None
+    action_required: bool = True
+    suggested_actions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CascadeContext:
+    """Track cascade effects through BOM levels."""
+
+    anomalies: list[BatchAnomaly] = field(default_factory=list)
+    child_overages: dict[int, Decimal] = field(default_factory=dict)
+    parent_increases: dict[int, Decimal] = field(default_factory=dict)
 
 
 def _dec(value: Decimal) -> str:
@@ -50,14 +79,19 @@ def _stock_ref(*, lot_id: int, location_id: int) -> str:
 def _apply_min_batch(
     shortfall: Decimal,
     batch_quantity: Decimal | None,
-) -> tuple[Decimal, Decimal | None]:
-    """Ceil shortfall to recipe batch_quantity. Returns (to_make, min_batch_or_none)."""
+) -> tuple[Decimal, Decimal | None, Decimal]:
+    """Ceil shortfall to recipe batch_quantity.
+
+    Returns (to_make, min_batch_or_none, over_production).
+    """
     if shortfall <= 0:
-        return Decimal('0'), None
+        return Decimal('0'), None, Decimal('0')
     if batch_quantity is None or batch_quantity <= 0:
-        return shortfall, None
+        return shortfall, None, Decimal('0')
     n = (shortfall / batch_quantity).to_integral_value(rounding=ROUND_CEILING)
-    return n * batch_quantity, batch_quantity
+    to_make = n * batch_quantity
+    over_production = to_make - shortfall
+    return to_make, batch_quantity, over_production
 
 
 def _stock_lots_payload(
@@ -166,14 +200,20 @@ def net_node(
     recipe_version_id: int | None = None,
     depth: int = 0,
     ancestry: frozenset[int] | None = None,
+    cascade_ctx: CascadeContext | None = None,
 ) -> dict:
-    """Demand − stage ATP → to_make (min-batch ceil); recurse BOM when to_make > 0."""
+    """Demand − stage ATP → to_make (min-batch ceil); recurse BOM when to_make > 0.
+
+    With cascade_ctx, tracks batch anomalies and propagates over-production forward.
+    """
     if depth > MAX_BOM_DEPTH:
         raise PlanningError(f'BOM depth exceeded MAX_BOM_DEPTH={MAX_BOM_DEPTH}')
 
     seen = ancestry or frozenset()
     if product_id in seen:
         raise PlanningError(f'BOM cycle detected at product {product_id}')
+
+    ctx = cascade_ctx or CascadeContext()
 
     version_id = recipe_adapter.resolve_recipe_version_id(
         product_id,
@@ -202,8 +242,9 @@ def net_node(
         location_ids,
     )
     shortfall = max(demand - stock, Decimal('0'))
-    to_make, min_batch = _apply_min_batch(shortfall, batch_quantity)
+    to_make, min_batch, over_production = _apply_min_batch(shortfall, batch_quantity)
 
+    over_production_from_children = Decimal('0')
     children: list[dict] = []
     if recipe_spec is not None and to_make > 0:
         child_ancestry = seen | {product_id}
@@ -214,16 +255,70 @@ def net_node(
                     f'yield_factor must be > 0 for product {child_product.id}'
                 )
             child_demand = to_make * component.quantity / child_product.yield_factor
-            children.append(
-                net_node(
-                    product_id=component.product_id,
-                    demand=child_demand,
-                    is_top_fg=False,
-                    recipe_version_id=None,
-                    depth=depth + 1,
-                    ancestry=child_ancestry,
-                )
+            child_node = net_node(
+                product_id=component.product_id,
+                demand=child_demand,
+                is_top_fg=False,
+                recipe_version_id=None,
+                depth=depth + 1,
+                ancestry=child_ancestry,
+                cascade_ctx=ctx,
             )
+            children.append(child_node)
+
+            child_over = ctx.child_overages.get(component.product_id, Decimal('0'))
+            if child_over > 0 and component.quantity > 0:
+                extra_parent_units = (
+                    child_over * child_product.yield_factor / component.quantity
+                )
+                over_production_from_children += extra_parent_units
+
+    if over_production > 0:
+        ctx.child_overages[product_id] = over_production
+        suggested = [
+            f'Complete full batch of {_dec(to_make)} (recommended)',
+            f'Adjust parent order to use extra {_dec(over_production)}',
+        ]
+        ctx.anomalies.append(BatchAnomaly(
+            product_id=product_id,
+            product_name=product.name,
+            anomaly_type='over_production',
+            required_qty=shortfall,
+            actual_qty=to_make,
+            delta_qty=over_production,
+            min_batch=min_batch,
+            explanation=(
+                f'{product.name}: need {_dec(shortfall)}, min batch {_dec(min_batch)} '
+                f'→ must make {_dec(to_make)} (over by {_dec(over_production)}). '
+                f'Cannot make partial batch.'
+            ),
+            affects_parent=not is_top_fg,
+            action_required=True,
+            suggested_actions=suggested,
+        ))
+
+    if over_production_from_children > 0:
+        ctx.parent_increases[product_id] = over_production_from_children
+        suggested = [
+            f'Increase {product.name} production to use child over-production',
+            'Leave as-is (child over-production goes to stock)',
+        ]
+        ctx.anomalies.append(BatchAnomaly(
+            product_id=product_id,
+            product_name=product.name,
+            anomaly_type='cascade_increase',
+            required_qty=demand,
+            actual_qty=demand + over_production_from_children,
+            delta_qty=over_production_from_children,
+            min_batch=min_batch,
+            explanation=(
+                f'{product.name}: child over-production enables making '
+                f'{_dec(over_production_from_children)} extra. Consider completing full batch.'
+            ),
+            affects_parent=not is_top_fg,
+            action_required=False,
+            suggested_actions=suggested,
+        ))
 
     return {
         'product_id': product.id,
@@ -237,6 +332,7 @@ def net_node(
         'shortfall': _dec(shortfall),
         'min_batch': _dec(min_batch) if min_batch is not None else None,
         'to_make': _dec(to_make),
+        'over_production': _dec(over_production) if over_production > 0 else None,
         'stage_location_ids': location_ids,
         'stock_lots': stock_lots,
         'stock_by_location': stock_by_location,
@@ -292,6 +388,7 @@ def _explode_children(
     version_id: int | None,
     ancestry: frozenset[int],
     depth: int,
+    cascade_ctx: CascadeContext | None = None,
 ) -> list[dict]:
     if version_id is None or to_make <= 0:
         return []
@@ -313,12 +410,17 @@ def _explode_children(
                 recipe_version_id=None,
                 depth=depth + 1,
                 ancestry=child_ancestry,
+                cascade_ctx=cascade_ctx,
             )
         )
     return children
 
 
-def net_fg_line(line: PlanLine, demand_inputs: dict | None = None) -> dict:
+def net_fg_line(
+    line: PlanLine,
+    demand_inputs: dict | None = None,
+    cascade_ctx: CascadeContext | None = None,
+) -> dict:
     """FG root with chunk-8 demand composition, then BOM children."""
     inputs = _normalize_demand_inputs(demand_inputs)
     plan_qty = line.quantity
@@ -329,6 +431,8 @@ def net_fg_line(line: PlanLine, demand_inputs: dict | None = None) -> dict:
     )
     pending = inputs['today_pending_dispatch_qty']
     wip = inputs['wip_fg_equivalent_qty']
+
+    ctx = cascade_ctx or CascadeContext()
 
     version_id = recipe_adapter.resolve_recipe_version_id(
         line.product_id,
@@ -358,7 +462,7 @@ def net_fg_line(line: PlanLine, demand_inputs: dict | None = None) -> dict:
     free_dispatch = max(dispatch_stock - pending, Decimal('0'))
     cover = free_dispatch + wip
     shortfall = max(target - cover, Decimal('0'))
-    to_make, min_batch = _apply_min_batch(shortfall, batch_quantity)
+    to_make, min_batch, over_production = _apply_min_batch(shortfall, batch_quantity)
 
     children = _explode_children(
         product_id=product.id,
@@ -366,7 +470,65 @@ def net_fg_line(line: PlanLine, demand_inputs: dict | None = None) -> dict:
         version_id=version_id,
         ancestry=frozenset(),
         depth=0,
+        cascade_ctx=ctx,
     )
+
+    over_from_children = Decimal('0')
+    if version_id is not None:
+        recipe_spec_check = recipe_adapter.get_recipe_version(version_id)
+        for component in recipe_spec_check.components:
+            child_over = ctx.child_overages.get(component.product_id, Decimal('0'))
+            if child_over > 0:
+                child_product = product_adapter.get_product_spec(component.product_id)
+                if child_product.yield_factor > 0 and component.quantity > 0:
+                    extra_fg = child_over * child_product.yield_factor / component.quantity
+                    over_from_children += extra_fg
+
+    if over_production > 0:
+        ctx.child_overages[product.id] = over_production
+        suggested = [
+            f'Complete full batch of {_dec(to_make)} (recommended)',
+        ]
+        ctx.anomalies.append(BatchAnomaly(
+            product_id=product.id,
+            product_name=product.name,
+            anomaly_type='over_production',
+            required_qty=shortfall,
+            actual_qty=to_make,
+            delta_qty=over_production,
+            min_batch=min_batch,
+            explanation=(
+                f'{product.name}: need {_dec(shortfall)}, min batch {_dec(min_batch)} '
+                f'→ must make {_dec(to_make)} (over by {_dec(over_production)}). '
+                f'Cannot make partial batch.'
+            ),
+            affects_parent=False,
+            action_required=True,
+            suggested_actions=suggested,
+        ))
+
+    if over_from_children > 0:
+        ctx.parent_increases[product.id] = over_from_children
+        suggested = [
+            f'Increase FG production by {_dec(over_from_children)} to use child over-production',
+            'Leave as-is (child over-production goes to WIP stock)',
+        ]
+        ctx.anomalies.append(BatchAnomaly(
+            product_id=product.id,
+            product_name=product.name,
+            anomaly_type='cascade_increase',
+            required_qty=target,
+            actual_qty=target + over_from_children,
+            delta_qty=over_from_children,
+            min_batch=min_batch,
+            explanation=(
+                f'{product.name}: child components over-produced. '
+                f'Could make {_dec(over_from_children)} extra FG units.'
+            ),
+            affects_parent=False,
+            action_required=False,
+            suggested_actions=suggested,
+        ))
 
     breakdown = {
         'demand_source': inputs['demand_source'],
@@ -413,6 +575,7 @@ def net_fg_line(line: PlanLine, demand_inputs: dict | None = None) -> dict:
         'shortfall': _dec(shortfall),
         'min_batch': _dec(min_batch) if min_batch is not None else None,
         'to_make': _dec(to_make),
+        'over_production': _dec(over_production) if over_production > 0 else None,
         'stage_location_ids': location_ids,
         'stock_lots': stock_lots,
         'stock_by_location': stock_by_location,
@@ -567,6 +730,24 @@ def build_tab_views(items: list[dict]) -> tuple[list[dict], list[dict]]:
     return product_lines, ingredients
 
 
+def _anomaly_to_dict(a: BatchAnomaly) -> dict:
+    """Serialize BatchAnomaly for JSON response."""
+    return {
+        'product_id': a.product_id,
+        'product_name': a.product_name,
+        'anomaly_type': a.anomaly_type,
+        'required_qty': _dec(a.required_qty),
+        'actual_qty': _dec(a.actual_qty),
+        'delta_qty': _dec(a.delta_qty),
+        'min_batch': _dec(a.min_batch) if a.min_batch else None,
+        'explanation': a.explanation,
+        'affects_parent': a.affects_parent,
+        'affected_by_child': a.affected_by_child,
+        'action_required': a.action_required,
+        'suggested_actions': a.suggested_actions,
+    }
+
+
 def chain_net_plan(
     plan_id: int,
     *,
@@ -586,17 +767,23 @@ def chain_net_plan(
     if not lines:
         raise PlanningError('plan has no demand lines')
 
+    ctx = CascadeContext()
     line_demand = line_demand or {}
     items = []
     for line in lines:
         per_line = line_demand.get(line.id) or line_demand.get(str(line.id))
         merged = {**(demand_inputs or {}), **(per_line or {})}
-        items.append(net_fg_line(line, demand_inputs=merged or None))
+        items.append(net_fg_line(line, demand_inputs=merged or None, cascade_ctx=ctx))
     product_lines, ingredients = build_tab_views(items)
+
+    batch_anomalies = [_anomaly_to_dict(a) for a in ctx.anomalies]
+
     return {
         'plan_id': plan.id,
         'plan_date': plan.plan_date.isoformat(),
         'items': items,
         'product_lines': product_lines,
         'ingredients': ingredients,
+        'batch_anomalies': batch_anomalies,
+        'has_batch_anomalies': len(batch_anomalies) > 0,
     }
