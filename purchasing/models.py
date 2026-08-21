@@ -18,6 +18,8 @@ class PurchaseOrderSource(models.TextChoices):
 
 
 class PurchaseOrderHistoryEvent(models.TextChoices):
+    CREATE = 'create', 'Create'
+    UPDATE = 'update', 'Update'
     ACCEPT = 'accept', 'Accept'
     REJECT = 'reject', 'Reject'
     NON_CONFORMANCE = 'non_conformance', 'Non-conformance'

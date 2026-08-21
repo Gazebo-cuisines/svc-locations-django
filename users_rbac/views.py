@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from core.api_response import error_response, success_response
+from hardware.services import serial_from_request, touch_from_request
 from users_rbac.audit import record_event
 from users_rbac.models import RbacAuditAction, RbacUser
 from users_rbac.services import login as cognito_login
@@ -40,13 +41,21 @@ def login_view(request):
         )
         return error_response(str(exc), status_code=401)
 
+    detail = {'username': username}
+    serial = serial_from_request(request, body)
+    if serial:
+        detail['device_serial'] = serial
+        touch_from_request(
+            request, action='login', body=body, user=local_user,
+        )
+
     record_event(
         request,
         action=RbacAuditAction.AUTH_LOGIN_SUCCESS,
         actor=local_user,
         target=local_user,
         actor_username=username,
-        detail_json={'username': username},
+        detail_json=detail,
     )
     return success_response("Signed in successfully.", data=tokens)
 

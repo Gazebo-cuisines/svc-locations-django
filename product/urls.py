@@ -8,6 +8,7 @@ from product.views.allergen_views import (
 from product.views.audit_views import product_stock_overrides_api, product_timeline_api
 from product.views.costing_views import product_costing_api
 from product.views.flags_views import product_flags_api
+from product.views.image_views import product_image_detail_api, product_images_api
 from product.views.ingredient_label_views import product_ingredient_label_api
 from product.views.lookups_views import (
     product_allergen_code_list_api,
@@ -43,6 +44,7 @@ from product.views.supplier_product_views import (
 )
 from product.views.technical_views import product_technical_api
 from product.views.yield_views import product_yield_api
+from product.views.recipe_links_views import product_children_api, product_parents_api
 
 urlpatterns = [
 
@@ -73,6 +75,8 @@ urlpatterns = [
     path('high-risk/', product_high_risk_create_api, name='product-high-risk-create'),
     path('', product_collection_api, name='product-collection'),
     path('<int:pk>/', product_detail_api, name='product-detail'),
+    path('<int:pk>/images/', product_images_api, name='product-images'),
+    path('images/<int:pk>/', product_image_detail_api, name='product-image-detail'),
     path('<int:pk>/flags/', product_flags_api, name='product-flags'),
     path('<int:pk>/technical/', product_technical_api, name='product-technical'),
     path('<int:pk>/allergens/', product_allergens_api, name='product-allergens'),
@@ -102,6 +106,11 @@ urlpatterns = [
         product_stock_overrides_api,
         name='product-stock-overrides',
     ),
+
+    # parent items (where this product is used in recipes)
+    path('<int:pk>/parents/', product_parents_api, name='product-parents'),
+    # child items (BOM / what makes this product)
+    path('<int:pk>/children/', product_children_api, name='product-children'),
 
     # departement product urls
     path('list/fromcontainer/<int:container_id>/', product_list_fromcontainer_api, name='product-list-fromcontainer'),

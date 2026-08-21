@@ -184,6 +184,11 @@ class NestedDeliveryTests(TestCase):
         self.assertIn('received', str(ctx.exception).lower())
 
         client = Client()
+        timeline = client.get(f'/purchasing/pos/{self.po.id}/timeline/')
+        self.assertEqual(timeline.status_code, 200)
+        actions = {e['action'] for e in timeline.json()['data']}
+        self.assertTrue({'create', 'reject', 'goods_in'} <= actions)
+
         resp = client.post(f'/purchasing/pos/{self.po.id}/deliveries/')
         self.assertEqual(resp.status_code, 400, resp.content)
 

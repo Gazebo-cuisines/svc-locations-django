@@ -228,7 +228,7 @@ class RecipeAttachment(models.Model):
         default=RecipeAttachmentKind.STEP,
     )
     s3_key = models.CharField(max_length=512)
-    content_type = models.CharField(max_length=64, null=True, blank=True)
+    content_type = models.CharField(max_length=128, null=True, blank=True)
     original_filename = models.CharField(max_length=255, null=True, blank=True)
     caption = models.CharField(max_length=255, null=True, blank=True)
     sort_order = models.IntegerField(default=0)

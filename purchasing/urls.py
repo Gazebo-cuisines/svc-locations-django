@@ -19,49 +19,23 @@ from purchasing.views import (
     po_print_api,
     po_receive_api,
     po_release_api,
+    po_timeline_api,
 )
 
 urlpatterns = [
     # PO API
     path('pos/', po_collection_api, name='purchasing-po-list'),
     path('pos/<int:po_id>/', po_detail_api, name='purchasing-po-detail'),
+    path('pos/<int:po_id>/timeline/', po_timeline_api, name='purchasing-po-timeline'),
 
     # Nested deliveries (one QC session per truck)
-    path(
-        'pos/<int:po_id>/deliveries/',
-        po_delivery_collection_api,
-        name='purchasing-po-delivery-list',
-    ),
-    path(
-        'pos/<int:po_id>/deliveries/<int:delivery_id>/',
-        po_delivery_detail_api,
-        name='purchasing-po-delivery-detail',
-    ),
-    path(
-        'pos/<int:po_id>/deliveries/<int:delivery_id>/qc/header/',
-        po_delivery_header_qc_api,
-        name='purchasing-po-delivery-header-qc',
-    ),
-    path(
-        'pos/<int:po_id>/deliveries/<int:delivery_id>/lines/<int:line_id>/qc/',
-        po_delivery_line_qc_api,
-        name='purchasing-po-delivery-line-qc',
-    ),
-    path(
-        'pos/<int:po_id>/deliveries/<int:delivery_id>/receive/',
-        po_delivery_receive_api,
-        name='purchasing-po-delivery-receive',
-    ),
-    path(
-        'pos/<int:po_id>/deliveries/<int:delivery_id>/attachments/',
-        po_delivery_attachments_api,
-        name='purchasing-po-delivery-attachments',
-    ),
-    path(
-        'pos/<int:po_id>/deliveries/<int:delivery_id>/print/',
-        po_delivery_print_api,
-        name='purchasing-po-delivery-print',
-    ),
+    path('pos/<int:po_id>/deliveries/', po_delivery_collection_api, name='purchasing-po-delivery-list'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/', po_delivery_detail_api, name='purchasing-po-delivery-detail'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/qc/header/', po_delivery_header_qc_api, name='purchasing-po-delivery-header-qc'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/lines/<int:line_id>/qc/', po_delivery_line_qc_api, name='purchasing-po-delivery-line-qc'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/receive/', po_delivery_receive_api, name='purchasing-po-delivery-receive'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/attachments/', po_delivery_attachments_api, name='purchasing-po-delivery-attachments'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/print/', po_delivery_print_api, name='purchasing-po-delivery-print'),
 
     # PO Goods In Form API (aliases open delivery)
     path('pos/<int:po_id>/goods-in-form/', po_goods_in_form_api, name='purchasing-po-goods-in-form'),

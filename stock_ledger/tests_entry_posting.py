@@ -22,8 +22,6 @@ from stock_ledger.models import (
     StockEntryPostingStatus,
     StockLot,
     StockLotOrigin,
-    StockPeriod,
-    StockPeriodStatus,
 )
 from stock_ledger.util import entry_labels, entry_posting, services
 
@@ -49,11 +47,6 @@ class EntryPostingQueueTests(TestCase):
             label_mode=ProductLabelMode.BATCH,
             source_container=self.wh,
             destination_container=self.wh,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.lot = StockLot.objects.create(
             product=self.product,

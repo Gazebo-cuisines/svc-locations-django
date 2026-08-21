@@ -214,3 +214,44 @@ class ProductApiTests(TestCase):
         self.assertIsNone(data['shelf_life'])
         self.assertFalse(data['flags']['is_sales_item'])
         self.assertFalse(data['flags']['include_in_projections'])
+
+    def test_product_parents_and_children_coverage(self):
+        from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
+        from product.models import Product
+
+        parent_id = self._create_product('Coverage Parent', recipe_code='COV-P')
+        child_id = self._create_product('Coverage Child', recipe_code='COV-C')
+        parent = Product.objects.get(pk=parent_id)
+        child = Product.objects.get(pk=child_id)
+
+        recipe = Recipe.objects.create(product=parent, name='Coverage')
+        version = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.DRAFT,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=child,
+            quantity=Decimal('10'),
+            unit_id=1,
+        )
+
+        parents = self.client.get(f'/product/{child_id}/parents/')
+        self.assertEqual(parents.status_code, 200, parents.content)
+        pdata = parents.json()['data']
+        self.assertEqual(pdata['count'], 1)
+        self.assertEqual(pdata['items'][0]['id'], parent_id)
+        self.assertEqual(pdata['items'][0]['recipe_code'], 'COV-P')
+
+        children = self.client.get(f'/product/{parent_id}/children/')
+        self.assertEqual(children.status_code, 200, children.content)
+        cdata = children.json()['data']
+        self.assertEqual(cdata['count'], 1)
+        self.assertEqual(cdata['items'][0]['id'], child_id)
+        self.assertEqual(cdata['items'][0]['quantity'], '10.000000')
+
+        empty = self.client.get(f'/product/{child_id}/children/')
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(empty.json()['data']['count'], 0)

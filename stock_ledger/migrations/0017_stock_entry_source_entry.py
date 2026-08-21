@@ -5,7 +5,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stock_ledger', '0015_lot_product_supplier'),
+        ('stock_ledger', '0016_drop_stock_period'),
     ]
 
     operations = [

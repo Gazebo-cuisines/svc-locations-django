@@ -8,7 +8,6 @@ from product.models import ProductTechnical
 from purchasing.models import (
     PurchaseOrder,
     PurchaseOrderDeliveryStatus,
-    PurchaseOrderHistory,
     PurchaseOrderHistoryEvent,
     PurchaseOrderStatus,
 )
@@ -29,6 +28,7 @@ from purchasing.services.qc_answers import (
     normalize_answer,
     parse_date,
 )
+from purchasing.services.timeline import actor_json, record_history
 
 
 class HeaderQcError(ValueError):
@@ -41,6 +41,7 @@ def submit_header_qc(
     *,
     body: dict,
     delivery_id: int | None = None,
+    actor=None,
 ) -> dict:
     try:
         po = (
@@ -141,6 +142,15 @@ def submit_header_qc(
     except (TypeError, ValueError) as exc:
         raise HeaderQcError('checked_by_user_id must be an integer.') from exc
 
+    before = {
+        'delivery_id': delivery.id,
+        'status': delivery.status,
+        'reject_delivery': delivery.reject_delivery,
+        'header_checks': delivery.header_checks or {},
+        'delivery_trace_number': delivery.delivery_trace_number,
+        'checked_by_user_id': delivery.checked_by_user_id,
+    }
+
     delivery.delivery_at = delivery_date
     delivery.delivery_trace_number = trace_number
     delivery.vehicle_temperature = vehicle_temp
@@ -184,20 +194,24 @@ def submit_header_qc(
     if body.get('remarks'):
         remarks_parts.append(str(body.get('remarks')))
 
-    PurchaseOrderHistory.objects.create(
-        purchase_order=po,
+    record_history(
+        po=po,
         delivery=delivery,
         event_type=event,
         remarks='; '.join(remarks_parts) or None,
-        payload={
+        before=before,
+        after={
             'delivery_id': delivery.id,
+            'status': delivery.status,
+            'reject_delivery': reject,
             'delivery_date': delivery_date.isoformat(),
             'delivery_trace_number': trace_number,
             'failed_codes': failed_codes,
             'trace_override': bool(trace_override),
             'answers': normalized,
+            'checked_by_user_id': checked_by,
         },
-        actor_user_id=checked_by,
+        actor=actor or actor_json(user_id=checked_by),
     )
 
     return resolve_goods_in_form(po.id, delivery_id=delivery.id)

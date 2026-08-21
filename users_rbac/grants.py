@@ -19,6 +19,12 @@ from users_rbac.photos import photo_url
 
 GRANT_KEYS = ('departments', 'production_areas', 'warehouse', 'admin_areas')
 
+# Storage Location PKs (legacy tblcontainers). unit_1 has no row yet.
+WAREHOUSE_UNIT_LOCATION_IDS = {
+    WarehouseUnit.UNIT_2: 8,
+    WarehouseUnit.UNIT_11: 2,
+}
+
 
 def has_global_access(user: RbacUser) -> bool:
     return UserDepartment.objects.filter(user=user, department=Department.IT).exists()
@@ -138,6 +144,7 @@ def grants_dict(user: RbacUser) -> dict:
                 'unit': row.unit,
                 'actions': actions,
                 'goods_in_periods': periods,
+                'location_id': WAREHOUSE_UNIT_LOCATION_IDS.get(row.unit),
             }
         )
     return {
