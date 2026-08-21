@@ -2,6 +2,8 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Count, Prefetch
+
 from locations.utils.api_response import api_error
 from product.audit_log import capture_product_audit
 from recipe.attachments import attachment_dict
@@ -75,18 +77,54 @@ def parse_date(value, field_name: str):
         raise ValueError(f'Invalid date for {field_name}. Use YYYY-MM-DD.')
 
 
+_CATEGORY_PARENTS = 'product__category__parent__parent__parent__parent'
+
+
+def recipe_list_qs():
+    return Recipe.objects.filter(product__is_active=True).select_related(
+        'product__source_container',
+        'product__destination_container',
+        _CATEGORY_PARENTS,
+    ).prefetch_related(
+        Prefetch(
+            'versions',
+            queryset=RecipeVersion.objects.select_related(
+                'location', 'batch_unit',
+            ).annotate(
+                ingredient_count=Count('components'),
+            ),
+        ),
+    )
+
+
 def recipe_detail_qs():
     return Recipe.objects.filter(product__is_active=True).select_related(
         'product__source_container',
         'product__destination_container',
+        _CATEGORY_PARENTS,
     ).prefetch_related(
         'versions__location',
+        'versions__batch_unit',
         'versions__components__recipe_version',
         'versions__components__component_product',
         'versions__components__unit',
         'versions__attachments',
         'versions__components__attachments',
     )
+
+
+def _category_chain(category) -> list:
+    if category is None:
+        return []
+    chain = []
+    seen = set()
+    node = category
+    while node is not None and node.id not in seen:
+        seen.add(node.id)
+        chain.append({'id': node.id, 'name': node.name})
+        node = node.parent if node.parent_id else None
+    chain.reverse()
+    return chain
 
 
 def version_detail_qs():
@@ -200,20 +238,24 @@ def recipe_version_detail_dict(version: RecipeVersion) -> dict:
 
 def recipe_list_dict(recipe: Recipe) -> dict:
     version = active_or_latest_version(recipe)
-    ingredients = (
-        [
-            component_dict(c)
-            for c in sorted(version.components.all(), key=lambda c: c.line_no)
-        ]
-        if version else []
-    )
     product = recipe.product
+    category = product.category if product.category_id else None
+    if version is None:
+        ingredient_count = 0
+    else:
+        ingredient_count = getattr(version, 'ingredient_count', None)
+        if ingredient_count is None:
+            ingredient_count = len(version.components.all())
     return {
         'id': recipe.id,
         'product_id': recipe.product_id,
         'name': recipe.name,
-        'ingredient_count': len(ingredients),
-        'ingredients': ingredients,
+        'recipe_code': product.recipe_code,
+        'ingredient_count': ingredient_count,
+        'category_id': product.category_id,
+        'category_name': category.name if category is not None else None,
+        'category_path': category.path if category is not None else None,
+        'categories': _category_chain(category),
         'from_location_id': product.source_container_id,
         'from_location_name': (
             product.source_container.name if product.source_container_id else None
@@ -231,13 +273,28 @@ def recipe_list_dict(recipe: Recipe) -> dict:
             else None
         ),
         'version_number': version.version_number if version else None,
+        'status': version.status if version else None,
         'batch_quantity': dec(version.batch_quantity) if version else None,
+        'batch_unit_id': version.batch_unit_id if version else None,
+        'batch_unit_name': (
+            version.batch_unit.name
+            if version and version.batch_unit_id
+            else None
+        ),
     }
 
 
 def recipe_detail_dict(recipe: Recipe) -> dict:
     data = recipe_list_dict(recipe)
+    version = active_or_latest_version(recipe)
     data.update({
+        'ingredients': (
+            [
+                component_dict(c)
+                for c in sorted(version.components.all(), key=lambda c: c.line_no)
+            ]
+            if version else []
+        ),
         'remarks': recipe.remarks,
         'created_at': recipe.created_at.isoformat() if recipe.created_at else None,
         'updated_at': recipe.updated_at.isoformat() if recipe.updated_at else None,

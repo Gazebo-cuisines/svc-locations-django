@@ -6,7 +6,11 @@ Admin is disabled — no django_admin_log table.
 import os
 from pathlib import Path
 
+import pymysql
 from dotenv import load_dotenv
+
+# Homebrew MySQL 9 client drops mysql_native_password; PyMySQL works with RDS.
+pymysql.install_as_MySQLdb()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')

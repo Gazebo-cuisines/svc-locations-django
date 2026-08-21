@@ -430,6 +430,103 @@ class RecipeAutoProvisionTests(RecipeAuthMixin, TestCase):
         self.assertEqual(first.json()['data']['id'], second.json()['data']['id'])
 
 
+class RecipeListApiTests(TestCase):
+    def setUp(self):
+        ProductClass.objects.create(id=1, name='Finished')
+        food = Category.objects.create(id=10, name='Food', path='Food')
+        frozen = Category.objects.create(
+            id=11, name='Frozen', path='Food > Frozen', parent=food,
+        )
+        Category.objects.create(
+            id=1, name='Meals', path='Food > Frozen > Meals', parent=frozen,
+        )
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        Unit.objects.create(id=2, name='g')
+        Location.objects.create(id=1, name='Spice Room', visible=True)
+        Location.objects.create(id=2, name='Mixers', visible=True)
+
+    def _product(self, name):
+        return Product.objects.create(
+            name=name,
+            recipe_code=name.replace(' ', '-')[:32],
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+
+    def test_list_is_light_and_includes_category(self):
+        parent = self._product('Samosa FG')
+        spice = self._product('Spice Mix')
+        pastry = self._product('Pastry')
+        recipe = Recipe.objects.create(product=parent, name='Samosa')
+        draft = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=2,
+            status=RecipeVersionStatus.DRAFT,
+        )
+        active = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+            batch_quantity=Decimal('210760'),
+            batch_unit_id=2,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=active,
+            line_no=1,
+            component_product=spice,
+            quantity=Decimal('6.000000'),
+            unit_id=1,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=draft,
+            line_no=1,
+            component_product=spice,
+            quantity=Decimal('1.000000'),
+            unit_id=1,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=draft,
+            line_no=2,
+            component_product=pastry,
+            quantity=Decimal('2.000000'),
+            unit_id=1,
+        )
+
+        resp = self.client.get('/recipe/')
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.json()['data']
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertNotIn('ingredients', row)
+        self.assertEqual(row['name'], 'Samosa')
+        self.assertEqual(row['recipe_code'], 'Samosa-FG')
+        self.assertEqual(row['ingredient_count'], 1)
+        self.assertEqual(row['category_id'], 1)
+        self.assertEqual(row['category_name'], 'Meals')
+        self.assertEqual(row['categories'], [
+            {'id': 10, 'name': 'Food'},
+            {'id': 11, 'name': 'Frozen'},
+            {'id': 1, 'name': 'Meals'},
+        ])
+        self.assertEqual(row['version_number'], 1)
+        self.assertEqual(row['status'], 'active')
+        self.assertEqual(row['batch_quantity'], '210760.000000')
+        self.assertEqual(row['batch_unit_id'], 2)
+        self.assertEqual(row['batch_unit_name'], 'g')
+
+        detail = self.client.get(f'/recipe/{recipe.id}/')
+        self.assertEqual(detail.status_code, 200)
+        data = detail.json()['data']
+        self.assertEqual(len(data['ingredients']), 1)
+        self.assertEqual(data['ingredient_count'], 1)
+        self.assertEqual(data['category_id'], 1)
+
+
 class RecipeGateTests(RecipeAuthMixin, TestCase):
     def setUp(self):
         ProductClass.objects.create(id=1, name='Finished')
