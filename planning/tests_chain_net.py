@@ -9,7 +9,12 @@ from django.utils import timezone
 
 from locations.models import Location
 from planning.models import Plan, PlanLine, PlanLineSource
-from planning.services.chain_net import _apply_min_batch, chain_net_plan
+from planning.services.chain_net import (
+    BatchAnomaly,
+    CascadeContext,
+    _apply_min_batch,
+    chain_net_plan,
+)
 from product.models import Category, Product, ProductClass, ProductYield, Range, Unit
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
 from stock_ledger.models import StockLot, StockLotOrigin
@@ -18,19 +23,29 @@ from stock_ledger.util import services as stock_services
 
 class ChainNetMinBatchUnitTests(TestCase):
     def test_ceil_shortfall_to_batch(self):
-        to_make, batch = _apply_min_batch(Decimal('10'), Decimal('25'))
+        to_make, batch, over = _apply_min_batch(Decimal('10'), Decimal('25'))
         self.assertEqual(to_make, Decimal('25'))
         self.assertEqual(batch, Decimal('25'))
+        self.assertEqual(over, Decimal('15'))
 
     def test_exact_batch_unchanged(self):
-        to_make, batch = _apply_min_batch(Decimal('50'), Decimal('25'))
+        to_make, batch, over = _apply_min_batch(Decimal('50'), Decimal('25'))
         self.assertEqual(to_make, Decimal('50'))
         self.assertEqual(batch, Decimal('25'))
+        self.assertEqual(over, Decimal('0'))
 
     def test_no_batch_passthrough(self):
-        to_make, batch = _apply_min_batch(Decimal('10'), None)
+        to_make, batch, over = _apply_min_batch(Decimal('10'), None)
         self.assertEqual(to_make, Decimal('10'))
         self.assertIsNone(batch)
+        self.assertEqual(over, Decimal('0'))
+
+    def test_over_production_calculated(self):
+        """56 kg needed, 10 kg min batch → make 60 kg, over by 4 kg."""
+        to_make, batch, over = _apply_min_batch(Decimal('56'), Decimal('10'))
+        self.assertEqual(to_make, Decimal('60'))
+        self.assertEqual(batch, Decimal('10'))
+        self.assertEqual(over, Decimal('4'))
 
 
 class ChainNetPlanTests(TestCase):
@@ -211,3 +226,248 @@ class ChainNetPlanTests(TestCase):
         self.assertTrue(payload['product_lines'])
         self.assertIn('stock_lots', payload['product_lines'][0])
         self.assertIn('unit_name', payload['product_lines'][0])
+
+    def test_batch_anomalies_returned(self):
+        """Verify batch anomalies are returned in chain-net response."""
+        result = chain_net_plan(self.plan.id)
+        self.assertIn('batch_anomalies', result)
+        self.assertIn('has_batch_anomalies', result)
+        anomalies = result['batch_anomalies']
+        self.assertTrue(len(anomalies) > 0)
+        spice_anomaly = next(
+            (a for a in anomalies if a['product_id'] == self.spice_sku.id),
+            None,
+        )
+        self.assertIsNotNone(spice_anomaly)
+        self.assertEqual(spice_anomaly['anomaly_type'], 'over_production')
+        self.assertEqual(spice_anomaly['required_qty'], '40.000000')
+        self.assertEqual(spice_anomaly['actual_qty'], '50.000000')
+        self.assertEqual(spice_anomaly['delta_qty'], '10.000000')
+        self.assertTrue(spice_anomaly['action_required'])
+        self.assertTrue(len(spice_anomaly['suggested_actions']) > 0)
+
+    def test_over_production_in_node(self):
+        """Verify over_production field appears in node when applicable."""
+        result = chain_net_plan(self.plan.id)
+        spice = result['items'][0]['children'][0]
+        self.assertEqual(spice['over_production'], '10.000000')
+
+
+class ChainNetMultiLevelCascadeTests(TestCase):
+    """Test cascade effects with multiple BOM levels each having min batch."""
+
+    def setUp(self):
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        self.unit = Unit.objects.create(id=1, name='KG')
+        self.dispatch = Location.objects.create(id=6, name='Dispatch', visible=True)
+        self.mixing = Location.objects.create(id=7, name='Mixing', visible=True)
+        self.spice_room = Location.objects.create(id=8, name='Spice Room', visible=True)
+
+        self.fg = Product.objects.create(
+            name='Samosa FG',
+            recipe_code='SAM-FG',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit=self.unit,
+            source_container=self.mixing,
+            destination_container=self.dispatch,
+        )
+        ProductYield.objects.create(
+            product=self.fg,
+            yield_factor=Decimal('1'),
+            yield_factor_auto=Decimal('1'),
+        )
+
+        self.mixer = Product.objects.create(
+            name='Samosa Mixture',
+            recipe_code='SAM-MIX',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit=self.unit,
+            source_container=self.spice_room,
+            destination_container=self.mixing,
+        )
+        ProductYield.objects.create(
+            product=self.mixer,
+            yield_factor=Decimal('1'),
+            yield_factor_auto=Decimal('1'),
+        )
+
+        self.spice = Product.objects.create(
+            name='Samosa Spice',
+            recipe_code='SAM-SPICE',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit=self.unit,
+            source_container=self.spice_room,
+            destination_container=self.spice_room,
+        )
+        ProductYield.objects.create(
+            product=self.spice,
+            yield_factor=Decimal('1'),
+            yield_factor_auto=Decimal('1'),
+        )
+
+        self.raw = Product.objects.create(
+            name='Cumin',
+            recipe_code='RAW-CUM',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit=self.unit,
+            source_container=self.spice_room,
+            destination_container=self.spice_room,
+        )
+        ProductYield.objects.create(
+            product=self.raw,
+            yield_factor=Decimal('1'),
+            yield_factor_auto=Decimal('1'),
+        )
+
+        fg_recipe = Recipe.objects.create(product=self.fg, name='Samosa FG')
+        fg_ver = RecipeVersion.objects.create(
+            recipe=fg_recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+            process_loss=Decimal('1'),
+        )
+        RecipeComponent.objects.create(
+            recipe_version=fg_ver,
+            line_no=1,
+            component_product=self.mixer,
+            quantity=Decimal('0.5'),
+            unit=self.unit,
+        )
+
+        mixer_recipe = Recipe.objects.create(product=self.mixer, name='Samosa Mixture')
+        mixer_ver = RecipeVersion.objects.create(
+            recipe=mixer_recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+            process_loss=Decimal('1'),
+            batch_quantity=Decimal('100'),
+        )
+        RecipeComponent.objects.create(
+            recipe_version=mixer_ver,
+            line_no=1,
+            component_product=self.spice,
+            quantity=Decimal('0.1'),
+            unit=self.unit,
+        )
+
+        spice_recipe = Recipe.objects.create(product=self.spice, name='Samosa Spice')
+        spice_ver = RecipeVersion.objects.create(
+            recipe=spice_recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+            process_loss=Decimal('1'),
+            batch_quantity=Decimal('10'),
+        )
+        RecipeComponent.objects.create(
+            recipe_version=spice_ver,
+            line_no=1,
+            component_product=self.raw,
+            quantity=Decimal('0.5'),
+            unit=self.unit,
+        )
+
+        self.plan = Plan.objects.create(
+            plan_date=date(2026, 8, 5),
+            location=self.dispatch,
+        )
+        PlanLine.objects.create(
+            plan=self.plan,
+            product=self.fg,
+            quantity=Decimal('500'),
+            unit=self.unit,
+            source=PlanLineSource.MANUAL,
+        )
+
+    def test_multi_level_cascade_anomalies(self):
+        """
+        500 FG → 250 kg mixture (min 100) → 300 kg (over 50)
+        300 kg mixture → 30 kg spice (min 10) → 30 kg (no over)
+
+        Anomalies:
+        - Mixture: over_production 50 kg
+        - FG: cascade_increase (could make more with extra mixture)
+        """
+        result = chain_net_plan(self.plan.id)
+        root = result['items'][0]
+        self.assertEqual(root['product_id'], self.fg.id)
+        self.assertEqual(Decimal(root['to_make']), Decimal('500'))
+
+        mixer = root['children'][0]
+        self.assertEqual(mixer['product_id'], self.mixer.id)
+        self.assertEqual(Decimal(mixer['demand']), Decimal('250'))
+        self.assertEqual(Decimal(mixer['to_make']), Decimal('300'))
+        self.assertEqual(mixer['over_production'], '50.000000')
+
+        spice = mixer['children'][0]
+        self.assertEqual(spice['product_id'], self.spice.id)
+        self.assertEqual(Decimal(spice['demand']), Decimal('30'))
+        self.assertEqual(Decimal(spice['to_make']), Decimal('30'))
+        self.assertIsNone(spice.get('over_production'))
+
+        anomalies = result['batch_anomalies']
+        mixer_anomaly = next(
+            (a for a in anomalies
+             if a['product_id'] == self.mixer.id
+             and a['anomaly_type'] == 'over_production'),
+            None,
+        )
+        self.assertIsNotNone(mixer_anomaly)
+        self.assertEqual(mixer_anomaly['delta_qty'], '50.000000')
+
+        fg_cascade = next(
+            (a for a in anomalies
+             if a['product_id'] == self.fg.id
+             and a['anomaly_type'] == 'cascade_increase'),
+            None,
+        )
+        self.assertIsNotNone(fg_cascade)
+        self.assertEqual(Decimal(fg_cascade['delta_qty']), Decimal('100'))
+
+    def test_samosa_example_56kg_spice(self):
+        """
+        Example from user: 500 samosa order needs 56 kg spice, min batch 10 kg.
+        56 / 10 = 5.6 → must make 6 batches = 60 kg (over by 4 kg).
+        """
+        spice_recipe = Recipe.objects.get(product=self.spice)
+        spice_ver = RecipeVersion.objects.filter(recipe=spice_recipe).first()
+
+        mixer_recipe = Recipe.objects.get(product=self.mixer)
+        mixer_ver = RecipeVersion.objects.filter(recipe=mixer_recipe).first()
+        mixer_ver.batch_quantity = None
+        mixer_ver.save()
+        RecipeComponent.objects.filter(recipe_version=mixer_ver).update(
+            quantity=Decimal('0.112')
+        )
+
+        result = chain_net_plan(self.plan.id)
+        root = result['items'][0]
+        mixer = root['children'][0]
+        self.assertEqual(Decimal(mixer['demand']), Decimal('250'))
+        self.assertEqual(Decimal(mixer['to_make']), Decimal('250'))
+
+        spice = mixer['children'][0]
+        self.assertEqual(spice['product_id'], self.spice.id)
+        self.assertEqual(Decimal(spice['demand']), Decimal('28'))
+        self.assertEqual(Decimal(spice['to_make']), Decimal('30'))
+        self.assertEqual(spice['over_production'], '2.000000')
+
+        anomalies = result['batch_anomalies']
+        spice_anomaly = next(
+            (a for a in anomalies
+             if a['product_id'] == self.spice.id
+             and a['anomaly_type'] == 'over_production'),
+            None,
+        )
+        self.assertIsNotNone(spice_anomaly)
+        self.assertEqual(spice_anomaly['delta_qty'], '2.000000')
+        self.assertIn('Cannot make partial batch', spice_anomaly['explanation'])
