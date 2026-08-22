@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -7,6 +9,36 @@ from product.product_images import product_photos
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
 
 MAX_TREE_DEPTH = 20
+_BATCH_BOM_MIN = Decimal('1000')
+
+
+def scaled_child_net(
+    parent_gross: Decimal,
+    component_qty: Decimal,
+    *,
+    yield_factor: Decimal = Decimal('1'),
+    batch_quantity: Decimal | None = None,
+    bom_sum: Decimal | None = None,
+) -> Decimal:
+    """Child qty from parent gross.
+
+    Pack/belt/fry BOMs are per parent unit (counts, ~80g piece). Mix/spice/cook
+    BOMs are grams-for-the-batch (line totals typically >= 1000). Scale those
+    by batch_quantity, or by the BOM sum when batch_quantity is unset.
+    Do not scale merely because batch_quantity is set — that field is also
+    min-batch for chain-net.
+    """
+    yf = yield_factor if yield_factor and yield_factor > 0 else Decimal('1')
+    total = bom_sum if bom_sum is not None else component_qty
+    denom = None
+    if total >= _BATCH_BOM_MIN:
+        if batch_quantity is not None and batch_quantity > 0:
+            denom = batch_quantity
+        elif total > 0:
+            denom = total
+    if denom:
+        return parent_gross * component_qty / denom / yf
+    return parent_gross * component_qty / yf
 
 
 class RecipeValidationError(ValueError):

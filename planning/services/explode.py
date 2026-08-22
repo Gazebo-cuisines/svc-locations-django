@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.utils import DataError
 from django.utils import timezone
 
 from planning.adapters import product as product_adapter
@@ -21,6 +22,7 @@ from planning.models import (
 from planning.services import batching, netting
 from planning.services.eligibility import required_min_shelf_life_days
 from planning.services.exceptions import PlanningError, PlanningStateError
+from recipe.utils import scaled_child_net
 
 DRIVER_VERSION = 'explode-1.0'
 MAX_BOM_DEPTH = 20
@@ -79,12 +81,13 @@ def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
     )
 
     try:
-        lines = list(plan.lines.order_by('sort_order', 'id'))
-        if not lines:
-            raise PlanningError('plan has no demand lines')
+        with transaction.atomic():
+            lines = list(plan.lines.order_by('sort_order', 'id'))
+            if not lines:
+                raise PlanningError('plan has no demand lines')
 
-        for line in lines:
-            _explode_line(plan, run, line)
+            for line in lines:
+                _explode_line(plan, run, line)
 
         run.status = PlanRunStatus.COMPLETE
         run.completed_at = timezone.now()
@@ -97,8 +100,14 @@ def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
         )
         return run
     except Exception as exc:
+        to_raise: Exception = exc
+        if isinstance(exc, DataError):
+            to_raise = PlanningError(
+                'A recipe quantity overflowed during explode. '
+                'Set batch_quantity on mix/spice/cook versions.'
+            )
         run.status = PlanRunStatus.FAILED
-        run.error_message = str(exc)
+        run.error_message = str(to_raise)
         run.completed_at = timezone.now()
         run.save(update_fields=['status', 'error_message', 'completed_at'])
         PlanEvent.objects.create(
@@ -107,11 +116,11 @@ def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
             payload_json={
                 'run_id': run.id,
                 'run_number': run.run_number,
-                'error': str(exc),
+                'error': str(to_raise),
             },
             actor_user_id=actor_user_id,
         )
-        raise
+        raise to_raise from exc
 
 
 def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
@@ -211,6 +220,7 @@ def _explode_children(
         raise PlanningError(f'BOM depth exceeded MAX_BOM_DEPTH={MAX_BOM_DEPTH}')
 
     recipe_spec = recipe_adapter.get_recipe_version(recipe_version_id)
+    bom_sum = sum((c.quantity for c in recipe_spec.components), Decimal('0'))
     for component in recipe_spec.components:
         if component.product_id in ancestry:
             raise PlanningError(
@@ -236,9 +246,12 @@ def _explode_children(
                 f'yield_factor must be > 0 for product {child_product.id}'
             )
 
-        # D1: parent gross drives child
-        net_child = (
-            parent_gross * component.quantity / child_product.yield_factor
+        net_child = scaled_child_net(
+            parent_gross,
+            component.quantity,
+            yield_factor=child_product.yield_factor,
+            batch_quantity=recipe_spec.batch_quantity,
+            bom_sum=bom_sum,
         )
         if child_loss <= 0:
             child_loss = Decimal('1')

@@ -11,6 +11,7 @@ from planning.adapters import recipe as recipe_adapter
 from planning.models import DemandProfile, Plan, PlanStatus
 from planning.services import lifecycle, netting
 from planning.services.exceptions import PlanningError
+from recipe.utils import scaled_child_net
 
 MAX_BOM_DEPTH = 20
 DEFAULT_HORIZON_DAYS = 5
@@ -72,9 +73,15 @@ def _bom_gross_needs(
     if version_id is None:
         return {}
     recipe = recipe_adapter.get_recipe_version(version_id)
+    bom_sum = sum((c.quantity for c in recipe.components), Decimal('0'))
     needs: dict[int, Decimal] = {}
     for comp in recipe.components:
-        child_gross = parent_gross * comp.quantity
+        child_gross = scaled_child_net(
+            parent_gross,
+            comp.quantity,
+            batch_quantity=recipe.batch_quantity,
+            bom_sum=bom_sum,
+        )
         needs[comp.product_id] = needs.get(comp.product_id, Decimal('0')) + child_gross
         for cid, qty in _bom_gross_needs(
             comp.product_id,
