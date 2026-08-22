@@ -81,6 +81,7 @@ def _bom_gross_needs(
             comp.quantity,
             batch_quantity=recipe.batch_quantity,
             bom_sum=bom_sum,
+            process_batch=recipe.process_batch,
         )
         needs[comp.product_id] = needs.get(comp.product_id, Decimal('0')) + child_gross
         for cid, qty in _bom_gross_needs(

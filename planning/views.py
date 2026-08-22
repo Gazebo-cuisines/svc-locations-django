@@ -12,6 +12,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from planning.errors import PlanningError, PlanningStateError
+from product.audit_log import _actor_stamp
 from product.models import Product
 from planning.models import (
     DemandProfile,
@@ -126,6 +127,33 @@ def _error_from_exc(exc):
     raise exc
 
 
+_LINE_PACK_SELECT = (
+    'product__packaging__packaging_type',
+    'product__packaging__tray',
+    'product__costing',
+)
+
+
+def _plan_line_qs(manager=None):
+    qs = manager if manager is not None else PlanLine.objects
+    return qs.select_related(*_LINE_PACK_SELECT)
+
+
+def _fmt_qty(value: Decimal) -> str:
+    text = format(value.normalize(), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
+def _json_num(value: Decimal | None):
+    if value is None:
+        return None
+    if value == value.to_integral_value():
+        return int(value)
+    return float(value)
+
+
 def plan_dict(plan: Plan, *, include_lines: bool = False) -> dict:
     latest = (
         plan.runs.order_by('-run_number').first()
@@ -151,11 +179,21 @@ def plan_dict(plan: Plan, *, include_lines: bool = False) -> dict:
     if data['line_count'] is None:
         data['line_count'] = plan.lines.count()
     if include_lines:
-        data['lines'] = [plan_line_dict(line) for line in plan.lines.order_by('sort_order', 'id')]
+        data['lines'] = [
+            plan_line_dict(line)
+            for line in _plan_line_qs(plan.lines).order_by('sort_order', 'id')
+        ]
     return data
 
 
 def plan_line_dict(line: PlanLine) -> dict:
+    product = line.product
+    pack = product.packaging if hasattr(product, 'packaging') else None
+    costing = product.costing if hasattr(product, 'costing') else None
+    items = pack.items_per_unit if pack is not None else None
+    pack_weight = None
+    if pack is not None and pack.pack_weight is not None:
+        pack_weight = f'{_fmt_qty(pack.pack_weight)}G'
     return {
         'id': line.id,
         'plan_id': line.plan_id,
@@ -170,6 +208,18 @@ def plan_line_dict(line: PlanLine) -> dict:
         'sort_order': line.sort_order,
         'created_at': line.created_at.isoformat() if line.created_at else None,
         'updated_at': line.updated_at.isoformat() if line.updated_at else None,
+        'pack_weight': pack_weight,
+        'packaging_type': (
+            pack.packaging_type.name
+            if pack is not None and pack.packaging_type_id
+            else None
+        ),
+        'tray_name': pack.tray.name if pack is not None and pack.tray_id else None,
+        'case_size': costing.case_size_description if costing is not None else None,
+        'units_per_case': _json_num(items),
+        'tray_quantity': (
+            _json_num(line.quantity * items) if items is not None else None
+        ),
     }
 
 
@@ -183,10 +233,15 @@ def plan_run_dict(run: PlanRun) -> dict:
         'error_message': run.error_message,
         'started_at': run.started_at.isoformat() if run.started_at else None,
         'completed_at': run.completed_at.isoformat() if run.completed_at else None,
+        'stamp_json': run.stamp_json,
     }
 
 
 def requirement_dict(req: PlanRequirement) -> dict:
+    product = req.product
+    unit = getattr(product, 'unit', None)
+    category = getattr(product, 'category', None) if product else None
+    product_class = getattr(product, 'product_class', None) if product else None
     return {
         'id': req.id,
         'run_id': req.run_id,
@@ -196,6 +251,12 @@ def requirement_dict(req: PlanRequirement) -> dict:
         'batch_number': req.batch_number,
         'position': req.position,
         'product_id': req.product_id,
+        'product_name': product.name if product else None,
+        'unit_name': unit.name if unit else None,
+        'category_id': product.category_id if product else None,
+        'category_name': category.name if category else None,
+        'product_class_id': product.product_class_id if product else None,
+        'product_class_name': product_class.name if product_class else None,
         'recipe_version_id': req.recipe_version_id,
         'net_required': _dec(req.net_required),
         'gross_required': _dec(req.gross_required),
@@ -209,6 +270,7 @@ def requirement_dict(req: PlanRequirement) -> dict:
         'balance': _dec(req.balance),
         'closed': req.closed,
         'created_at': req.created_at.isoformat() if req.created_at else None,
+        'calc_json': req.calc_json,
     }
 
 
@@ -337,7 +399,7 @@ def plan_detail_api(request, plan_id: int):
         plan = (
             Plan.objects
             .annotate(line_count=Count('lines'))
-            .prefetch_related('lines', 'runs')
+            .prefetch_related('runs')
             .get(pk=plan_id)
         )
         return api_success('Plan fetched.', plan_dict(plan, include_lines=True))
@@ -442,7 +504,10 @@ def plan_events_api(request, plan_id: int):
 def plan_lines_api(request, plan_id: int):
     plan = get_object_or_404(Plan, pk=plan_id)
     if request.method == 'GET':
-        items = [plan_line_dict(line) for line in plan.lines.order_by('sort_order', 'id')]
+        items = [
+            plan_line_dict(line)
+            for line in _plan_line_qs(plan.lines).order_by('sort_order', 'id')
+        ]
         return api_success('Lines listed.', {'items': items})
 
     body = _parse_json_body(request)
@@ -482,7 +547,11 @@ def plan_lines_api(request, plan_id: int):
         return api_error(f'Missing required field: {exc.args[0]}')
     except (ValueError, TypeError, PlanningStateError, IntegrityError) as exc:
         return _error_from_exc(exc) if not isinstance(exc, IntegrityError) else api_error(str(exc))
-    return api_success('Line created.', plan_line_dict(line), status_code=201)
+    return api_success(
+        'Line created.',
+        plan_line_dict(_plan_line_qs().get(pk=line.pk)),
+        status_code=201,
+    )
 
 
 @csrf_exempt
@@ -530,7 +599,10 @@ def plan_line_detail_api(request, plan_id: int, line_id: int):
         line.save()
     except (ValueError, TypeError) as exc:
         return api_error(str(exc))
-    return api_success('Line updated.', plan_line_dict(line))
+    return api_success(
+        'Line updated.',
+        plan_line_dict(_plan_line_qs().get(pk=line.pk)),
+    )
 
 
 # --- Runs ---
@@ -548,7 +620,17 @@ def plan_runs_api(request, plan_id: int):
     if body is None:
         body = {}
     try:
-        run = explode.run_explode(plan_id, actor_user_id=body.get('actor_user_id'))
+        actor = _actor_stamp(request)
+        run = explode.run_explode(
+            plan_id,
+            actor_user_id=body.get('actor_user_id'),
+            stamp={
+                'actor_sub': actor.get('actor_sub'),
+                'actor_email': actor.get('actor_email'),
+                'actor_name': actor.get('actor_name'),
+                'source_workstation_ip': actor.get('source_workstation_ip'),
+            },
+        )
     except (PlanningError, PlanningStateError, Plan.DoesNotExist) as exc:
         # Failed runs are persisted; surface failed run when available
         failed = (
@@ -587,9 +669,20 @@ def plan_run_requirements_api(request, plan_id: int, run_id: int):
     run = get_object_or_404(PlanRun, pk=run_id, plan_id=plan_id)
     items = [
         requirement_dict(r)
-        for r in run.requirements.order_by('level', 'batch_number', 'id')
+        for r in (
+            run.requirements
+            .select_related(
+                'product__unit',
+                'product__category',
+                'product__product_class',
+            )
+            .order_by('level', 'batch_number', 'id')
+        )
     ]
-    return api_success('Requirements listed.', {'items': items})
+    return api_success(
+        'Requirements listed.',
+        {'stamp': run.stamp_json, 'items': items},
+    )
 
 
 @csrf_exempt

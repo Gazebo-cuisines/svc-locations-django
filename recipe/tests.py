@@ -575,6 +575,53 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['data']['status'], 'active')
 
+    def test_activate_fills_spice_batch_from_bom(self):
+        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+        parent = self._product('Tandoori Paneer Marination - 206 - Spice')
+        parent.recipe_code = 'GFF206R-S'
+        parent.save(update_fields=['recipe_code'])
+        child = self._product('TANDOORI MASALA')
+        recipe = Recipe.objects.create(product=parent, name=parent.name)
+        version = RecipeVersion.objects.create(
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.APPROVED,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=child,
+            quantity=Decimal('251'),
+            unit_id=1,
+        )
+        resp = self._post(f'/recipe/versions/{version.id}/activate/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['status'], 'active')
+        self.assertEqual(data['batch_quantity'], '251.000000')
+        self.assertEqual(data['sum_batch_quantity'], '251.000000')
+
+    def test_activate_does_not_fill_pack_batch(self):
+        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+        parent = self._product('Gazebo - Butter Chicken With Pilau Rice | 400G X 4')
+        parent.recipe_code = 'CCBUR-R4TCC'
+        parent.save(update_fields=['recipe_code'])
+        child = self._product('Sleeve')
+        recipe = Recipe.objects.create(product=parent, name=parent.name)
+        version = RecipeVersion.objects.create(
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.APPROVED,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=child,
+            quantity=Decimal('4'),
+            unit_id=1,
+        )
+        resp = self._post(f'/recipe/versions/{version.id}/activate/')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertIsNone(data['batch_quantity'])
+        self.assertEqual(data['sum_batch_quantity'], '4.000000')
+
 
 class RecipeAuditTests(RecipeAuthMixin, TestCase):
     def setUp(self):
