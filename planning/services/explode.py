@@ -21,9 +21,11 @@ from planning.models import (
 from planning.services import batching, netting
 from planning.services.eligibility import required_min_shelf_life_days
 from planning.services.exceptions import PlanningError, PlanningStateError
-from recipe.utils import _BATCH_BOM_MIN, scaled_child_net
+from product.models import Product, Unit
+from recipe.utils import batch_scale_denom, scaled_child_net
+from stock_ledger.util.conversions import StockValidationError, to_product_unit
 
-DRIVER_VERSION = 'explode-1.1'
+DRIVER_VERSION = 'explode-1.3'
 MAX_BOM_DEPTH = 20
 
 
@@ -62,20 +64,47 @@ def _qty(value: Decimal | None) -> str | None:
     return text
 
 
-def _scale_denom(
-    component_qty: Decimal,
+def _unit_names(unit_ids: list[int | None]) -> dict[int, str]:
+    ids = [uid for uid in unit_ids if uid is not None]
+    if not ids:
+        return {}
+    return dict(Unit.objects.filter(pk__in=ids).values_list('id', 'name'))
+
+
+def _convert_bom_to_stock(
+    qty: Decimal,
     *,
-    batch_quantity: Decimal | None,
-    bom_sum: Decimal | None,
-) -> Decimal | None:
-    total = bom_sum if bom_sum is not None else component_qty
-    if total < _BATCH_BOM_MIN:
-        return None
-    if batch_quantity is not None and batch_quantity > 0:
-        return batch_quantity
-    if total > 0:
-        return total
-    return None
+    bom_unit_id: int | None,
+    stock_unit_id: int | None,
+    product_id: int,
+) -> tuple[Decimal, dict | None, str | None]:
+    """BOM line unit → product.unit. Missing conversion keeps qty and warns."""
+    names = _unit_names([bom_unit_id, stock_unit_id])
+    bom_name = names.get(bom_unit_id) if bom_unit_id else None
+    stock_name = names.get(stock_unit_id) if stock_unit_id else None
+    if (
+        bom_unit_id is None
+        or stock_unit_id is None
+        or bom_unit_id == stock_unit_id
+    ):
+        return qty, None, None
+    product = Product.objects.get(pk=product_id)
+    try:
+        converted = to_product_unit(qty, bom_unit_id, product)
+    except StockValidationError:
+        return qty, {
+            'op': 'convert_uom',
+            'skipped': True,
+            'reason': 'missing_uom_conversion',
+            'from': f'{_qty(qty)} {bom_name or bom_unit_id}',
+            'to': f'{_qty(qty)} {stock_name or stock_unit_id}',
+        }, 'missing_uom_conversion'
+    return converted, {
+        'op': 'convert_uom',
+        'formula': 'bom_unit → stock_unit',
+        'from': f'{_qty(qty)} {bom_name or bom_unit_id}',
+        'to': f'{_qty(converted)} {stock_name or stock_unit_id}',
+    }, None
 
 
 def _stock_step(stock: dict, gross_before: Decimal) -> dict:
@@ -376,10 +405,11 @@ def _explode_children(
                 f'yield_factor must be > 0 for product {child_product.id}'
             )
 
-        denom = _scale_denom(
+        denom = batch_scale_denom(
             component.quantity,
             batch_quantity=recipe_spec.batch_quantity,
             bom_sum=bom_sum,
+            process_batch=recipe_spec.process_batch,
         )
         net_scaled = scaled_child_net(
             parent_gross,
@@ -387,14 +417,21 @@ def _explode_children(
             yield_factor=child_product.yield_factor,
             batch_quantity=recipe_spec.batch_quantity,
             bom_sum=bom_sum,
+            process_batch=recipe_spec.process_batch,
+        )
+        net_in_stock, uom_step, uom_warning = _convert_bom_to_stock(
+            net_scaled,
+            bom_unit_id=component.unit_id,
+            stock_unit_id=child_product.unit_id,
+            product_id=child_product.id,
         )
         if child_loss <= 0:
             child_loss = Decimal('1')
-        gross_before_stock = net_scaled / child_loss
+        gross_before_stock = net_in_stock / child_loss
 
         consider = _consider_stock(line, child_product.consider_stock_in_plan)
         stock = netting.apply_stock_netting(
-            net_required=net_scaled,
+            net_required=net_in_stock,
             gross_required=gross_before_stock,
             process_loss=child_loss,
             product=child_product,
@@ -452,17 +489,22 @@ def _explode_children(
                 'from': scale_from,
                 'to': _qty(net_scaled),
             },
+        ]
+        if uom_step is not None:
+            steps.append(uom_step)
+        steps.extend([
             {
                 'op': 'gross',
                 'formula': 'net / process_loss',
-                'from': f'{_qty(net_scaled)} / {_qty(child_loss)}',
+                'from': f'{_qty(net_in_stock)} / {_qty(child_loss)}',
                 'to': _qty(gross_before_stock),
             },
             _stock_step(stock, gross_before_stock),
-        ]
+        ])
         if batch_step is not None:
             steps.append(batch_step)
 
+        names = _unit_names([component.unit_id, child_product.unit_id])
         calc = {
             'v': 1,
             'kind': 'child',
@@ -485,6 +527,8 @@ def _explode_children(
                 'recipe_version_id': child_version_id,
                 'recipe_version_number': child_version_number,
                 'consider_stock': consider,
+                'bom_unit': names.get(component.unit_id),
+                'stock_unit': names.get(child_product.unit_id),
             },
             'steps': steps,
             'result': {
@@ -492,6 +536,8 @@ def _explode_children(
                 'gross': _qty(gross_child),
             },
         }
+        if uom_warning:
+            calc['warnings'] = [uom_warning]
         req = PlanRequirement.objects.create(
             run=run,
             plan_line=None,

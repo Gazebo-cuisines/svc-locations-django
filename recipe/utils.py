@@ -10,6 +10,43 @@ from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionS
 
 MAX_TREE_DEPTH = 20
 _BATCH_BOM_MIN = Decimal('1000')
+_SMALL_PROCESS_BOM_MIN = Decimal('100')
+
+
+def is_process_batch_recipe(recipe_code: str | None, name: str | None) -> bool:
+    """Spice / cook / steam / mix SKUs — BOM grams are for one batch, not one unit."""
+    code = recipe_code or ''
+    label = name or ''
+    if code.endswith(('-S', '-C', '-Mx')) or ' - St' in code:
+        return True
+    return any(
+        marker in label
+        for marker in (
+            ' - Spice',
+            ' - Spices',
+            ' - Cooking',
+            ' - Steaming',
+            ' - Mix',
+        )
+    )
+
+
+def batch_scale_denom(
+    component_qty: Decimal,
+    *,
+    batch_quantity: Decimal | None,
+    bom_sum: Decimal | None,
+    process_batch: bool = False,
+) -> Decimal | None:
+    total = bom_sum if bom_sum is not None else component_qty
+    if total >= _BATCH_BOM_MIN or (
+        process_batch and total >= _SMALL_PROCESS_BOM_MIN
+    ):
+        if batch_quantity is not None and batch_quantity > 0:
+            return batch_quantity
+        if total > 0:
+            return total
+    return None
 
 
 def scaled_child_net(
@@ -19,26 +56,50 @@ def scaled_child_net(
     yield_factor: Decimal = Decimal('1'),
     batch_quantity: Decimal | None = None,
     bom_sum: Decimal | None = None,
+    process_batch: bool = False,
 ) -> Decimal:
     """Child qty from parent gross.
 
     Pack/belt/fry BOMs are per parent unit (counts, ~80g piece). Mix/spice/cook
-    BOMs are grams-for-the-batch (line totals typically >= 1000). Scale those
-    by batch_quantity, or by the BOM sum when batch_quantity is unset.
+    BOMs are grams-for-the-batch (line totals typically >= 1000, or any process
+    recipe whose BOM is at least 100 g). Scale those by batch_quantity, or by
+    the BOM sum when batch_quantity is unset.
     Do not scale merely because batch_quantity is set — that field is also
     min-batch for chain-net.
     """
     yf = yield_factor if yield_factor and yield_factor > 0 else Decimal('1')
-    total = bom_sum if bom_sum is not None else component_qty
-    denom = None
-    if total >= _BATCH_BOM_MIN:
-        if batch_quantity is not None and batch_quantity > 0:
-            denom = batch_quantity
-        elif total > 0:
-            denom = total
+    denom = batch_scale_denom(
+        component_qty,
+        batch_quantity=batch_quantity,
+        bom_sum=bom_sum,
+        process_batch=process_batch,
+    )
     if denom:
         return parent_gross * component_qty / denom / yf
     return parent_gross * component_qty / yf
+
+
+def apply_bom_batch_quantity(version: RecipeVersion) -> list[str]:
+    """Cache BOM sum. On spice/cook/steam/mix, fill empty batch_quantity from it."""
+    components = list(version.components.all())
+    bom_sum = sum((c.quantity for c in components), Decimal('0'))
+    fields: list[str] = []
+    cached = bom_sum if bom_sum > 0 else None
+    if version.sum_batch_quantity != cached:
+        version.sum_batch_quantity = cached
+        fields.append('sum_batch_quantity')
+    product = version.recipe.product
+    if (
+        is_process_batch_recipe(product.recipe_code, product.name)
+        and bom_sum >= _SMALL_PROCESS_BOM_MIN
+        and (version.batch_quantity is None or version.batch_quantity <= 0)
+    ):
+        version.batch_quantity = bom_sum
+        fields.append('batch_quantity')
+        if version.batch_unit_id is None and components:
+            version.batch_unit_id = components[0].unit_id
+            fields.append('batch_unit_id')
+    return fields
 
 
 class RecipeValidationError(ValueError):
@@ -148,17 +209,23 @@ def activate_version(version: RecipeVersion) -> RecipeVersion:
     Make version active; retire any prior active version for the same recipe.
     Keeps history (no wipe of component lines).
     """
-    locked = RecipeVersion.objects.select_for_update().filter(
-        recipe_id=version.recipe_id,
+    locked = (
+        RecipeVersion.objects.select_for_update()
+        .select_related('recipe__product')
+        .prefetch_related('components')
+        .filter(recipe_id=version.recipe_id)
     )
     target = locked.get(pk=version.pk)
     locked.filter(status=RecipeVersionStatus.ACTIVE).exclude(pk=target.pk).update(
         status=RecipeVersionStatus.RETIRED,
     )
+    fields = apply_bom_batch_quantity(target)
     if target.status != RecipeVersionStatus.ACTIVE:
         target.status = RecipeVersionStatus.ACTIVE
         target.activated_at = timezone.now()
-        target.save(update_fields=['status', 'activated_at', 'updated_at'])
+        fields.extend(['status', 'activated_at'])
+    if fields:
+        target.save(update_fields=[*fields, 'updated_at'])
     return target
 
 

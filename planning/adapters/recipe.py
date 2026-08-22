@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from recipe.models import Recipe, RecipeVersion, RecipeVersionStatus
+from recipe.utils import is_process_batch_recipe
 
 from planning.adapters.types import (
     CONTRACT_VERSION,
@@ -32,7 +33,7 @@ def get_recipe_version(version_id: int) -> RecipeVersionSpec:
     try:
         version = (
             RecipeVersion.objects
-            .select_related('recipe')
+            .select_related('recipe__product')
             .prefetch_related('components')
             .get(pk=version_id)
         )
@@ -48,11 +49,13 @@ def get_recipe_version(version_id: int) -> RecipeVersionSpec:
         )
         for c in sorted(version.components.all(), key=lambda x: x.line_no)
     )
+    product = version.recipe.product
     return RecipeVersionSpec(
         version_id=version.id,
         product_id=version.recipe.product_id,
         version_number=version.version_number,
         process_loss=version.process_loss,
         batch_quantity=version.batch_quantity,
+        process_batch=is_process_batch_recipe(product.recipe_code, product.name),
         components=components,
     )
