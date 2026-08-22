@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
 from django.db import transaction
@@ -22,9 +21,9 @@ from planning.models import (
 from planning.services import batching, netting
 from planning.services.eligibility import required_min_shelf_life_days
 from planning.services.exceptions import PlanningError, PlanningStateError
-from recipe.utils import scaled_child_net
+from recipe.utils import _BATCH_BOM_MIN, scaled_child_net
 
-DRIVER_VERSION = 'explode-1.0'
+DRIVER_VERSION = 'explode-1.1'
 MAX_BOM_DEPTH = 20
 
 
@@ -54,8 +53,81 @@ def _align_last(line: PlanLine, product_flag: bool) -> bool:
     return product_flag
 
 
+def _qty(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    text = format(value.normalize(), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
+def _scale_denom(
+    component_qty: Decimal,
+    *,
+    batch_quantity: Decimal | None,
+    bom_sum: Decimal | None,
+) -> Decimal | None:
+    total = bom_sum if bom_sum is not None else component_qty
+    if total < _BATCH_BOM_MIN:
+        return None
+    if batch_quantity is not None and batch_quantity > 0:
+        return batch_quantity
+    if total > 0:
+        return total
+    return None
+
+
+def _stock_step(stock: dict, gross_before: Decimal) -> dict:
+    if not stock['applied']:
+        return {
+            'op': 'stock_net',
+            'skipped': True,
+            'reason': 'consider_stock=false',
+        }
+    return {
+        'op': 'stock_net',
+        'formula': 'gross - available',
+        'from': f"{_qty(gross_before)} - {_qty(stock['available'])}",
+        'to': _qty(stock['gross']),
+        'available': _qty(stock['available']),
+        'on_hand': _qty(stock['on_hand']),
+        'min_stock_held': _qty(stock['min_stock_held']),
+    }
+
+
+def _run_stamp(*, run: PlanRun, plan: Plan, line_count: int, stamp: dict | None) -> dict:
+    actor = stamp or {}
+    return {
+        'v': 1,
+        'what': 'explode',
+        'actor_sub': actor.get('actor_sub'),
+        'actor_name': actor.get('actor_name'),
+        'actor_email': actor.get('actor_email'),
+        'source_workstation_ip': actor.get('source_workstation_ip'),
+        'at': run.started_at.isoformat() if run.started_at else None,
+        'plan_id': plan.id,
+        'run_id': run.id,
+        'run_number': run.run_number,
+        'driver': DRIVER_VERSION,
+        'line_count': line_count,
+    }
+
+
+def _event_payload(stamp_json: dict, extra: dict | None = None) -> dict:
+    payload = dict(stamp_json)
+    if extra:
+        payload.update(extra)
+    return payload
+
+
 @transaction.atomic
-def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
+def run_explode(
+    plan_id: int,
+    *,
+    actor_user_id: int | None = None,
+    stamp: dict | None = None,
+) -> PlanRun:
     plan = Plan.objects.select_for_update().get(pk=plan_id)
     if plan.status == PlanStatus.CLOSED:
         raise PlanningStateError('cannot explode a closed plan')
@@ -73,16 +145,21 @@ def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
         driver_version=DRIVER_VERSION,
         started_at=now,
     )
+    lines = list(plan.lines.order_by('sort_order', 'id'))
+    stamp_json = _run_stamp(
+        run=run, plan=plan, line_count=len(lines), stamp=stamp,
+    )
+    run.stamp_json = stamp_json
+    run.save(update_fields=['stamp_json'])
     PlanEvent.objects.create(
         plan=plan,
         event_type='run_started',
-        payload_json={'run_id': run.id, 'run_number': run.run_number},
+        payload_json=_event_payload(stamp_json),
         actor_user_id=actor_user_id,
     )
 
     try:
         with transaction.atomic():
-            lines = list(plan.lines.order_by('sort_order', 'id'))
             if not lines:
                 raise PlanningError('plan has no demand lines')
 
@@ -95,7 +172,7 @@ def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
         PlanEvent.objects.create(
             plan=plan,
             event_type='run_complete',
-            payload_json={'run_id': run.id, 'run_number': run.run_number},
+            payload_json=_event_payload(stamp_json),
             actor_user_id=actor_user_id,
         )
         return run
@@ -113,11 +190,7 @@ def run_explode(plan_id: int, *, actor_user_id: int | None = None) -> PlanRun:
         PlanEvent.objects.create(
             plan=plan,
             event_type='run_failed',
-            payload_json={
-                'run_id': run.id,
-                'run_number': run.run_number,
-                'error': str(to_raise),
-            },
+            payload_json=_event_payload(stamp_json, {'error': str(to_raise)}),
             actor_user_id=actor_user_id,
         )
         raise to_raise from exc
@@ -130,9 +203,11 @@ def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
     )
     process_loss = Decimal('1')
     recipe_spec = None
+    version_number = None
     if version_id is not None:
         recipe_spec = recipe_adapter.get_recipe_version(version_id)
         process_loss = recipe_spec.process_loss
+        version_number = recipe_spec.version_number
 
     product = product_adapter.get_product_spec(
         line.product_id,
@@ -142,17 +217,18 @@ def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
     net = line.quantity
     if process_loss <= 0:
         process_loss = Decimal('1')
-    gross = net / process_loss
+    gross_before_stock = net / process_loss
 
     consider = _consider_stock(line, product.consider_stock_in_plan)
-    net, gross, on_hand = netting.apply_stock_netting(
+    stock = netting.apply_stock_netting(
         net_required=net,
-        gross_required=gross,
+        gross_required=gross_before_stock,
         process_loss=process_loss,
         product=product,
         plan_date=plan.plan_date,
         consider_stock=consider,
     )
+    net, gross, on_hand = stock['net'], stock['gross'], stock['on_hand']
 
     full = _full_batches(line, product.full_batches_only)
     align = _align_last(line, product.align_unitary_weight)
@@ -164,9 +240,56 @@ def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
     )
     if not batch_grosses:
         batch_grosses = [Decimal('0')]
+    batch_count = len(batch_grosses)
+    stock_step = _stock_step(stock, gross_before_stock)
 
     for batch_number, batch_gross in enumerate(batch_grosses, start=1):
         batch_net = batch_gross * process_loss
+        calc = {
+            'v': 1,
+            'kind': 'demand',
+            'summary': (
+                f'{_qty(batch_net)} net / {_qty(batch_gross)} gross from line '
+                f'{_qty(line.quantity)}. '
+                + (
+                    'Stock not applied.'
+                    if not stock['applied']
+                    else f"Stock available {_qty(stock['available'])}."
+                )
+            ),
+            'inputs': {
+                'plan_line_qty': _qty(line.quantity),
+                'process_loss': _qty(process_loss),
+                'recipe_version_id': version_id,
+                'recipe_version_number': version_number,
+                'consider_stock': consider,
+                'full_batches': full,
+                'align_last_batch': align,
+            },
+            'steps': [
+                {
+                    'op': 'gross',
+                    'formula': 'net / process_loss',
+                    'from': f'{_qty(line.quantity)} / {_qty(process_loss)}',
+                    'to': _qty(gross_before_stock),
+                },
+                stock_step,
+                {
+                    'op': 'batch_split',
+                    'formula': 'split gross into batches',
+                    'from': _qty(gross),
+                    'to': _qty(batch_gross),
+                    'batch_number': batch_number,
+                    'batch_count': batch_count,
+                },
+            ],
+            'result': {
+                'net': _qty(batch_net),
+                'gross': _qty(batch_gross),
+                'batch_number': batch_number,
+                'batch_count': batch_count,
+            },
+        }
         parent = PlanRequirement.objects.create(
             run=run,
             plan_line=line,
@@ -189,6 +312,7 @@ def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
             stock_on_hand=on_hand,
             balance=batch_gross,
             closed=False,
+            calc_json=calc,
         )
         if recipe_spec is not None and batch_gross > 0:
             _explode_children(
@@ -196,6 +320,8 @@ def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
                 run=run,
                 parent=parent,
                 parent_gross=batch_gross,
+                parent_product_id=product.id,
+                parent_product_name=product.name,
                 recipe_version_id=version_id,
                 depth=1,
                 ancestry={product.id},
@@ -210,6 +336,8 @@ def _explode_children(
     run: PlanRun,
     parent: PlanRequirement,
     parent_gross: Decimal,
+    parent_product_id: int,
+    parent_product_name: str,
     recipe_version_id: int,
     depth: int,
     ancestry: set[int],
@@ -233,9 +361,11 @@ def _explode_children(
         )
         child_loss = Decimal('1')
         child_recipe = None
+        child_version_number = None
         if child_version_id is not None:
             child_recipe = recipe_adapter.get_recipe_version(child_version_id)
             child_loss = child_recipe.process_loss
+            child_version_number = child_recipe.version_number
 
         child_product = product_adapter.get_product_spec(
             component.product_id,
@@ -246,7 +376,12 @@ def _explode_children(
                 f'yield_factor must be > 0 for product {child_product.id}'
             )
 
-        net_child = scaled_child_net(
+        denom = _scale_denom(
+            component.quantity,
+            batch_quantity=recipe_spec.batch_quantity,
+            bom_sum=bom_sum,
+        )
+        net_scaled = scaled_child_net(
             parent_gross,
             component.quantity,
             yield_factor=child_product.yield_factor,
@@ -255,16 +390,19 @@ def _explode_children(
         )
         if child_loss <= 0:
             child_loss = Decimal('1')
-        gross_child = net_child / child_loss
+        gross_before_stock = net_scaled / child_loss
 
         consider = _consider_stock(line, child_product.consider_stock_in_plan)
-        net_child, gross_child, on_hand = netting.apply_stock_netting(
-            net_required=net_child,
-            gross_required=gross_child,
+        stock = netting.apply_stock_netting(
+            net_required=net_scaled,
+            gross_required=gross_before_stock,
             process_loss=child_loss,
             product=child_product,
             plan_date=plan.plan_date,
             consider_stock=consider,
+        )
+        net_child, gross_child, on_hand = (
+            stock['net'], stock['gross'], stock['on_hand'],
         )
 
         full = _full_batches(line, child_product.full_batches_only)
@@ -272,6 +410,8 @@ def _explode_children(
         # Children inherit parent batch_number; do not re-split across new numbers
         # unless full_batches would change qty — apply split only as qty adjust on
         # same batch_number for MVP simplicity: one row per component per parent batch.
+        batch_step = None
+        gross_before_batch = gross_child
         if full and child_product.standard_batch_kg:
             parts = batching.split_batches(
                 gross_child,
@@ -281,7 +421,77 @@ def _explode_children(
             )
             gross_child = sum(parts, Decimal('0'))
             net_child = gross_child * child_loss
+            batch_step = {
+                'op': 'full_batches',
+                'formula': 'round gross up to standard batches',
+                'from': _qty(gross_before_batch),
+                'to': _qty(gross_child),
+            }
 
+        yf = child_product.yield_factor
+        if denom:
+            scale_formula = 'parent_gross × bom_qty / denom / yield'
+            scale_from = (
+                f'{_qty(parent_gross)} × {_qty(component.quantity)} '
+                f'/ {_qty(denom)} / {_qty(yf)}'
+            )
+        else:
+            scale_formula = 'parent_gross × bom_qty / yield'
+            scale_from = (
+                f'{_qty(parent_gross)} × {_qty(component.quantity)} / {_qty(yf)}'
+            )
+        stock_note = (
+            'Stock not applied.'
+            if not stock['applied']
+            else f"Stock available {_qty(stock['available'])}."
+        )
+        steps = [
+            {
+                'op': 'scale_bom',
+                'formula': scale_formula,
+                'from': scale_from,
+                'to': _qty(net_scaled),
+            },
+            {
+                'op': 'gross',
+                'formula': 'net / process_loss',
+                'from': f'{_qty(net_scaled)} / {_qty(child_loss)}',
+                'to': _qty(gross_before_stock),
+            },
+            _stock_step(stock, gross_before_stock),
+        ]
+        if batch_step is not None:
+            steps.append(batch_step)
+
+        calc = {
+            'v': 1,
+            'kind': 'child',
+            'summary': (
+                f'{_qty(net_child)} from parent {_qty(parent_gross)} × BOM '
+                f'{_qty(component.quantity)}'
+                + (f' / {_qty(denom)}' if denom else '')
+                + f' / yield {_qty(yf)}. {stock_note}'
+            ),
+            'inputs': {
+                'parent_gross': _qty(parent_gross),
+                'parent_product_id': parent_product_id,
+                'parent_product_name': parent_product_name,
+                'bom_qty': _qty(component.quantity),
+                'bom_sum': _qty(bom_sum),
+                'batch_quantity': _qty(recipe_spec.batch_quantity),
+                'denom': _qty(denom),
+                'yield_factor': _qty(yf),
+                'process_loss': _qty(child_loss),
+                'recipe_version_id': child_version_id,
+                'recipe_version_number': child_version_number,
+                'consider_stock': consider,
+            },
+            'steps': steps,
+            'result': {
+                'net': _qty(net_child),
+                'gross': _qty(gross_child),
+            },
+        }
         req = PlanRequirement.objects.create(
             run=run,
             plan_line=None,
@@ -304,6 +514,7 @@ def _explode_children(
             stock_on_hand=on_hand,
             balance=gross_child,
             closed=False,
+            calc_json=calc,
         )
 
         if child_recipe is not None and gross_child > 0:
@@ -312,6 +523,8 @@ def _explode_children(
                 run=run,
                 parent=req,
                 parent_gross=gross_child,
+                parent_product_id=child_product.id,
+                parent_product_name=child_product.name,
                 recipe_version_id=child_version_id,
                 depth=depth + 1,
                 ancestry={*ancestry, child_product.id},

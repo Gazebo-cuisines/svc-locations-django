@@ -346,6 +346,7 @@ class PlanRun(models.Model):
     error_message = models.TextField(null=True, blank=True)
     started_at = models.DateTimeField()
     completed_at = models.DateTimeField(null=True, blank=True)
+    stamp_json = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = 'plan_run'
@@ -439,6 +440,7 @@ class PlanRequirement(models.Model):
         default=Decimal('0'),
     )
     closed = models.BooleanField(default=False)
+    calc_json = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

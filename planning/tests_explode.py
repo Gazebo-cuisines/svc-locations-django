@@ -115,5 +115,40 @@ class ExplodeBatchBomTests(TestCase):
             run=run, product_id=self.potato.id,
         )
         expected = Decimal('4812000') * Decimal('96000') / Decimal('186080')
-        self.assertEqual(potato.net_required, expected)
+        self.assertEqual(
+            potato.net_required,
+            expected.quantize(Decimal('0.000001')),
+        )
         self.assertLess(potato.net_required, Decimal('10000000'))
+
+        mixer = PlanRequirement.objects.get(run=run, product_id=self.mixer.id)
+        self.assertEqual(mixer.calc_json['kind'], 'demand')
+        self.assertEqual(mixer.calc_json['steps'][0]['op'], 'gross')
+        self.assertEqual(mixer.calc_json['steps'][0]['formula'], 'net / process_loss')
+        stock = next(s for s in mixer.calc_json['steps'] if s['op'] == 'stock_net')
+        self.assertTrue(stock['skipped'])
+
+        scale = next(s for s in potato.calc_json['steps'] if s['op'] == 'scale_bom')
+        self.assertEqual(
+            Decimal(scale['to']).quantize(Decimal('0.000001')),
+            potato.net_required,
+        )
+        self.assertEqual(potato.calc_json['kind'], 'child')
+        self.assertEqual(potato.calc_json['inputs']['recipe_version_number'], None)
+        self.assertEqual(run.stamp_json['what'], 'explode')
+        self.assertEqual(run.stamp_json['driver'], 'explode-1.1')
+        self.assertEqual(run.stamp_json['line_count'], 1)
+
+        resp = self.client.get(
+            f'/planning/plans/{self.plan.id}/runs/{run.id}/requirements/',
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['stamp']['what'], 'explode')
+        by_name = {row['product_name']: row for row in data['items']}
+        self.assertIn('Mixer', by_name)
+        self.assertIn('Potato', by_name)
+        self.assertEqual(by_name['Potato']['unit_name'], 'grams')
+        self.assertEqual(by_name['Potato']['category_name'], 'Meals')
+        self.assertEqual(by_name['Potato']['product_class_name'], 'Finished')
+        self.assertEqual(by_name['Potato']['calc_json']['kind'], 'child')
