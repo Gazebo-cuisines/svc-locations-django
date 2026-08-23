@@ -110,6 +110,7 @@ def create_plan(
     location_id: int,
     remarks: str | None = None,
     actor_user_id: int | None = None,
+    name: str | None = None,
 ) -> Plan:
     plan = Plan.objects.create(
         plan_date=plan_date,
@@ -117,6 +118,7 @@ def create_plan(
         status=PlanStatus.DRAFT,
         remarks=remarks,
         created_by_user_id=actor_user_id,
+        name=(name or '').strip(),
     )
     PlanEvent.objects.create(
         plan=plan,
@@ -146,16 +148,21 @@ def rollover_open_lines(
         close_plan(source.id, actor_user_id=actor_user_id)
         source.refresh_from_db()
 
-    target, _created = Plan.objects.get_or_create(
-        plan_date=target_plan_date,
-        location_id=source.location_id,
-        defaults={
-            'status': PlanStatus.DRAFT,
-            'remarks': f'Rollover from plan {source.id}',
-            'created_by_user_id': actor_user_id,
-        },
+    target = (
+        Plan.objects.select_for_update()
+        .filter(plan_date=target_plan_date, location_id=source.location_id)
+        .order_by('id')
+        .first()
     )
-    if target.status == PlanStatus.CLOSED:
+    created_new = target is None
+    if created_new:
+        target = create_plan(
+            plan_date=target_plan_date,
+            location_id=source.location_id,
+            remarks=f'Rollover from plan {source.id}',
+            actor_user_id=actor_user_id,
+        )
+    elif target.status == PlanStatus.CLOSED:
         reopen_plan(target.id, actor_user_id=actor_user_id)
         target.refresh_from_db()
 
@@ -179,10 +186,11 @@ def rollover_open_lines(
         payload_json={'target_plan_id': target.id},
         actor_user_id=actor_user_id,
     )
-    PlanEvent.objects.create(
-        plan=target,
-        event_type='created',
-        payload_json={'rollover_from': source.id},
-        actor_user_id=actor_user_id,
-    )
+    if not created_new:
+        PlanEvent.objects.create(
+            plan=target,
+            event_type='created',
+            payload_json={'rollover_from': source.id},
+            actor_user_id=actor_user_id,
+        )
     return target
