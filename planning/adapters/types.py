@@ -42,6 +42,7 @@ class RecipeVersionSpec:
     version_number: int
     process_loss: Decimal
     batch_quantity: Optional[Decimal]
+    process_batch: bool
     components: tuple[ComponentSpec, ...]
 
 

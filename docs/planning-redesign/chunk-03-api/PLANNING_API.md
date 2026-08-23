@@ -91,10 +91,21 @@
   "plan_id": 1,
   "run_number": 1,
   "status": "complete",
-  "driver_version": "explode-1.0",
+  "driver_version": "explode-1.1",
   "error_message": null,
   "started_at": "2026-08-03T09:00:00Z",
-  "completed_at": "2026-08-03T09:00:02Z"
+  "completed_at": "2026-08-03T09:00:02Z",
+  "stamp_json": {
+    "v": 1,
+    "what": "explode",
+    "actor_name": "Harvi",
+    "at": "2026-08-03T09:00:00+00:00",
+    "plan_id": 1,
+    "run_id": 1,
+    "run_number": 1,
+    "driver": "explode-1.1",
+    "line_count": 1
+  }
 }
 ```
 
@@ -110,6 +121,12 @@
   "batch_number": 1,
   "position": null,
   "product_id": 502,
+  "product_name": "Potato",
+  "unit_name": "grams",
+  "category_id": 1,
+  "category_name": "Meals",
+  "product_class_id": 1,
+  "product_class_name": "Finished",
   "recipe_version_id": 90,
   "net_required": "40.000000",
   "gross_required": "42.000000",
@@ -121,7 +138,26 @@
   "default_resource_id": null,
   "stock_on_hand": "20.000000",
   "balance": "22.000000",
-  "closed": false
+  "closed": false,
+  "calc_json": {
+    "v": 1,
+    "kind": "child",
+    "summary": "40 from parent 100 × BOM 12 / yield 1. Stock not applied.",
+    "inputs": {
+      "parent_gross": "100",
+      "bom_qty": "12",
+      "yield_factor": "1"
+    },
+    "steps": [
+      {
+        "op": "scale_bom",
+        "formula": "parent_gross × bom_qty / yield",
+        "from": "100 × 12 / 1",
+        "to": "40"
+      }
+    ],
+    "result": { "net": "40", "gross": "42" }
+  }
 }
 ```
 
@@ -277,7 +313,7 @@ Only when plan `status=draft`. Locked/closed → `409`.
 
 **Query:** `flat=true` (default) or `tree=true`
 
-**Success:** `data.items` = list of requirements (see shape above).
+**Success:** `data.stamp` = run who/when/what (null on old runs). `data.items` = list of requirements (see shape above). Each item includes `product_name`, `unit_name`, and `calc_json` (null on old runs).
 
 ---
 

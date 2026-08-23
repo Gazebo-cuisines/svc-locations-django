@@ -8,12 +8,24 @@ from locations.models import Location
 from planning.models import (
     Plan,
     PlanEvent,
+    PlanLine,
+    PlanLineSource,
     PlanRequirement,
     PlanRun,
     PlanRunStatus,
     Resource,
 )
-from product.models import Category, Product, ProductClass, ProductSupplier, Range, Unit
+from product.models import (
+    Category,
+    PackagingType,
+    Product,
+    ProductClass,
+    ProductCosting,
+    ProductPackaging,
+    ProductSupplier,
+    Range,
+    Unit,
+)
 from stock_ledger.models import (
     ProductionRun,
     StockEntry,
@@ -585,3 +597,95 @@ class PlanProgressApiTests(TestCase):
         )
         resp = self.client.get(f'/planning/plans/{bare.id}/progress/')
         self.assertEqual(resp.status_code, 422)
+
+
+class PlanLinePackSnapshotTests(TestCase):
+    def setUp(self):
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        loc = Location.objects.create(id=5, name='Sleeving', visible=True)
+        PackagingType.objects.create(id=1, name='Gas Flushed')
+        tray = Product.objects.create(
+            name='HW308/60-3 X CAV',
+            recipe_code='TRAY1',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container=loc,
+            destination_container=loc,
+        )
+        self.fg = Product.objects.create(
+            name='Veg Samosa 12pk',
+            recipe_code='FG1',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container=loc,
+            destination_container=loc,
+        )
+        ProductPackaging.objects.create(
+            product=self.fg,
+            pack_weight=Decimal('750'),
+            items_per_unit=Decimal('12'),
+            packaging_type_id=1,
+            tray=tray,
+        )
+        ProductCosting.objects.create(
+            product=self.fg,
+            case_size_description='1 x 4',
+        )
+        self.plan = Plan.objects.create(plan_date=date(2026, 8, 22), location=loc)
+        self.line = PlanLine.objects.create(
+            plan=self.plan,
+            product=self.fg,
+            quantity=Decimal('5000'),
+            unit_id=1,
+            source=PlanLineSource.MANUAL,
+        )
+
+    def test_plan_detail_embeds_pack_snapshot(self):
+        resp = self.client.get(f'/planning/plans/{self.plan.id}/')
+        self.assertEqual(resp.status_code, 200)
+        line = resp.json()['data']['lines'][0]
+        self.assertEqual(line['pack_weight'], '750G')
+        self.assertEqual(line['packaging_type'], 'Gas Flushed')
+        self.assertEqual(line['tray_name'], 'HW308/60-3 X CAV')
+        self.assertEqual(line['case_size'], '1 x 4')
+        self.assertEqual(line['units_per_case'], 12)
+        self.assertEqual(line['tray_quantity'], 60000)
+
+    def test_missing_satellites_are_null(self):
+        loc = self.plan.location
+        bare = Product.objects.create(
+            name='No pack',
+            recipe_code='FG2',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container=loc,
+            destination_container=loc,
+        )
+        PlanLine.objects.create(
+            plan=self.plan,
+            product=bare,
+            quantity=Decimal('10'),
+            unit_id=1,
+            source=PlanLineSource.MANUAL,
+            sort_order=1,
+        )
+        resp = self.client.get(f'/planning/plans/{self.plan.id}/lines/')
+        self.assertEqual(resp.status_code, 200)
+        empty = next(
+            row for row in resp.json()['data']['items'] if row['product_id'] == bare.id
+        )
+        self.assertIsNone(empty['pack_weight'])
+        self.assertIsNone(empty['packaging_type'])
+        self.assertIsNone(empty['tray_name'])
+        self.assertIsNone(empty['case_size'])
+        self.assertIsNone(empty['units_per_case'])
+        self.assertIsNone(empty['tray_quantity'])
