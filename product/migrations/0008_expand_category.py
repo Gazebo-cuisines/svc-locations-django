@@ -4,52 +4,92 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-def _add_if_missing(schema_editor, column, sql):
+def _column_exists(schema_editor, table, column):
+    vendor = schema_editor.connection.vendor
     with schema_editor.connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT COUNT(*) FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'product_category'
-              AND COLUMN_NAME = %s
-            """,
-            [column],
-        )
-        if cursor.fetchone()[0] == 0:
+        if vendor == 'mysql':
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = %s
+                  AND COLUMN_NAME = %s
+                """,
+                [table, column],
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = %s
+                  AND column_name = %s
+                """,
+                [table, column],
+            )
+        return cursor.fetchone()[0] > 0
+
+
+def _add_if_missing(schema_editor, column, sql):
+    if not _column_exists(schema_editor, 'product_category', column):
+        with schema_editor.connection.cursor() as cursor:
             cursor.execute(sql)
 
 
 def apply_expand(apps, schema_editor):
     # Idempotent: local DB may already have parent_id (deleted 0003) and/or a
     # partial failed apply of this migration.
-    adds = [
-        ('code_generator', 'ALTER TABLE product_category ADD COLUMN code_generator varchar(256) NULL'),
-        ('code_generator_path', 'ALTER TABLE product_category ADD COLUMN code_generator_path varchar(256) NULL'),
-        ('is_container', 'ALTER TABLE product_category ADD COLUMN is_container tinyint(1) NULL'),
-        ('is_container_flag', 'ALTER TABLE product_category ADD COLUMN is_container_flag tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_default', 'ALTER TABLE product_category ADD COLUMN is_default tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_locked', 'ALTER TABLE product_category ADD COLUMN is_locked tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_locked_assigned', 'ALTER TABLE product_category ADD COLUMN is_locked_assigned tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_locked_path', 'ALTER TABLE product_category ADD COLUMN is_locked_path tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_other', 'ALTER TABLE product_category ADD COLUMN is_other tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_range', 'ALTER TABLE product_category ADD COLUMN is_range tinyint(1) NOT NULL DEFAULT 0'),
-        ('is_resource', 'ALTER TABLE product_category ADD COLUMN is_resource tinyint(1) NOT NULL DEFAULT 0'),
-        ('item_flag', 'ALTER TABLE product_category ADD COLUMN item_flag smallint NOT NULL DEFAULT -1'),
-        ('last_increment_auto_code', 'ALTER TABLE product_category ADD COLUMN last_increment_auto_code int NOT NULL DEFAULT 0'),
-        ('multiplier', 'ALTER TABLE product_category ADD COLUMN multiplier decimal(10,2) NULL'),
-        ('parent_id', 'ALTER TABLE product_category ADD COLUMN parent_id int NULL'),
-        ('path', 'ALTER TABLE product_category ADD COLUMN path varchar(256) NULL'),
-        ('path_nodes', 'ALTER TABLE product_category ADD COLUMN path_nodes varchar(128) NULL'),
-        ('purchase_unit_id', 'ALTER TABLE product_category ADD COLUMN purchase_unit_id int NULL'),
-        ('remarks', 'ALTER TABLE product_category ADD COLUMN remarks longtext NULL'),
-    ]
+    if schema_editor.connection.vendor == 'postgresql':
+        adds = [
+            ('code_generator', 'ALTER TABLE product_category ADD COLUMN code_generator varchar(256) NULL'),
+            ('code_generator_path', 'ALTER TABLE product_category ADD COLUMN code_generator_path varchar(256) NULL'),
+            ('is_container', 'ALTER TABLE product_category ADD COLUMN is_container boolean NULL'),
+            ('is_container_flag', 'ALTER TABLE product_category ADD COLUMN is_container_flag boolean NOT NULL DEFAULT false'),
+            ('is_default', 'ALTER TABLE product_category ADD COLUMN is_default boolean NOT NULL DEFAULT false'),
+            ('is_locked', 'ALTER TABLE product_category ADD COLUMN is_locked boolean NOT NULL DEFAULT false'),
+            ('is_locked_assigned', 'ALTER TABLE product_category ADD COLUMN is_locked_assigned boolean NOT NULL DEFAULT false'),
+            ('is_locked_path', 'ALTER TABLE product_category ADD COLUMN is_locked_path boolean NOT NULL DEFAULT false'),
+            ('is_other', 'ALTER TABLE product_category ADD COLUMN is_other boolean NOT NULL DEFAULT false'),
+            ('is_range', 'ALTER TABLE product_category ADD COLUMN is_range boolean NOT NULL DEFAULT false'),
+            ('is_resource', 'ALTER TABLE product_category ADD COLUMN is_resource boolean NOT NULL DEFAULT false'),
+            ('item_flag', 'ALTER TABLE product_category ADD COLUMN item_flag smallint NOT NULL DEFAULT -1'),
+            ('last_increment_auto_code', 'ALTER TABLE product_category ADD COLUMN last_increment_auto_code integer NOT NULL DEFAULT 0'),
+            ('multiplier', 'ALTER TABLE product_category ADD COLUMN multiplier numeric(10,2) NULL'),
+            ('parent_id', 'ALTER TABLE product_category ADD COLUMN parent_id integer NULL'),
+            ('path', 'ALTER TABLE product_category ADD COLUMN path varchar(256) NULL'),
+            ('path_nodes', 'ALTER TABLE product_category ADD COLUMN path_nodes varchar(128) NULL'),
+            ('purchase_unit_id', 'ALTER TABLE product_category ADD COLUMN purchase_unit_id integer NULL'),
+            ('remarks', 'ALTER TABLE product_category ADD COLUMN remarks text NULL'),
+        ]
+        name_sql = 'ALTER TABLE product_category ALTER COLUMN name TYPE varchar(256)'
+    else:
+        adds = [
+            ('code_generator', 'ALTER TABLE product_category ADD COLUMN code_generator varchar(256) NULL'),
+            ('code_generator_path', 'ALTER TABLE product_category ADD COLUMN code_generator_path varchar(256) NULL'),
+            ('is_container', 'ALTER TABLE product_category ADD COLUMN is_container tinyint(1) NULL'),
+            ('is_container_flag', 'ALTER TABLE product_category ADD COLUMN is_container_flag tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_default', 'ALTER TABLE product_category ADD COLUMN is_default tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_locked', 'ALTER TABLE product_category ADD COLUMN is_locked tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_locked_assigned', 'ALTER TABLE product_category ADD COLUMN is_locked_assigned tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_locked_path', 'ALTER TABLE product_category ADD COLUMN is_locked_path tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_other', 'ALTER TABLE product_category ADD COLUMN is_other tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_range', 'ALTER TABLE product_category ADD COLUMN is_range tinyint(1) NOT NULL DEFAULT 0'),
+            ('is_resource', 'ALTER TABLE product_category ADD COLUMN is_resource tinyint(1) NOT NULL DEFAULT 0'),
+            ('item_flag', 'ALTER TABLE product_category ADD COLUMN item_flag smallint NOT NULL DEFAULT -1'),
+            ('last_increment_auto_code', 'ALTER TABLE product_category ADD COLUMN last_increment_auto_code int NOT NULL DEFAULT 0'),
+            ('multiplier', 'ALTER TABLE product_category ADD COLUMN multiplier decimal(10,2) NULL'),
+            ('parent_id', 'ALTER TABLE product_category ADD COLUMN parent_id int NULL'),
+            ('path', 'ALTER TABLE product_category ADD COLUMN path varchar(256) NULL'),
+            ('path_nodes', 'ALTER TABLE product_category ADD COLUMN path_nodes varchar(128) NULL'),
+            ('purchase_unit_id', 'ALTER TABLE product_category ADD COLUMN purchase_unit_id int NULL'),
+            ('remarks', 'ALTER TABLE product_category ADD COLUMN remarks longtext NULL'),
+        ]
+        name_sql = 'ALTER TABLE product_category MODIFY COLUMN name varchar(256) NOT NULL'
     for column, sql in adds:
         _add_if_missing(schema_editor, column, sql)
 
     with schema_editor.connection.cursor() as cursor:
-        cursor.execute(
-            'ALTER TABLE product_category MODIFY COLUMN name varchar(256) NOT NULL'
-        )
+        cursor.execute(name_sql)
 
 
 def noop_reverse(apps, schema_editor):

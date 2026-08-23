@@ -109,6 +109,8 @@ DROP_TRIGGERS = [
 
 
 def apply_triggers(apps, schema_editor):
+    if schema_editor.connection.vendor != 'mysql':
+        return
     with schema_editor.connection.cursor() as cursor:
         for drop in DROP_TRIGGERS:
             cursor.execute(drop)
@@ -117,6 +119,8 @@ def apply_triggers(apps, schema_editor):
 
 
 def drop_triggers(apps, schema_editor):
+    if schema_editor.connection.vendor != 'mysql':
+        return
     with schema_editor.connection.cursor() as cursor:
         for drop in DROP_TRIGGERS:
             cursor.execute(drop)
