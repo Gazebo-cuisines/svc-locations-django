@@ -231,6 +231,10 @@ class ResourceShift(models.Model):
         )
 
 
+def default_plan_name(plan_number: int) -> str:
+    return f'Production Plan - {plan_number}'
+
+
 class Plan(models.Model):
     plan_date = models.DateField()
     location = models.ForeignKey(
@@ -238,6 +242,8 @@ class Plan(models.Model):
         on_delete=models.PROTECT,
         related_name='plans',
     )
+    plan_number = models.PositiveIntegerField(unique=True)
+    name = models.CharField(max_length=255, blank=True)
     status = models.CharField(
         max_length=16,
         choices=PlanStatus.choices,
@@ -252,10 +258,6 @@ class Plan(models.Model):
     class Meta:
         db_table = 'plan'
         constraints = [
-            models.UniqueConstraint(
-                fields=['plan_date', 'location'],
-                name='uq_plan_date_location',
-            ),
             models.CheckConstraint(
                 check=models.Q(status__in=PlanStatus.values),
                 name='chk_plan_status',
@@ -269,8 +271,20 @@ class Plan(models.Model):
             ),
         ]
 
+    def save(self, *args, **kwargs):
+        if self.plan_number is None:
+            last = (
+                Plan.objects.order_by('-plan_number')
+                .values_list('plan_number', flat=True)
+                .first()
+            )
+            self.plan_number = (last or 0) + 1
+        if not (self.name or '').strip():
+            self.name = default_plan_name(self.plan_number)
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f'plan:{self.id}:{self.plan_date}:{self.status}'
+        return f'plan:{self.id}:#{self.plan_number}:{self.plan_date}:{self.status}'
 
 
 class PlanLine(models.Model):

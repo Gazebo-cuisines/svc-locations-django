@@ -80,6 +80,8 @@ def portal_today(
 
         items.append({
             'plan_id': plan.id,
+            'plan_number': plan.plan_number,
+            'name': plan.name,
             'run_id': run.id,
             'plan_date': plan.plan_date.isoformat(),
             'plan_location_id': plan.location_id,

@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from decimal import Decimal
 
@@ -689,3 +690,47 @@ class PlanLinePackSnapshotTests(TestCase):
         self.assertIsNone(empty['case_size'])
         self.assertIsNone(empty['units_per_case'])
         self.assertIsNone(empty['tray_quantity'])
+
+
+class PlanNameApiTests(TestCase):
+    def setUp(self):
+        self.loc = Location.objects.create(id=10, name='Factory', visible=True)
+
+    def _create(self, body):
+        return self.client.post(
+            '/planning/plans/',
+            data=json.dumps(body),
+            content_type='application/json',
+        )
+
+    def test_two_plans_same_day_get_numbers_and_default_names(self):
+        a = self._create({'plan_date': '2026-08-23', 'location_id': 10})
+        b = self._create({'plan_date': '2026-08-23', 'location_id': 10})
+        self.assertEqual(a.status_code, 201)
+        self.assertEqual(b.status_code, 201)
+        da, db = a.json()['data'], b.json()['data']
+        self.assertNotEqual(da['plan_number'], db['plan_number'])
+        self.assertEqual(da['name'], f"Production Plan - {da['plan_number']}")
+        self.assertEqual(db['name'], f"Production Plan - {db['plan_number']}")
+
+    def test_custom_name(self):
+        resp = self._create({
+            'plan_date': '2026-08-23',
+            'location_id': 10,
+            'name': 'Grab and go',
+        })
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()['data']
+        self.assertEqual(data['name'], 'Grab and go')
+        self.assertIsInstance(data['plan_number'], int)
+
+    def test_patch_name(self):
+        created = self._create({'plan_date': '2026-08-23', 'location_id': 10})
+        plan_id = created.json()['data']['id']
+        resp = self.client.patch(
+            f'/planning/plans/{plan_id}/',
+            data=json.dumps({'name': 'Ready meal'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['data']['name'], 'Ready meal')

@@ -30,6 +30,7 @@ from planning.models import (
     PlanSupplyKind,
     Resource,
     ResourceGroup,
+    default_plan_name,
 )
 from planning.services import (
     allocate,
@@ -162,6 +163,8 @@ def plan_dict(plan: Plan, *, include_lines: bool = False) -> dict:
     )
     data = {
         'id': plan.id,
+        'plan_number': plan.plan_number,
+        'name': plan.name,
         'plan_date': plan.plan_date.isoformat(),
         'location_id': plan.location_id,
         'status': plan.status,
@@ -366,25 +369,12 @@ def plans_collection_api(request):
             location_id=location_id,
             remarks=body.get('remarks'),
             actor_user_id=body.get('actor_user_id'),
+            name=body.get('name'),
         )
     except KeyError as exc:
         return api_error(f'Missing required field: {exc.args[0]}')
     except IntegrityError:
-        existing = None
-        if plan_date is not None and location_id is not None:
-            existing = Plan.objects.filter(
-                plan_date=plan_date,
-                location_id=location_id,
-            ).first()
-        return api_error(
-            'Plan already exists for this date and location',
-            data={
-                'plan_date': plan_date.isoformat() if plan_date else body.get('plan_date'),
-                'location_id': location_id if location_id is not None else body.get('location_id'),
-                'existing_plan_id': existing.id if existing else None,
-            },
-            status_code=409,
-        )
+        return api_error('Could not create plan.', status_code=409)
     except (ValueError, TypeError, PlanningError, PlanningStateError) as exc:
         return _error_from_exc(exc)
     plan.line_count = 0
@@ -408,10 +398,18 @@ def plan_detail_api(request, plan_id: int):
     if body is None:
         return api_error('Invalid JSON body.')
     if plan.status != PlanStatus.DRAFT:
-        return api_error('Plan remarks can only be updated while draft.', status_code=409)
+        return api_error('Plan can only be updated while draft.', status_code=409)
+    update_fields = ['updated_at']
     if 'remarks' in body:
         plan.remarks = body.get('remarks')
-        plan.save(update_fields=['remarks', 'updated_at'])
+        update_fields.append('remarks')
+    if 'name' in body:
+        raw = body.get('name')
+        trimmed = raw.strip() if isinstance(raw, str) else ''
+        plan.name = trimmed or default_plan_name(plan.plan_number)
+        update_fields.append('name')
+    if len(update_fields) > 1:
+        plan.save(update_fields=update_fields)
     return api_success('Plan updated.', plan_dict(plan))
 
 
