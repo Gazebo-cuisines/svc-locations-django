@@ -6,6 +6,7 @@ from django.test import SimpleTestCase, TestCase
 from openpyxl import Workbook
 
 from locations.models import Location
+from planning.models import ExcelCompareReport
 from planning.services.excel_compare import parse_packing
 
 
@@ -75,3 +76,14 @@ class ExcelCompareApiTests(TestCase):
         self.assertEqual(len(body['data']['finished_goods']), 1)
         self.assertTrue(body['data']['dry_run'])
         self.assertIsNone(body['data']['plan_id'])
+        report_id = body['data']['report_id']
+        self.assertIsNotNone(report_id)
+        self.assertEqual(ExcelCompareReport.objects.count(), 1)
+
+        listed = self.client.get('/planning/excel-compare/')
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.json()['data']['items']), 1)
+
+        detail = self.client.get(f'/planning/excel-compare/{report_id}/')
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(len(detail.json()['data']['payload']['finished_goods']), 1)

@@ -152,6 +152,53 @@ class RecipeTreeApiTests(TestCase):
         self.assertEqual(data['tree']['children'][0]['product_id'], child.id)
         self.assertFalse(data['tree']['children'][0]['has_recipe'])
 
+    def test_tree_version_picker_and_preview(self):
+        child_a = self._product('Mix A', source_id=1, dest_id=2, recipe_code='MIXA')
+        child_b = self._product('Mix B', source_id=1, dest_id=2, recipe_code='MIXB')
+        parent = self._product('FG', source_id=2, dest_id=3, recipe_code='FG2')
+        recipe = Recipe.objects.create(product=parent, name='FG')
+        v1 = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=v1,
+            line_no=1,
+            component_product=child_a,
+            quantity=Decimal('1.000000'),
+            unit_id=1,
+        )
+        v2 = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=2,
+            status=RecipeVersionStatus.APPROVED,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=v2,
+            line_no=1,
+            component_product=child_b,
+            quantity=Decimal('1.000000'),
+            unit_id=1,
+        )
+
+        live = self.client.get(f'/recipe/product/{parent.id}/tree/').json()['data']['tree']
+        self.assertTrue(live['is_live'])
+        self.assertEqual(live['version_status'], 'active')
+        self.assertEqual(live['version_id'], v1.id)
+        self.assertEqual(
+            [(row['id'], row['status'], row['can_activate']) for row in live['versions']],
+            [(v1.id, 'active', False), (v2.id, 'approved', True)],
+        )
+        self.assertEqual(live['children'][0]['product_id'], child_a.id)
+
+        preview = self.client.get(
+            f'/recipe/product/{parent.id}/tree/?version_id={v2.id}',
+        ).json()['data']['tree']
+        self.assertEqual(preview['version_id'], v2.id)
+        self.assertFalse(preview['is_live'])
+        self.assertEqual(preview['children'][0]['product_id'], child_b.id)
+
     def test_tree_product_not_found(self):
         resp = self.client.get('/recipe/product/999999/tree/')
         self.assertEqual(resp.status_code, 404)

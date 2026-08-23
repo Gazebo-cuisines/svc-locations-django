@@ -4,9 +4,12 @@ from django.views.decorators.http import require_http_methods
 
 from locations.utils.api_response import api_error, api_success
 from planning.errors import PlanningError, PlanningStateError
+from planning.models import ExcelCompareReport
 from planning.services.excel_compare import (
     ExcelCompareError,
-    public_result,
+    persist_report,
+    report_detail,
+    report_summary,
     run_excel_compare,
 )
 
@@ -14,8 +17,23 @@ _TRUE = {'1', 'true', 'yes'}
 
 
 @csrf_exempt
-@require_http_methods(['POST'])
+@require_http_methods(['GET', 'POST'])
 def excel_compare_api(request):
+    if request.method == 'GET':
+        qs = ExcelCompareReport.objects.all()
+        location_id = request.GET.get('location_id')
+        if location_id:
+            try:
+                qs = qs.filter(location_id=int(location_id))
+            except (TypeError, ValueError):
+                return api_error('location_id must be an integer.')
+        total = qs.count()
+        items = [report_summary(row) for row in qs[:50]]
+        return api_success(
+            'Excel compare reports listed.',
+            {'items': items, 'count': total},
+        )
+
     uploaded = request.FILES.get('file')
     if not uploaded:
         return api_error('Excel file is required (multipart field: file).')
@@ -61,6 +79,7 @@ def excel_compare_api(request):
         status = 409 if isinstance(exc, PlanningStateError) else 422
         return api_error(str(exc), status_code=status)
 
+    pub = persist_report(result, uploaded.name)
     message = (
         'Excel plan compared (dry run).'
         if dry_run
@@ -68,6 +87,15 @@ def excel_compare_api(request):
     )
     return api_success(
         message,
-        public_result(result),
+        pub,
         status_code=200 if dry_run else 201,
     )
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def excel_compare_report_api(request, report_id):
+    row = ExcelCompareReport.objects.filter(pk=report_id).first()
+    if not row:
+        return api_error('Excel compare report not found.', status_code=404)
+    return api_success('Excel compare report retrieved.', report_detail(row))

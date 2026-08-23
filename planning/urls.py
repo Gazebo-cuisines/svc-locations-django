@@ -68,4 +68,9 @@ urlpatterns = [
         views_excel_compare.excel_compare_api,
         name='planning-excel-compare',
     ),
+    path(
+        'excel-compare/<int:report_id>/',
+        views_excel_compare.excel_compare_report_api,
+        name='planning-excel-compare-report',
+    ),
 ]

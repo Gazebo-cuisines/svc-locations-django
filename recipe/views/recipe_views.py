@@ -23,10 +23,19 @@ from recipe.views.helpers import (
 def recipe_product_tree_api(request, product_id: int):
     if not active_products().filter(pk=product_id).exists():
         return api_error('Product not found.', status_code=404)
+    version_id = None
+    version_raw = request.GET.get('version_id')
+    if version_raw not in (None, ''):
+        try:
+            version_id = int(version_raw)
+        except (TypeError, ValueError):
+            return api_error('version_id must be an integer.')
     try:
-        tree = build_recipe_tree(product_id)
+        tree = build_recipe_tree(product_id, version_id=version_id)
     except Product.DoesNotExist:
         return api_error('Product not found.', status_code=404)
+    except ValueError as exc:
+        return api_error(str(exc))
     return api_success('Recipe dependency tree fetched successfully.', tree)
 
 

@@ -15,7 +15,14 @@ from django.db.models import Sum
 from openpyxl import load_workbook
 
 from locations.models import Location
-from planning.models import Plan, PlanLine, PlanLineSource, PlanRequirement, PlanStatus
+from planning.models import (
+    ExcelCompareReport,
+    Plan,
+    PlanLine,
+    PlanLineSource,
+    PlanRequirement,
+    PlanStatus,
+)
 from planning.services import explode, lifecycle
 from product.models import Product
 from recipe.models import Recipe
@@ -450,3 +457,37 @@ def run_excel_compare(
 
 def public_result(result: dict) -> dict:
     return {k: v for k, v in result.items() if not k.startswith('_')}
+
+
+def persist_report(result: dict, file_name: str = '') -> dict:
+    pub = public_result(result)
+    row = ExcelCompareReport.objects.create(
+        location_id=pub['location_id'],
+        plan_date=pub['plan_date'],
+        dry_run=pub['dry_run'],
+        file_name=(file_name or '')[:255],
+        plan_id=pub['plan_id'],
+        run_id=pub['run_id'],
+        payload=pub,
+    )
+    pub['report_id'] = row.id
+    return pub
+
+
+def report_summary(row: ExcelCompareReport) -> dict:
+    return {
+        'id': row.id,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+        'location_id': row.location_id,
+        'plan_date': row.plan_date.isoformat() if row.plan_date else None,
+        'dry_run': row.dry_run,
+        'file_name': row.file_name,
+        'plan_id': row.plan_id,
+        'run_id': row.run_id,
+    }
+
+
+def report_detail(row: ExcelCompareReport) -> dict:
+    data = report_summary(row)
+    data['payload'] = row.payload
+    return data

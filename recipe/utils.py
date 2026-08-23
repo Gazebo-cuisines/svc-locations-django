@@ -178,6 +178,7 @@ def _product_node(
     product: Product,
     version: RecipeVersion | None,
     image_urls: dict[int, str | None],
+    recipe: Recipe | None = None,
 ) -> dict:
     category = product.category if product.category_id else None
     if category is not None and category.id not in image_urls:
@@ -207,7 +208,26 @@ def _product_node(
         'recipe_id': version.recipe_id if version else None,
         'version_id': version.id if version else None,
         'version_number': version.version_number if version else None,
+        'version_status': version.status if version else None,
+        'is_live': bool(
+            version and version.status == RecipeVersionStatus.ACTIVE
+        ),
+        'versions': _version_choices(recipe),
     }
+
+
+def _version_choices(recipe: Recipe | None) -> list[dict]:
+    if recipe is None:
+        return []
+    return [
+        {
+            'id': v.id,
+            'version_number': v.version_number,
+            'status': v.status,
+            'can_activate': v.status == RecipeVersionStatus.APPROVED,
+        }
+        for v in sorted(recipe.versions.all(), key=lambda v: v.version_number)
+    ]
 
 
 def _walk_product(
@@ -218,6 +238,7 @@ def _walk_product(
     nodes_by_id: dict[int, dict],
     edges: list[dict],
     image_urls: dict[int, str | None],
+    version_overrides: dict[int, int] | None = None,
 ) -> dict | None:
     if depth > MAX_TREE_DEPTH or product_id in path:
         return None
@@ -240,9 +261,24 @@ def _walk_product(
         recipe = product.recipe
     except Recipe.DoesNotExist:
         pass
-    version = active_or_latest_version(recipe) if recipe is not None else None
+    version = None
+    if recipe is not None:
+        override_id = (version_overrides or {}).get(product_id)
+        if override_id is not None:
+            version = next(
+                (v for v in recipe.versions.all() if v.id == override_id),
+                None,
+            )
+            if version is None:
+                raise ValueError(
+                    f'version_id={override_id} does not belong to this product.'
+                )
+        else:
+            version = active_or_latest_version(recipe)
     if product_id not in nodes_by_id:
-        nodes_by_id[product_id] = _product_node(product, version, image_urls)
+        nodes_by_id[product_id] = _product_node(
+            product, version, image_urls, recipe,
+        )
 
     children = []
     if version is None:
@@ -266,6 +302,7 @@ def _walk_product(
             nodes_by_id=nodes_by_id,
             edges=edges,
             image_urls=image_urls,
+            version_overrides=version_overrides,
         )
         if child_tree is not None:
             children.append(child_tree)
@@ -287,14 +324,16 @@ def _walk_product(
     return {**nodes_by_id[product_id], 'children': children}
 
 
-def build_recipe_tree(product_id: int) -> dict:
+def build_recipe_tree(product_id: int, version_id: int | None = None) -> dict:
     """
     Recursive recipe dependency tree for a product.
     Uses active version, else latest. Leaves = products with no recipe components.
+    version_id, if set, walks that version for the root product only (preview).
     """
     nodes_by_id: dict[int, dict] = {}
     edges: list[dict] = []
     image_urls: dict[int, str | None] = {}
+    overrides = {product_id: version_id} if version_id is not None else None
     tree = _walk_product(
         product_id,
         path=set(),
@@ -302,6 +341,7 @@ def build_recipe_tree(product_id: int) -> dict:
         nodes_by_id=nodes_by_id,
         edges=edges,
         image_urls=image_urls,
+        version_overrides=overrides,
     )
     if tree is None:
         raise Product.DoesNotExist(f'product_id={product_id} not found.')
