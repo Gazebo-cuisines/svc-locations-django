@@ -9,7 +9,7 @@ from pathlib import Path
 import pymysql
 from dotenv import load_dotenv
 
-# Homebrew MySQL 9 client drops mysql_native_password; PyMySQL works with RDS.
+# Legacy Pedro imports still use MySQLdb even when Django runs on Postgres.
 pymysql.install_as_MySQLdb()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -72,16 +72,29 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
+_DB_ENGINE = os.getenv('DB_ENGINE', 'mysql').lower()
+if _DB_ENGINE in ('postgres', 'postgresql'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('PG_DB_NAME') or os.getenv('DB_NAME'),
+            'USER': os.getenv('PG_DB_USER') or os.getenv('DB_USER'),
+            'PASSWORD': os.getenv('PG_DB_PASSWORD') or os.getenv('DB_PASSWORD'),
+            'HOST': os.getenv('PG_DB_HOST') or os.getenv('DB_HOST'),
+            'PORT': os.getenv('PG_DB_PORT') or '5432',
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.getenv('DB_NAME'),
+            'USER': os.getenv('DB_USER'),
+            'PASSWORD': os.getenv('DB_PASSWORD'),
+            'HOST': os.getenv('DB_HOST'),
+            'PORT': os.getenv('DB_PORT'),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
