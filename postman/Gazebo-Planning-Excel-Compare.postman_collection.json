@@ -1,0 +1,63 @@
+{
+  "info": {
+    "name": "Gazebo - Planning Excel Compare",
+    "description": "Upload a Gazebo **day planning** workbook and compare Excel RM kg to an exploded **draft** plan.\n\nDoes **not** lock, publish, or allocate. Reuses the draft plan for that `plan_date` + `location_id` if one exists.\n\n**Sheets read:** `PACKING PLAN` (col B code, col M cases) and any sheet whose name contains `Fresh Products` (col B purchase code, col F kg).\n\n**Vars:** `{{base_url}}`, `{{location_id}}`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://127.0.0.1:8000"},
+    {"key": "location_id", "value": "1"}
+  ],
+  "item": [
+    {
+      "name": "Compare Excel plan",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": [],
+              "description": "Day planning .xlsx / .xlsm"
+            },
+            {"key": "location_id", "value": "{{location_id}}", "type": "text"},
+            {"key": "plan_date", "value": "2026-08-19", "type": "text"},
+            {"key": "qty_mode", "value": "packs", "type": "text"},
+            {"key": "dry_run", "value": "false", "type": "text"}
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/planning/excel-compare/",
+          "host": ["{{base_url}}"],
+          "path": ["planning", "excel-compare", ""]
+        },
+        "description": "### Compare Excel plan\n\n`POST /planning/excel-compare/`\n\nUploads a day-planning workbook, maps packing SKUs to catalogue products (`recipe_code` / `alternate_recipe_code` / `gff_code` / `docs/planning-compare/code-map.json`), explodes a **draft** plan, and returns Excel kg vs system kg. Example: grab-and-go 19 Aug file with 5000 cases of `CVSAL-G12T`.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n`multipart/form-data`\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `file` | yes | `.xlsx` or `.xlsm` day plan |\n| `location_id` | yes | Location PK to hang the draft plan on |\n| `plan_date` | yes | `YYYY-MM-DD` |\n| `qty_mode` | no | `packs` (default: trays / cases×trays per case) or `cases` (col M as-is) |\n| `dry_run` | no | `true` = parse + map only, no plan/explode |\n| `plan_id` | no | Reuse this draft plan instead of date/location lookup |\n\n**Response body**\n\n`status: success`. Message: `Excel plan exploded and compared.` (or dry-run variant).\n\n`data.plan_id`, `data.run_id`, `data.finished_goods[]` (`excel_code`, `cases`, `product_id`, `match`), `data.rm_compare[]` (`excel_kg`, `system_kg`, `diff_kg`, `diff_pct`, `fix`), `data.system_only[]`, `data.unmapped_fg[]`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Dry run parsed |\n| 201 | Draft exploded and compared |\n| 400 | Missing file/fields, unknown location, unmapped FG, bad workbook |\n| 409 | Plan exists for that date/location and is not draft |\n| 422 | Explode business error |"
+      }
+    },
+    {
+      "name": "Compare Excel plan (dry run)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {"key": "file", "type": "file", "src": []},
+            {"key": "location_id", "value": "{{location_id}}", "type": "text"},
+            {"key": "plan_date", "value": "2026-08-19", "type": "text"},
+            {"key": "dry_run", "value": "true", "type": "text"}
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/planning/excel-compare/",
+          "host": ["{{base_url}}"],
+          "path": ["planning", "excel-compare", ""]
+        },
+        "description": "### Compare Excel plan (dry run)\n\n`POST /planning/excel-compare/`\n\nSame upload as Compare Excel plan, with `dry_run=true`. Maps FG/RM codes and returns `finished_goods` / `rm_compare` **without** creating a plan or exploding. Use this to confirm mappings (`match: code|map|name|unmapped`) before a live explode.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\nSame multipart fields as Compare Excel plan. `dry_run` must be `true`.\n\n**Response body**\n\n`200` `Excel plan compared (dry run).` `data.plan_id` and `data.run_id` are null. `data.system_kg` on RM rows is null.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Parsed |\n| 400 | Missing file/fields or bad workbook |"
+      }
+    }
+  ]
+}

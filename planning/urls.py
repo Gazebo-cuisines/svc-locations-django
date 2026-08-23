@@ -2,6 +2,7 @@ from django.urls import path
 
 from planning import views
 from planning import views_chain_net
+from planning import views_excel_compare
 
 urlpatterns = [
     # Planning endpoints
@@ -62,4 +63,9 @@ urlpatterns = [
     path('forecast/horizon/', views.forecast_horizon_api, name='planning-forecast-horizon'),
     path('forecast/shortage/', views.forecast_shortage_api, name='planning-forecast-shortage'),
     path('forecast/age/', views.forecast_age_api, name='planning-forecast-age'),
+    path(
+        'excel-compare/',
+        views_excel_compare.excel_compare_api,
+        name='planning-excel-compare',
+    ),
 ]

@@ -82,6 +82,7 @@ if _DB_ENGINE in ('postgres', 'postgresql'):
             'PASSWORD': os.getenv('PG_DB_PASSWORD') or os.getenv('DB_PASSWORD'),
             'HOST': os.getenv('PG_DB_HOST') or os.getenv('DB_HOST'),
             'PORT': os.getenv('PG_DB_PORT') or '5432',
+            'OPTIONS': {'sslmode': 'require'},
         }
     }
 else:
