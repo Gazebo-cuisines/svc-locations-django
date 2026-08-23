@@ -677,3 +677,28 @@ class PlanResourceSlot(models.Model):
 
     def __str__(self):
         return f'plan_resource_slot:{self.id}:res:{self.resource_id}'
+
+
+class ExcelCompareReport(models.Model):
+    """TEMP testing dump of excel-compare responses. Drop when signed off."""
+
+    location = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='excel_compare_reports',
+    )
+    plan_date = models.DateField()
+    dry_run = models.BooleanField()
+    file_name = models.CharField(max_length=255, blank=True)
+    plan_id = models.IntegerField(null=True, blank=True)
+    run_id = models.IntegerField(null=True, blank=True)
+    payload = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'excel_compare_report_temp'
+        ordering = ['-id']
+
+    def __str__(self):
+        return f'excel_compare_report_temp:{self.id}'

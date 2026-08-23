@@ -1,12 +1,13 @@
 {
   "info": {
     "name": "Gazebo - Planning Excel Compare",
-    "description": "Upload a Gazebo **day planning** workbook and compare Excel RM kg to an exploded **draft** plan.\n\nDoes **not** lock, publish, or allocate. Reuses the draft plan for that `plan_date` + `location_id` if one exists.\n\n**Sheets read:** `PACKING PLAN` (col B code, col M cases) and any sheet whose name contains `Fresh Products` (col B purchase code, col F kg).\n\n**Vars:** `{{base_url}}`, `{{location_id}}`.",
+    "description": "Upload a Gazebo **day planning** workbook and compare Excel RM kg to an exploded **draft** plan.\n\nDoes **not** lock, publish, or allocate. Reuses the draft plan for that `plan_date` + `location_id` if one exists.\n\nEach successful compare is stored in temp table `excel_compare_report_temp` (drop after sign-off).\n\n**Sheets read:** `PACKING PLAN` (col B code, col M cases) and any sheet whose name contains `Fresh Products` (col B purchase code, col F kg).\n\n**Vars:** `{{base_url}}`, `{{location_id}}`, `{{report_id}}`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {"key": "base_url", "value": "http://127.0.0.1:8000"},
-    {"key": "location_id", "value": "1"}
+    {"key": "location_id", "value": "1"},
+    {"key": "report_id", "value": "1"}
   ],
   "item": [
     {
@@ -34,7 +35,7 @@
           "host": ["{{base_url}}"],
           "path": ["planning", "excel-compare", ""]
         },
-        "description": "### Compare Excel plan\n\n`POST /planning/excel-compare/`\n\nUploads a day-planning workbook, maps packing SKUs to catalogue products (`recipe_code` / `alternate_recipe_code` / `gff_code` / `docs/planning-compare/code-map.json`), explodes a **draft** plan, and returns Excel kg vs system kg. Example: grab-and-go 19 Aug file with 5000 cases of `CVSAL-G12T`.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n`multipart/form-data`\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `file` | yes | `.xlsx` or `.xlsm` day plan |\n| `location_id` | yes | Location PK to hang the draft plan on |\n| `plan_date` | yes | `YYYY-MM-DD` |\n| `qty_mode` | no | `packs` (default: trays / cases×trays per case) or `cases` (col M as-is) |\n| `dry_run` | no | `true` = parse + map only, no plan/explode |\n| `plan_id` | no | Reuse this draft plan instead of date/location lookup |\n\n**Response body**\n\n`status: success`. Message: `Excel plan exploded and compared.` (or dry-run variant).\n\n`data.plan_id`, `data.run_id`, `data.finished_goods[]` (`excel_code`, `cases`, `product_id`, `match`), `data.rm_compare[]` (`excel_kg`, `system_kg`, `diff_kg`, `diff_pct`, `fix`), `data.system_only[]`, `data.unmapped_fg[]`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Dry run parsed |\n| 201 | Draft exploded and compared |\n| 400 | Missing file/fields, unknown location, unmapped FG, bad workbook |\n| 409 | Plan exists for that date/location and is not draft |\n| 422 | Explode business error |"
+        "description": "### Compare Excel plan\n\n`POST /planning/excel-compare/`\n\nUploads a day-planning workbook, maps packing SKUs to catalogue products (`recipe_code` / `alternate_recipe_code` / `gff_code` / `docs/planning-compare/code-map.json`), explodes a **draft** plan, and returns Excel kg vs system kg. Example: grab-and-go 19 Aug file with 5000 cases of `CVSAL-G12T`. The JSON body is also saved to `excel_compare_report_temp` for later GET.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n`multipart/form-data`\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `file` | yes | `.xlsx` or `.xlsm` day plan |\n| `location_id` | yes | Location PK to hang the draft plan on |\n| `plan_date` | yes | `YYYY-MM-DD` |\n| `qty_mode` | no | `packs` (default: trays / cases×trays per case) or `cases` (col M as-is) |\n| `dry_run` | no | `true` = parse + map only, no plan/explode |\n| `plan_id` | no | Reuse this draft plan instead of date/location lookup |\n\n**Response body**\n\n`status: success`. Message: `Excel plan exploded and compared.` (or dry-run variant).\n\n`data.report_id` (temp row PK), `data.plan_id`, `data.run_id`, `data.finished_goods[]` (`excel_code`, `cases`, `product_id`, `match`), `data.rm_compare[]` (`excel_kg`, `system_kg`, `diff_kg`, `diff_pct`, `fix`), `data.system_only[]`, `data.unmapped_fg[]`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Dry run parsed |\n| 201 | Draft exploded and compared |\n| 400 | Missing file/fields, unknown location, unmapped FG, bad workbook |\n| 409 | Plan exists for that date/location and is not draft |\n| 422 | Explode business error |"
       }
     },
     {
@@ -56,7 +57,40 @@
           "host": ["{{base_url}}"],
           "path": ["planning", "excel-compare", ""]
         },
-        "description": "### Compare Excel plan (dry run)\n\n`POST /planning/excel-compare/`\n\nSame upload as Compare Excel plan, with `dry_run=true`. Maps FG/RM codes and returns `finished_goods` / `rm_compare` **without** creating a plan or exploding. Use this to confirm mappings (`match: code|map|name|unmapped`) before a live explode.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\nSame multipart fields as Compare Excel plan. `dry_run` must be `true`.\n\n**Response body**\n\n`200` `Excel plan compared (dry run).` `data.plan_id` and `data.run_id` are null. `data.system_kg` on RM rows is null.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Parsed |\n| 400 | Missing file/fields or bad workbook |"
+        "description": "### Compare Excel plan (dry run)\n\n`POST /planning/excel-compare/`\n\nSame upload as Compare Excel plan, with `dry_run=true`. Maps FG/RM codes and returns `finished_goods` / `rm_compare` **without** creating a plan or exploding. Use this to confirm mappings (`match: code|map|name|unmapped`) before a live explode. Still writes a temp report (`data.report_id`).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\nSame multipart fields as Compare Excel plan. `dry_run` must be `true`.\n\n**Response body**\n\n`200` `Excel plan compared (dry run).` `data.report_id` is set. `data.plan_id` and `data.run_id` are null. `data.system_kg` on RM rows is null.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Parsed |\n| 400 | Missing file/fields or bad workbook |"
+      }
+    },
+    {
+      "name": "List Excel compare reports",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/planning/excel-compare/?location_id={{location_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["planning", "excel-compare", ""],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "description": "Optional. Filter by location PK."
+            }
+          ]
+        },
+        "description": "### List Excel compare reports\n\n`GET /planning/excel-compare/`\n\nReturns the latest 50 temp compare dumps from `excel_compare_report_temp` (newest first). Use this during testing instead of keeping the POST body. Drop the table after sign-off.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | Filter to one location PK |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`200` `Excel compare reports listed.` `data.count` is the unfiltered-by-limit total. `data.items[]` has `id`, `created_at`, `location_id`, `plan_date`, `dry_run`, `file_name`, `plan_id`, `run_id` — not the full JSON payload.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Listed |\n| 400 | `location_id` is not an integer |"
+      }
+    },
+    {
+      "name": "Get Excel compare report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/planning/excel-compare/{{report_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["planning", "excel-compare", "{{report_id}}", ""]
+        },
+        "description": "### Get Excel compare report\n\n`GET /planning/excel-compare/:report_id/`\n\nReturns one temp dump including the original compare JSON in `payload`. Example: after a dry run of the 19 Aug grab-and-go file, fetch `report_id` from the POST body.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `report_id` | yes | Temp report PK from POST `data.report_id` |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`200` `Excel compare report retrieved.` Summary fields plus `payload` (same shape as POST `data` without `report_id`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Found |\n| 404 | Unknown `report_id` |"
       }
     }
   ]

@@ -9,7 +9,11 @@ from django.utils.dateparse import parse_date
 from openpyxl import Workbook
 
 from planning.errors import PlanningError, PlanningStateError
-from planning.services.excel_compare import ExcelCompareError, run_excel_compare
+from planning.services.excel_compare import (
+    ExcelCompareError,
+    persist_report,
+    run_excel_compare,
+)
 
 
 class Command(BaseCommand):
@@ -50,9 +54,11 @@ class Command(BaseCommand):
         except (PlanningError, PlanningStateError) as exc:
             raise CommandError(str(exc)) from exc
 
+        pub = persist_report(result, excel_path.name)
         self.stdout.write(
             f'FG={len(result["finished_goods"])}  RM={len(result["rm_compare"])}  '
-            f'plan={result["plan_id"]} run={result["run_id"]}'
+            f'plan={result["plan_id"]} run={result["run_id"]} '
+            f'report_id={pub["report_id"]}'
         )
         for row in result['finished_goods']:
             self.stdout.write(
