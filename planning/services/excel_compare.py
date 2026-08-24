@@ -280,7 +280,8 @@ def _system_rm_kg(run_id: int) -> dict[int, dict]:
         out[product.id] = {
             'product': product,
             'net': row['net'],
-            'kg': _to_kg(row['net'], unit),
+            'gross': row['gross'],
+            'kg': _to_kg(row['gross'], unit),
             'unit': unit,
         }
     return out
@@ -354,7 +355,7 @@ def run_excel_compare(
     source,
     location_id: int,
     plan_date,
-    qty_mode: str = 'packs',
+    qty_mode: str = 'cases',
     dry_run: bool = False,
     plan_id: int | None = None,
     code_map: dict[str, str] | None = None,
@@ -429,7 +430,7 @@ def run_excel_compare(
                 'product_id': pid,
                 'recipe_code': product.recipe_code,
                 'product_name': product.name,
-                'system_kg': _qty(sys['kg'] if sys['kg'] is not None else sys['net']),
+                'system_kg': _qty(sys['kg'] if sys['kg'] is not None else sys['gross']),
                 'unit': sys['unit'],
                 'fix': 'in explode, not in Excel — extra BOM or code mismatch',
             })

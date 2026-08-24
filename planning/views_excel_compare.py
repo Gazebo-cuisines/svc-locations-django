@@ -53,7 +53,7 @@ def excel_compare_api(request):
     if plan_date is None:
         return api_error('plan_date must be YYYY-MM-DD.')
 
-    qty_mode = (request.POST.get('qty_mode') or 'packs').strip().lower()
+    qty_mode = (request.POST.get('qty_mode') or 'cases').strip().lower()
     dry_run = str(request.POST.get('dry_run') or '').lower() in _TRUE
     plan_id_raw = request.POST.get('plan_id')
     plan_id = None

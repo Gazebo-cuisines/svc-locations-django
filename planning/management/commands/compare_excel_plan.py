@@ -28,7 +28,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--qty-mode',
             choices=('packs', 'cases'),
-            default='packs',
+            default='cases',
         )
         parser.add_argument('--out', default=None)
         parser.add_argument('--dry-run', action='store_true')

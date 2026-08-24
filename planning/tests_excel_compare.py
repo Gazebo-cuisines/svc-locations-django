@@ -78,6 +78,7 @@ class ExcelCompareApiTests(TestCase):
         self.assertEqual(body['status'], 'success')
         self.assertEqual(len(body['data']['finished_goods']), 1)
         self.assertTrue(body['data']['dry_run'])
+        self.assertEqual(body['data']['qty_mode'], 'cases')
         self.assertIsNone(body['data']['plan_id'])
         report_id = body['data']['report_id']
         self.assertIsNotNone(report_id)
