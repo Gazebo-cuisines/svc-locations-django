@@ -65,7 +65,7 @@ class Command(BaseCommand):
         for row in result['finished_goods']:
             self.stdout.write(
                 f"  {row['excel_code']:18} cases={row['cases']} "
-                f"qty={row['explode_qty']} → {row['product_id']} ({row['match']})"
+                f"qty={row['explode_qty']} -> {row['product_id']} ({row['match']})"
             )
         out = Path(options['out']) if options['out'] else (
             excel_path.parent / f'compare-{excel_path.stem}.xlsx'
@@ -129,7 +129,7 @@ def _write_report(path: Path, result: dict):
     cmp_sheet = book.create_sheet('RM compare')
     cmp_sheet.append([
         'excel_code', 'excel_name', 'excel_g', 'system_g',
-        'diff', 'percentage', 'fix',
+        'diff', 'percentage', 'implied_yield_pct', 'fix',
     ])
     for i, row in enumerate(result['rm_compare'], start=2):
         excel_g = _num(row.get('excel_g'))
@@ -146,9 +146,12 @@ def _write_report(path: Path, result: dict):
         cmp_sheet.cell(i, 4, system_g)
         if excel_g:
             cmp_sheet.cell(i, 5, f'=D{i}-C{i}')
-            pct = cmp_sheet.cell(i, 6, f'=(D{i}-C{i})/C{i}*100')
-            pct.number_format = _PCT_FORMAT
-        cmp_sheet.cell(i, 7, row['fix'])
+            if system_g:
+                pct = cmp_sheet.cell(i, 6, f'=(D{i}-C{i})/D{i}*100')
+                pct.number_format = _PCT_FORMAT
+                yld = cmp_sheet.cell(i, 7, f'=D{i}/C{i}*100')
+                yld.number_format = '0.00'
+        cmp_sheet.cell(i, 8, row['fix'])
     last = 1 + len(result['rm_compare'])
     if last >= 2:
         _colour_pct(cmp_sheet, f'F2:F{last}')

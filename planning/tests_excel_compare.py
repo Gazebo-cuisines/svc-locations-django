@@ -94,7 +94,7 @@ class ExcelCompareApiTests(TestCase):
 
 
 class WriteReportPctTests(SimpleTestCase):
-    def test_pct_formula_is_system_minus_excel_over_excel(self):
+    def test_pct_formula_is_system_minus_excel_over_system(self):
         result = {
             'plan_id': 1,
             'run_id': 1,
@@ -125,6 +125,7 @@ class WriteReportPctTests(SimpleTestCase):
         self.assertEqual(sheet['C2'].value, 387500)
         self.assertEqual(sheet['D2'].value, 387100)
         self.assertEqual(sheet['E2'].value, '=D2-C2')
-        self.assertEqual(sheet['F2'].value, '=(D2-C2)/C2*100')
+        self.assertEqual(sheet['F2'].value, '=(D2-C2)/D2*100')
         self.assertEqual(sheet['F2'].number_format, '+0.00"%";-0.00"%"')
+        self.assertEqual(sheet['G2'].value, '=D2/C2*100')
         self.assertEqual(len(sheet.conditional_formatting._cf_rules), 1)

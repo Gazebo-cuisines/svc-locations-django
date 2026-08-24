@@ -1,0 +1,101 @@
+[
+  {
+    "row": 4,
+    "B": "Purchase Code",
+    "C": "Purchase Ingredient Name",
+    "D": "Pack Size (Kg)",
+    "E": "Ingredients (G)",
+    "F": "Ingredients (KG)",
+    "G": "Bags/Qty  Required"
+  },
+  {
+    "row": 5,
+    "B": "AFFINITY",
+    "C": "Water",
+    "D": 1.0,
+    "E": 78000.0,
+    "F": 78.0,
+    "G": 78.0
+  },
+  {
+    "row": 6,
+    "B": "RMTOP001-16",
+    "C": "RICE FLOUR",
+    "D": 1.0,
+    "E": 39000.0,
+    "F": 39.0,
+    "G": 39.0
+  },
+  {
+    "row": 7,
+    "B": "RMVIR001-55",
+    "C": "MADRAS CURRY POWDER - (Triton)",
+    "D": 1.0,
+    "E": 31200.0,
+    "F": 31.2,
+    "G": 31.2
+  },
+  {
+    "row": 8,
+    "B": "RMELL001-02",
+    "C": "5% Malt Vinegar with Malt Extract (1 x 25 ltr)",
+    "D": 1.0,
+    "E": 31200.0,
+    "F": 31.2,
+    "G": 31.2
+  },
+  {
+    "row": 9,
+    "B": "RMHAR002-37",
+    "C": "IQF Ginger Puree (1x10kg)",
+    "D": 1.0,
+    "E": 46800.0,
+    "F": 46.8,
+    "G": 46.8
+  },
+  {
+    "row": 10,
+    "B": "RMBAK001-07",
+    "C": "Light Brown Soft Sugar 1 x 25kg ",
+    "D": 1.0,
+    "E": 15600.0,
+    "F": 15.6,
+    "G": 15.6
+  },
+  {
+    "row": 11,
+    "B": "RMUNI001-05",
+    "C": "Corn Flour",
+    "D": 1.0,
+    "E": 39000.0,
+    "F": 39.0,
+    "G": 39.0
+  },
+  {
+    "row": 12,
+    "B": "RMJFC001-06",
+    "C": "KIKKOMAN SOY SAUCE (S) 20L",
+    "D": 1.0,
+    "E": 31200.0,
+    "F": 31.2,
+    "G": 31.2
+  },
+  {
+    "row": 13,
+    "B": "RMHUS001-05",
+    "C": "Diced CHICKEN THIGH FILLET 18-22mm",
+    "D": 1.0,
+    "E": 1560000.0,
+    "F": 1560.0,
+    "G": 1560.0
+  },
+  {
+    "row": 14,
+    "B": "RMSOL001-01",
+    "C": "Gluten free Bread Crumbs (1X12.5KG)(MOQ:1000KG)",
+    "D": 1.0,
+    "E": 780000.0,
+    "F": 780.0,
+    "G": 780.0
+  }
+]

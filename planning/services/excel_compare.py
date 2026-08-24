@@ -305,7 +305,7 @@ def _fix_note(*, product, sys, excel_kg, dry_run):
     if sys['kg'] is None:
         return f'system unit {sys["unit"]!r} is not g/kg'
     diff = sys['kg'] - excel_kg
-    pct = (diff / excel_kg) * Decimal('100') if excel_kg else None
+    pct = (diff / sys['kg']) * Decimal('100') if sys['kg'] else None
     if pct is not None and abs(pct) > 5:
         if 15 <= abs(pct) <= 25:
             return '~20% — check yield_factor / process_loss'
@@ -340,8 +340,8 @@ def _rm_payload(row, sys, dry_run) -> dict:
         diff_kg = sys_kg - excel_kg
         if excel_g is not None:
             diff_g = sys_g - excel_g if sys_g is not None else None
-        if excel_kg:
-            pct = (diff_kg / excel_kg) * Decimal('100')
+        if sys_kg:
+            pct = (diff_kg / sys_kg) * Decimal('100')
     return {
         'excel_code': row['code'],
         'excel_name': row['name'],

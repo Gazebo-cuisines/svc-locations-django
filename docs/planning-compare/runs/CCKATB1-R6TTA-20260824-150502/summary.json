@@ -1,0 +1,36 @@
+{
+  "sku": "CCKATB1-R6TTA",
+  "cases": 2000,
+  "plan_date": "2026-08-24",
+  "location_id": 6,
+  "product_id": 1016,
+  "excel": {
+    "next_step": "RefreshStep01",
+    "not": "Button12_Click (hangs / macros dialog)",
+    "fresh_sheet": "Fresh Products By Supplier",
+    "qty": "col E grams / col F kg (same)"
+  },
+  "files_for_s3": [
+    "probe.json",
+    "meta.json",
+    "fresh-products.json",
+    "fresh-products.xlsx",
+    "compare-source.xlsx",
+    "compare-report.xlsx",
+    "summary.json"
+  ],
+  "rm": [
+    {"code": "RMTOP001-16", "excel_g": 39000, "system_g": 23636.36, "pct": -39.39},
+    {"code": "RMVIR001-55", "excel_g": 31200, "system_g": 18909.09, "pct": -39.39},
+    {"code": "RMELL001-02", "excel_g": 31200, "system_g": 18909.09, "pct": -39.39},
+    {"code": "RMHAR002-37", "excel_g": 46800, "system_g": 28363.64, "pct": -39.39},
+    {"code": "RMUNI001-05", "excel_g": 39000, "system_g": 23636.36, "pct": -39.39},
+    {"code": "RMJFC001-06", "excel_g": 31200, "system_g": 18909.09, "pct": -39.39},
+    {"code": "RMHUS001-05", "excel_g": 1560000, "system_g": 945454.55, "pct": -39.39},
+    {"code": "AFFINITY", "note": "Water — not in explode"},
+    {"code": "RMBAK001-07", "note": "unmapped — add to code-map.json"},
+    {"code": "RMSOL001-01", "note": "breadcrumbs — has recipe / not explode RM"}
+  ],
+  "implied_yield_pct": 60.61,
+  "yield_patched": false
+}

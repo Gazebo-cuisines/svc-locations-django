@@ -484,6 +484,32 @@ class RecipeVersionNumberTests(RecipeAuthMixin, TestCase):
         self.assertEqual(data['recipe_id'], recipe.id)
         self.assertEqual(data['recipe_version_id'], version.id)
         self.assertEqual(data['component_recipe_code'], 'SUG-01')
+        self.assertIsNone(data['pct_of_batch'])
+
+    def test_pct_of_batch_uses_qty_when_component_batch_null(self):
+        parent = self._product('Spice Mix')
+        salt = self._product('SALT')
+        recipe = Recipe.objects.create(product=parent, name='Spice Mix')
+        version = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.DRAFT,
+            batch_quantity=Decimal('4700.000000'),
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=salt,
+            quantity=Decimal('1000.000000'),
+            unit_id=1,
+        )
+        resp = self.client.get(f'/recipe/versions/{version.id}/')
+        self.assertEqual(resp.status_code, 200)
+        row = resp.json()['data']['components'][0]
+        self.assertIsNone(row['batch_quantity'])
+        self.assertIsNone(row['gross_batch_quantity'])
+        self.assertEqual(row['quantity'], '1000.000000')
+        self.assertEqual(row['pct_of_batch'], '21.3')
 
     def test_copy_from_version_clones_header_and_lines(self):
         parent = self._product('FG')
@@ -514,6 +540,8 @@ class RecipeVersionNumberTests(RecipeAuthMixin, TestCase):
         self.assertEqual(data['version_number'], 2)
         self.assertEqual(data['status'], 'draft')
         self.assertEqual(data['process_loss'], '1.0500')
+        self.assertEqual(data['yield_pct'], '105.00')
+        self.assertEqual(data['process_loss_pct'], '-5.00')
         self.assertEqual(data['batch_quantity'], '100.000000')
         self.assertEqual(data['remarks'], 'v1')
         self.assertEqual(data['copied_from_version_id'], source.id)
@@ -541,6 +569,117 @@ class RecipeVersionNumberTests(RecipeAuthMixin, TestCase):
             data='{"copy_from_version_id": 999999}',
         )
         self.assertEqual(resp.status_code, 404)
+
+
+class RecipeYieldPctTests(RecipeAuthMixin, TestCase):
+    def setUp(self):
+        self._recipe_auth()
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Each')
+        Location.objects.create(id=1, name='Spice Room', visible=True)
+        Location.objects.create(id=2, name='Mixers', visible=True)
+
+    def _draft(self):
+        recipe = Recipe.objects.create(
+            product=Product.objects.create(
+                name='FG',
+                product_class_id=1,
+                category_id=1,
+                range_id=1,
+                unit_id=1,
+                source_container_id=1,
+                destination_container_id=2,
+            ),
+            name='FG',
+        )
+        return RecipeVersion.objects.create(
+            recipe=recipe, version_number=1, status=RecipeVersionStatus.DRAFT,
+        )
+
+    def test_default_is_100_yield(self):
+        recipe = Recipe.objects.create(
+            product=Product.objects.create(
+                name='FG',
+                product_class_id=1,
+                category_id=1,
+                range_id=1,
+                unit_id=1,
+                source_container_id=1,
+                destination_container_id=2,
+            ),
+            name='FG',
+        )
+        resp = self._post(f'/recipe/{recipe.id}/versions/')
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()['data']
+        self.assertEqual(data['process_loss'], '1.0000')
+        self.assertEqual(data['yield_pct'], '100.00')
+        self.assertEqual(data['process_loss_pct'], '0.00')
+
+    def test_patch_yield_80(self):
+        version = self._draft()
+        resp = self.client.patch(
+            f'/recipe/versions/{version.id}/',
+            data='{"yield_pct": 80}',
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['process_loss'], '0.8000')
+        self.assertEqual(data['yield_pct'], '80.00')
+        self.assertEqual(data['process_loss_pct'], '20.00')
+
+    def test_patch_yield_77_23(self):
+        version = self._draft()
+        resp = self.client.patch(
+            f'/recipe/versions/{version.id}/',
+            data='{"yield_pct": 77.23}',
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['process_loss'], '0.7723')
+        self.assertEqual(data['yield_pct'], '77.23')
+        self.assertEqual(data['process_loss_pct'], '22.77')
+
+    def test_yield_beats_conflicting_loss_pct(self):
+        version = self._draft()
+        resp = self.client.patch(
+            f'/recipe/versions/{version.id}/',
+            data='{"yield_pct": 80, "process_loss_pct": 99}',
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['process_loss'], '0.8000')
+        self.assertEqual(data['process_loss_pct'], '20.00')
+
+    def test_yield_zero_is_400(self):
+        version = self._draft()
+        resp = self.client.patch(
+            f'/recipe/versions/{version.id}/',
+            data='{"yield_pct": 0}',
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('infinite raw material', resp.json()['message'])
+
+    def test_get_default_percents(self):
+        version = self._draft()
+        resp = self.client.get(
+            f'/recipe/versions/{version.id}/',
+            HTTP_AUTHORIZATION=self.auth,
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()['data']
+        self.assertEqual(data['yield_pct'], '100.00')
+        self.assertEqual(data['process_loss_pct'], '0.00')
 
 
 class RecipeAutoProvisionTests(RecipeAuthMixin, TestCase):

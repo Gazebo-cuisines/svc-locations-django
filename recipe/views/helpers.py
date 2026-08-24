@@ -1,6 +1,6 @@
 import json
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.db.models import Count, Prefetch
 
@@ -18,6 +18,9 @@ _EDITABLE_STATUSES = {
     RecipeVersionStatus.REJECTED,
 }
 _VERSION_LOCKED_MSG = 'This version is locked while it is awaiting approval.'
+_YIELD_ZERO_MSG = (
+    'Yield must be greater than 0. 0% yield would mean infinite raw material.'
+)
 
 
 def dec(value):
@@ -66,6 +69,53 @@ def parse_decimal(value, field_name: str):
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         raise ValueError(f'Invalid decimal for {field_name}.')
+
+
+def pcts_from_factor(factor):
+    if factor is None:
+        factor = Decimal('1')
+    yield_pct = (factor * 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    loss_pct = (Decimal('100') - yield_pct).quantize(
+        Decimal('0.01'), rounding=ROUND_HALF_UP,
+    )
+    return yield_pct, loss_pct
+
+
+def pct_of_batch(component: RecipeComponent):
+    batch = component.recipe_version.batch_quantity
+    if batch is None or batch <= 0:
+        return None
+    qty = (
+        component.batch_quantity
+        if component.batch_quantity is not None
+        else component.quantity
+    )
+    return (qty / batch * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+
+
+def factor_from_body(body):
+    if 'yield_pct' in body:
+        yield_pct = parse_decimal(body['yield_pct'], 'yield_pct')
+        if yield_pct is None:
+            raise ValueError(_YIELD_ZERO_MSG)
+        factor = yield_pct / 100
+        if factor <= 0:
+            raise ValueError(_YIELD_ZERO_MSG)
+        return factor.quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+    if 'process_loss' in body:
+        value = parse_decimal(body['process_loss'], 'process_loss')
+        if value is None or value <= 0:
+            raise ValueError('process_loss must be greater than 0.')
+        return value
+    if 'process_loss_pct' in body:
+        loss = parse_decimal(body['process_loss_pct'], 'process_loss_pct')
+        if loss is None:
+            raise ValueError(_YIELD_ZERO_MSG)
+        factor = (Decimal('100') - loss) / 100
+        if factor <= 0:
+            raise ValueError(_YIELD_ZERO_MSG)
+        return factor.quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+    return None
 
 
 def parse_date(value, field_name: str):
@@ -172,6 +222,7 @@ def component_dict(component: RecipeComponent) -> dict:
         'unit_name': component.unit.name if component.unit_id else None,
         'batch_quantity': dec(component.batch_quantity),
         'gross_batch_quantity': dec(component.gross_batch_quantity),
+        'pct_of_batch': dec(pct_of_batch(component)),
         'step_instructions': component.step_instructions,
         'is_implicit': component.is_implicit,
         'attachments': [
@@ -182,6 +233,7 @@ def component_dict(component: RecipeComponent) -> dict:
 
 
 def recipe_version_list_dict(version: RecipeVersion) -> dict:
+    yield_pct, process_loss_pct = pcts_from_factor(version.process_loss)
     return {
         'id': version.id,
         'recipe_id': version.recipe_id,
@@ -190,6 +242,8 @@ def recipe_version_list_dict(version: RecipeVersion) -> dict:
         'component_count': len(version.components.all()),
         'status': version.status,
         'process_loss': dec(version.process_loss),
+        'yield_pct': dec(yield_pct),
+        'process_loss_pct': dec(process_loss_pct),
         'batch_quantity': dec(version.batch_quantity),
         'batch_unit_id': version.batch_unit_id,
         'location_id': version.location_id,

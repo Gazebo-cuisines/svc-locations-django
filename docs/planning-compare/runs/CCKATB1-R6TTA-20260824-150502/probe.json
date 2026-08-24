@@ -1,0 +1,56 @@
+{
+  "code": "CCKATB1-R6TTA",
+  "cases": 2000,
+  "plan_date": "24/08/2026",
+  "xlsm": "C:\\Users\\varun\\projects\\gazeboo-cloud\\microservice\\svc-locations-django\\docs\\master-template\\Master Template - DAY PLANNING TEMPLATE - 19.08.2026- V1.xlsm",
+  "opened_readonly": true,
+  "macros": "AutomationSecurity=Low",
+  "started": "2026-08-24T15:05:02",
+  "sheets": [
+    "Changes",
+    "HOME",
+    "DO NOT USE",
+    "RM CALCULATION",
+    "PRINT PACKING PLAN",
+    "Packing Plan Time",
+    "PACKING PLAN",
+    "Plan",
+    "Additional Requirement",
+    "Ready Meals Stock",
+    "Ready Meals New",
+    "Masala Sheet",
+    "Ingredients Issue",
+    "Fresh Products By Supplier",
+    "Fresh Products - Chicken",
+    "Fresh Product Stock",
+    "Total Recipe Weight",
+    "Yield Calculation",
+    "Pastry",
+    "Dip Requirement",
+    "Inner Labels",
+    "Tray Requisition",
+    "Case Requisition",
+    "Outer Labels",
+    "Ingredients",
+    "Supplier Pack Sizes",
+    "Requirement"
+  ],
+  "home_c4": "24/08/2026",
+  "home_c7": "Kruti Rathod (Production Planner)",
+  "packing_row": 39,
+  "packing_name": "TA- Katsu Fried Chicken Bites",
+  "packing_shapes": [
+    {
+      "name": "Rounded Rectangle 4",
+      "on_action": ""
+    },
+    {
+      "name": "Button 12",
+      "on_action": "'Master Template - DAY PLANNING TEMPLATE - 19.08.2026- V1.xlsm'!Button12_Click"
+    },
+    {
+      "name": "Button 27",
+      "on_action": "'Master Template - DAY PLANNING TEMPLATE - 19.08.2026- V1.xlsm'!RefreshStep01"
+    }
+  ]
+}

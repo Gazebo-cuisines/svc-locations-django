@@ -1,0 +1,11 @@
+{
+  "sku": "CCSPB1-R6TTA",
+  "name": "TA- Salt & Pepper Chicken Bites",
+  "cases": 2000,
+  "product_id": 1017,
+  "excel_sec": 104,
+  "next_step": "RefreshStep01",
+  "implied_yield_pct": 87.31,
+  "flat_pct": -12.69,
+  "yield_patched": false
+}
