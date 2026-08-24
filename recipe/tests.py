@@ -108,6 +108,9 @@ class RecipeTreeApiTests(TestCase):
         self.assertEqual(data['edges'], [])
         self.assertEqual(data['tree']['product_id'], raw.id)
         self.assertFalse(data['tree']['has_recipe'])
+        self.assertIsNone(data['tree']['version_id'])
+        self.assertIsNone(data['tree']['version_label'])
+        self.assertEqual(data['tree']['versions'], [])
         self.assertEqual(data['tree']['children'], [])
         self.assertEqual(data['tree']['from_location_name'], 'Spice Room')
         self.assertEqual(data['tree']['category_id'], 1)
@@ -186,18 +189,137 @@ class RecipeTreeApiTests(TestCase):
         self.assertTrue(live['is_live'])
         self.assertEqual(live['version_status'], 'active')
         self.assertEqual(live['version_id'], v1.id)
+        self.assertEqual(live['version_label'], 'v1')
         self.assertEqual(
-            [(row['id'], row['status'], row['can_activate']) for row in live['versions']],
-            [(v1.id, 'active', False), (v2.id, 'approved', True)],
+            [
+                (row['id'], row['version_label'], row['status'], row['can_activate'])
+                for row in live['versions']
+            ],
+            [
+                (v1.id, 'v1', 'active', False),
+                (v2.id, 'v2', 'approved', True),
+            ],
         )
         self.assertEqual(live['children'][0]['product_id'], child_a.id)
+        self.assertIsNone(live['children'][0]['version_id'])
+        self.assertEqual(live['children'][0]['versions'], [])
 
         preview = self.client.get(
             f'/recipe/product/{parent.id}/tree/?version_id={v2.id}',
         ).json()['data']['tree']
         self.assertEqual(preview['version_id'], v2.id)
+        self.assertEqual(preview['version_label'], 'v2')
         self.assertFalse(preview['is_live'])
         self.assertEqual(preview['children'][0]['product_id'], child_b.id)
+
+        bad = self.client.get(f'/recipe/product/{parent.id}/tree/?version_id=999999')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_tree_nested_pins(self):
+        chilli = self._product('Chilli', source_id=1, dest_id=1, recipe_code='CHILLI')
+        salt = self._product('Salt', source_id=1, dest_id=1, recipe_code='SALT')
+        sugar = self._product('Sugar', source_id=1, dest_id=1, recipe_code='SUGAR')
+        spice = self._product('Samosa spice pack', source_id=1, dest_id=2, recipe_code='SPICE')
+        parent = self._product('Samosa FG', source_id=2, dest_id=3, recipe_code='FG')
+
+        spice_recipe = Recipe.objects.create(product=spice, name='Spice')
+        v1 = RecipeVersion.objects.create(
+            recipe=spice_recipe, version_number=1, status=RecipeVersionStatus.RETIRED,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=v1, line_no=1, component_product=chilli,
+            quantity=Decimal('1.000000'), unit_id=1,
+        )
+        v2 = RecipeVersion.objects.create(
+            recipe=spice_recipe, version_number=2, status=RecipeVersionStatus.RETIRED,
+        )
+        for i, product in enumerate((chilli, salt), start=1):
+            RecipeComponent.objects.create(
+                recipe_version=v2, line_no=i, component_product=product,
+                quantity=Decimal('1.000000'), unit_id=1,
+            )
+        v3 = RecipeVersion.objects.create(
+            recipe=spice_recipe, version_number=3, status=RecipeVersionStatus.ACTIVE,
+        )
+        for i, product in enumerate((chilli, salt, sugar), start=1):
+            RecipeComponent.objects.create(
+                recipe_version=v3, line_no=i, component_product=product,
+                quantity=Decimal('1.000000'), unit_id=1,
+            )
+
+        parent_recipe = Recipe.objects.create(product=parent, name='FG')
+        parent_v = RecipeVersion.objects.create(
+            recipe=parent_recipe, version_number=1, status=RecipeVersionStatus.ACTIVE,
+        )
+        RecipeComponent.objects.create(
+            recipe_version=parent_v, line_no=1, component_product=spice,
+            quantity=Decimal('1.000000'), unit_id=1,
+        )
+
+        def spice_child_ids(tree):
+            return [c['product_id'] for c in tree['children'][0]['children']]
+
+        live = self.client.get(f'/recipe/product/{parent.id}/tree/').json()['data']
+        spice_node = live['tree']['children'][0]
+        self.assertEqual(spice_node['version_id'], v3.id)
+        self.assertEqual(spice_node['version_label'], 'v3')
+        self.assertEqual(spice_node['version_status'], 'active')
+        self.assertEqual(
+            [(row['id'], row['version_label'], row['status']) for row in spice_node['versions']],
+            [
+                (v1.id, 'v1', 'retired'),
+                (v2.id, 'v2', 'retired'),
+                (v3.id, 'v3', 'active'),
+            ],
+        )
+        self.assertEqual(spice_child_ids(live['tree']), [chilli.id, salt.id, sugar.id])
+
+        pinned = self.client.get(
+            f'/recipe/product/{parent.id}/tree/?pins={spice.id}:{v2.id}',
+        ).json()['data']
+        spice_node = pinned['tree']['children'][0]
+        self.assertEqual(spice_node['version_id'], v2.id)
+        self.assertEqual(spice_node['version_label'], 'v2')
+        self.assertEqual(spice_node['version_status'], 'retired')
+        self.assertEqual(spice_child_ids(pinned['tree']), [chilli.id, salt.id])
+        self.assertEqual(
+            {
+                e['child_product_id']
+                for e in pinned['edges']
+                if e['parent_product_id'] == spice.id
+            },
+            {chilli.id, salt.id},
+        )
+        self.assertNotIn(sugar.id, {n['product_id'] for n in pinned['nodes']})
+
+        v1_tree = self.client.get(
+            f'/recipe/product/{parent.id}/tree/?pins={spice.id}:{v1.id}',
+        ).json()['data']['tree']
+        self.assertEqual(spice_child_ids(v1_tree), [chilli.id])
+
+        combo = self.client.get(
+            f'/recipe/product/{parent.id}/tree/'
+            f'?version_id={parent_v.id}&pins={spice.id}:{v2.id}',
+        ).json()['data']['tree']
+        self.assertEqual(combo['version_id'], parent_v.id)
+        self.assertEqual(spice_child_ids(combo), [chilli.id, salt.id])
+
+        self.assertEqual(
+            self.client.get(f'/recipe/product/{parent.id}/tree/?pins=nope').status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                f'/recipe/product/{parent.id}/tree/?pins={spice.id}:999999',
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                f'/recipe/product/{parent.id}/tree/?pins={spice.id}:{parent_v.id}',
+            ).status_code,
+            400,
+        )
 
     def test_tree_product_not_found(self):
         resp = self.client.get('/recipe/product/999999/tree/')

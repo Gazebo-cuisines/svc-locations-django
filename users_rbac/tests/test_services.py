@@ -15,7 +15,7 @@ from users_rbac.models import (
     WarehouseAccess,
     WarehouseUnit,
 )
-from users_rbac.services import create_identity, login, reset_password, set_active
+from users_rbac.services import create_identity, login, refresh, reset_password, set_active
 
 
 class RbacSchemaTests(TestCase):
@@ -144,6 +144,61 @@ class CognitoIdentityTests(TestCase):
             with self.assertRaises(ValueError) as ctx:
                 login('amit01', 'wrong')
         self.assertEqual(str(ctx.exception), 'Invalid username or password.')
+
+    def test_refresh_resolves_email_and_keeps_opaque_token(self):
+        RbacUser.objects.create(
+            cognito_sub='sub-amit',
+            username='amit01',
+            email='amit@gazebo.test',
+        )
+        mock_client = MagicMock()
+        mock_client.initiate_auth.return_value = {
+            'AuthenticationResult': {
+                'AccessToken': 'new-access',
+                'IdToken': 'new-id',
+                'ExpiresIn': 3600,
+                'TokenType': 'Bearer',
+            }
+        }
+        with patch('users_rbac.services._client', return_value=mock_client):
+            tokens = refresh('opaque-refresh', 'amit@gazebo.test')
+        self.assertEqual(tokens['refresh_token'], 'opaque-refresh')
+        self.assertEqual(tokens['username'], 'amit01')
+        params = mock_client.initiate_auth.call_args.kwargs['AuthParameters']
+        self.assertEqual(params['USERNAME'], 'amit01')
+        self.assertEqual(params['REFRESH_TOKEN'], 'opaque-refresh')
+
+    def test_refresh_rejects_access_jwt(self):
+        access = _unsigned_jwt({'token_use': 'access', 'username': 'amit01'})
+        with self.assertRaises(ValueError) as ctx:
+            refresh(access, 'amit01')
+        self.assertIn('sign in', str(ctx.exception).lower())
+
+    def test_refresh_does_not_store_access_jwt_as_refresh(self):
+        access = _unsigned_jwt({'token_use': 'access'})
+        mock_client = MagicMock()
+        mock_client.initiate_auth.return_value = {
+            'AuthenticationResult': {
+                'AccessToken': access,
+                'IdToken': 'new-id',
+                'RefreshToken': access,
+                'ExpiresIn': 3600,
+            }
+        }
+        with patch('users_rbac.services._client', return_value=mock_client):
+            tokens = refresh('opaque-refresh', 'amit01')
+        self.assertEqual(tokens['refresh_token'], 'opaque-refresh')
+
+
+def _unsigned_jwt(payload: dict) -> str:
+    import base64
+    import json
+
+    def enc(obj: dict) -> str:
+        raw = json.dumps(obj, separators=(',', ':')).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+    return f'{enc({"alg": "none"})}.{enc(payload)}.x'
 
 
 class LoginViewTests(TestCase):

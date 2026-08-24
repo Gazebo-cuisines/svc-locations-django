@@ -7,7 +7,12 @@ from product.models import Product
 from product.query import active_products
 from recipe.models import Recipe, RecipeComponent
 from recipe.permissions import gate_recipe_write
-from recipe.utils import build_recipe_tree, get_or_create_recipe_with_draft, sync_has_recipe
+from recipe.utils import (
+    build_recipe_tree,
+    get_or_create_recipe_with_draft,
+    parse_tree_pins,
+    sync_has_recipe,
+)
 from recipe.views.helpers import (
     actor,
     audit,
@@ -31,7 +36,8 @@ def recipe_product_tree_api(request, product_id: int):
         except (TypeError, ValueError):
             return api_error('version_id must be an integer.')
     try:
-        tree = build_recipe_tree(product_id, version_id=version_id)
+        pins = parse_tree_pins(request.GET.get('pins'))
+        tree = build_recipe_tree(product_id, version_id=version_id, pins=pins)
     except Product.DoesNotExist:
         return api_error('Product not found.', status_code=404)
     except ValueError as exc:
