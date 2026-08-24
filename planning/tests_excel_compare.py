@@ -1,11 +1,14 @@
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from locations.models import Location
+from planning.management.commands.compare_excel_plan import _write_report
 from planning.models import ExcelCompareReport
 from planning.services.excel_compare import parse_packing
 
@@ -87,3 +90,36 @@ class ExcelCompareApiTests(TestCase):
         detail = self.client.get(f'/planning/excel-compare/{report_id}/')
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(len(detail.json()['data']['payload']['finished_goods']), 1)
+
+
+class WriteReportPctTests(SimpleTestCase):
+    def test_pct_formula_is_system_minus_excel_over_excel(self):
+        result = {
+            'plan_id': 1,
+            'run_id': 1,
+            'dry_run': False,
+            'finished_goods': [],
+            'rm_compare': [{
+                'excel_code': 'RMHAR002-01',
+                'excel_name': 'PEAS (FROZEN)',
+                'excel_kg': '387.5',
+                'product_id': 1,
+                'recipe_code': 'VEGFRO-01',
+                'product_name': 'PEAS (FROZEN)',
+                'match': 'map',
+                'system_kg': '387.1',
+                'diff_kg': None,
+                'diff_pct': None,
+                'fix': None,
+            }],
+            'system_only': [],
+        }
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'compare.xlsx'
+            _write_report(path, result)
+            sheet = load_workbook(path)['RM compare']
+        self.assertEqual(sheet['C2'].value, 387.5)
+        self.assertEqual(sheet['H2'].value, 387.1)
+        self.assertEqual(sheet['J2'].value, '=(H2-C2)/C2*100')
+        self.assertEqual(sheet['J2'].number_format, '+0.00"%";-0.00"%"')
+        self.assertEqual(len(sheet.conditional_formatting._cf_rules), 1)

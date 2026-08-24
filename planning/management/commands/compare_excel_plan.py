@@ -7,6 +7,8 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 from django.utils.dateparse import parse_date
 from openpyxl import Workbook
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.styles import Font, PatternFill
 
 from planning.errors import PlanningError, PlanningStateError
 from planning.services.excel_compare import (
@@ -72,6 +74,43 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f'report {out}'))
 
 
+_PCT_FORMAT = '+0.00"%";-0.00"%"'
+_GREEN_FONT = Font(color='006100')
+_RED_FONT = Font(color='9C0006')
+_GREEN_FILL = PatternFill(fill_type='solid', fgColor='C6EFCE')
+_RED_FILL = PatternFill(fill_type='solid', fgColor='FFC7CE')
+
+
+def _num(value):
+    if value in (None, ''):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _colour_pct(sheet, cell_range: str):
+    sheet.conditional_formatting.add(
+        cell_range,
+        CellIsRule(
+            operator='greaterThan',
+            formula=['0'],
+            font=_GREEN_FONT,
+            fill=_GREEN_FILL,
+        ),
+    )
+    sheet.conditional_formatting.add(
+        cell_range,
+        CellIsRule(
+            operator='lessThan',
+            formula=['0'],
+            font=_RED_FONT,
+            fill=_RED_FILL,
+        ),
+    )
+
+
 def _write_report(path: Path, result: dict):
     book = Workbook()
     fg_sheet = book.active
@@ -93,13 +132,25 @@ def _write_report(path: Path, result: dict):
         'product_id', 'recipe_code', 'system_name', 'match',
         'system_kg', 'diff_kg', 'diff_pct', 'fix',
     ])
-    for row in result['rm_compare']:
-        cmp_sheet.append([
-            row['excel_code'], row['excel_name'], row['excel_kg'],
-            row['product_id'], row['recipe_code'], row['product_name'],
-            row['match'], row['system_kg'], row['diff_kg'], row['diff_pct'],
-            row['fix'],
-        ])
+    for i, row in enumerate(result['rm_compare'], start=2):
+        excel_kg = _num(row['excel_kg'])
+        system_kg = _num(row['system_kg'])
+        cmp_sheet.cell(i, 1, row['excel_code'])
+        cmp_sheet.cell(i, 2, row['excel_name'])
+        cmp_sheet.cell(i, 3, excel_kg)
+        cmp_sheet.cell(i, 4, row['product_id'])
+        cmp_sheet.cell(i, 5, row['recipe_code'])
+        cmp_sheet.cell(i, 6, row['product_name'])
+        cmp_sheet.cell(i, 7, row['match'])
+        cmp_sheet.cell(i, 8, system_kg)
+        if excel_kg and system_kg is not None:
+            cmp_sheet.cell(i, 9, f'=H{i}-C{i}')
+            pct = cmp_sheet.cell(i, 10, f'=(H{i}-C{i})/C{i}*100')
+            pct.number_format = _PCT_FORMAT
+        cmp_sheet.cell(i, 11, row['fix'])
+    last = 1 + len(result['rm_compare'])
+    if last >= 2:
+        _colour_pct(cmp_sheet, f'J2:J{last}')
     extra = book.create_sheet('System only')
     extra.append(['product_id', 'recipe_code', 'name', 'system_kg', 'unit', 'fix'])
     for row in result['system_only']:
