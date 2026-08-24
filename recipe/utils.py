@@ -275,6 +275,7 @@ def _product_node(
         'recipe_id': version.recipe_id if version else None,
         'version_id': version.id if version else None,
         'version_number': version.version_number if version else None,
+        'version_label': f'v{version.version_number}' if version else None,
         'version_status': version.status if version else None,
         'is_live': bool(
             version and version.status == RecipeVersionStatus.ACTIVE
@@ -290,6 +291,7 @@ def _version_choices(recipe: Recipe | None) -> list[dict]:
         {
             'id': v.id,
             'version_number': v.version_number,
+            'version_label': f'v{v.version_number}',
             'status': v.status,
             'can_activate': v.status == RecipeVersionStatus.APPROVED,
         }
@@ -328,20 +330,15 @@ def _walk_product(
         recipe = product.recipe
     except Recipe.DoesNotExist:
         pass
+    override_id = (version_overrides or {}).get(product_id)
     version = None
-    if recipe is not None:
-        override_id = (version_overrides or {}).get(product_id)
-        if override_id is not None:
-            version = next(
-                (v for v in recipe.versions.all() if v.id == override_id),
-                None,
-            )
-            if version is None:
-                raise ValueError(
-                    f'version_id={override_id} does not belong to this product.'
-                )
-        else:
-            version = active_or_latest_version(recipe)
+    if override_id is not None:
+        versions = list(recipe.versions.all()) if recipe is not None else []
+        version = next((v for v in versions if v.id == override_id), None)
+        if version is None:
+            raise ValueError('That recipe version was not found.')
+    elif recipe is not None:
+        version = active_or_latest_version(recipe)
     if product_id not in nodes_by_id:
         nodes_by_id[product_id] = _product_node(
             product, version, image_urls, recipe,
@@ -391,16 +388,39 @@ def _walk_product(
     return {**nodes_by_id[product_id], 'children': children}
 
 
-def build_recipe_tree(product_id: int, version_id: int | None = None) -> dict:
+def parse_tree_pins(raw: str | None) -> dict[int, int]:
+    """Parse `product_id:version_id,product_id:version_id`. Empty → {}."""
+    if raw in (None, ''):
+        return {}
+    pins: dict[int, int] = {}
+    for part in raw.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            product_s, version_s = part.split(':')
+            pins[int(product_s)] = int(version_s)
+        except ValueError:
+            raise ValueError('pins must be product_id:version_id pairs.') from None
+    return pins
+
+
+def build_recipe_tree(
+    product_id: int,
+    version_id: int | None = None,
+    pins: dict[int, int] | None = None,
+) -> dict:
     """
     Recursive recipe dependency tree for a product.
     Uses active version, else latest. Leaves = products with no recipe components.
-    version_id, if set, walks that version for the root product only (preview).
+    version_id pins the root; pins pin nested products. Unpinned nodes stay active.
     """
     nodes_by_id: dict[int, dict] = {}
     edges: list[dict] = []
     image_urls: dict[int, str | None] = {}
-    overrides = {product_id: version_id} if version_id is not None else None
+    overrides = dict(pins or {})
+    if version_id is not None:
+        overrides[product_id] = version_id
     tree = _walk_product(
         product_id,
         path=set(),

@@ -151,10 +151,10 @@ class Product(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=128, unique=True)
     alternate_name = models.CharField(max_length=128, null=True, blank=True)
-    recipe_code = models.CharField(max_length=32, unique=True, null=True, blank=True)
-    alternate_recipe_code = models.CharField(max_length=32, null=True, blank=True)
-    gff_code = models.CharField(max_length=32, null=True, blank=True)
-    secondary_gff_recipe = models.CharField(max_length=32, null=True, blank=True)
+    recipe_code = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    alternate_recipe_code = models.CharField(max_length=128, null=True, blank=True)
+    gff_code = models.CharField(max_length=128, null=True, blank=True)
+    secondary_gff_recipe = models.CharField(max_length=128, null=True, blank=True)
     external_barcode = models.CharField(max_length=16, null=True, blank=True)
     label_mode = models.CharField(
         max_length=16,

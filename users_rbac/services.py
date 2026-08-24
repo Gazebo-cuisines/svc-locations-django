@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 
 import boto3
@@ -75,6 +76,52 @@ def _delete_cognito_user(username: str) -> None:
         pass
 
 
+def _jwt_payload(token: str) -> dict:
+    try:
+        part = (token or '').split('.')[1]
+        padded = part + '=' * (-len(part) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _is_access_or_id_jwt(token: str) -> bool:
+    return _jwt_payload(token).get('token_use') in ('access', 'id')
+
+
+def _resolve_username(identifier: str) -> str:
+    identifier = (identifier or '').strip()
+    if not identifier:
+        return identifier
+    user = (
+        RbacUser.objects.filter(username__iexact=identifier).first()
+        or RbacUser.objects.filter(email__iexact=identifier).first()
+    )
+    return user.username if user else identifier
+
+
+def _token_payload(result: dict, *, refresh_fallback: str | None = None, username: str | None = None) -> dict:
+    access = result['AccessToken']
+    id_token = result['IdToken']
+    refresh = result.get('RefreshToken') or refresh_fallback
+    if not refresh or refresh in (access, id_token) or _is_access_or_id_jwt(refresh):
+        refresh = refresh_fallback
+    cognito_username = (
+        username
+        or _jwt_payload(id_token).get('cognito:username')
+        or _jwt_payload(access).get('username')
+    )
+    return {
+        'access_token': access,
+        'id_token': id_token,
+        'refresh_token': refresh,
+        'expires_in': result.get('ExpiresIn'),
+        'token_type': result.get('TokenType', 'Bearer'),
+        'username': cognito_username,
+    }
+
+
 def login(username: str, password: str) -> dict:
     """
     USER_PASSWORD_AUTH against Cognito.
@@ -103,13 +150,7 @@ def login(username: str, password: str) -> dict:
         raise ValueError("Additional sign-in steps are required. Please contact support.")
 
     result = resp["AuthenticationResult"]
-    return {
-        "access_token": result["AccessToken"],
-        "id_token": result["IdToken"],
-        "refresh_token": result.get("RefreshToken"),
-        "expires_in": result.get("ExpiresIn"),
-        "token_type": result.get("TokenType", "Bearer"),
-    }
+    return _token_payload(result, username=_resolve_username(username))
 
 
 def refresh(refresh_token: str, username: str) -> dict:
@@ -117,9 +158,11 @@ def refresh(refresh_token: str, username: str) -> dict:
     REFRESH_TOKEN_AUTH against Cognito (needs SECRET_HASH — browser cannot do this).
     """
     refresh_token = (refresh_token or '').strip()
-    username = (username or '').strip()
+    username = _resolve_username(username)
     if not refresh_token or not username:
         raise ValueError('Refresh token and username are required.')
+    if _is_access_or_id_jwt(refresh_token):
+        raise ValueError('Invalid refresh token. Please sign in again.')
 
     try:
         resp = _client().initiate_auth(
@@ -139,14 +182,7 @@ def refresh(refresh_token: str, username: str) -> dict:
         raise ValueError(_cognito_message(exc)) from exc
 
     result = resp["AuthenticationResult"]
-    return {
-        "access_token": result["AccessToken"],
-        "id_token": result["IdToken"],
-        # Cognito often omits RefreshToken on refresh — caller should keep the old one.
-        "refresh_token": result.get("RefreshToken") or refresh_token,
-        "expires_in": result.get("ExpiresIn"),
-        "token_type": result.get("TokenType", "Bearer"),
-    }
+    return _token_payload(result, refresh_fallback=refresh_token, username=username)
 
 
 def create_identity(
