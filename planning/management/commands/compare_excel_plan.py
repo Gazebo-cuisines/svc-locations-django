@@ -128,29 +128,30 @@ def _write_report(path: Path, result: dict):
         ])
     cmp_sheet = book.create_sheet('RM compare')
     cmp_sheet.append([
-        'excel_code', 'excel_name', 'excel_kg',
-        'product_id', 'recipe_code', 'system_name', 'match',
-        'system_kg', 'diff_kg', 'diff_pct', 'fix',
+        'excel_code', 'excel_name', 'excel_g', 'system_g',
+        'diff', 'percentage', 'fix',
     ])
     for i, row in enumerate(result['rm_compare'], start=2):
-        excel_kg = _num(row['excel_kg'])
-        system_kg = _num(row['system_kg'])
+        excel_g = _num(row.get('excel_g'))
+        if excel_g is None:
+            kg = _num(row['excel_kg'])
+            excel_g = kg * 1000 if kg is not None else None
+        system_g = _num(row.get('system_g'))
+        if system_g is None:
+            kg = _num(row['system_kg'])
+            system_g = kg * 1000 if kg is not None else None
         cmp_sheet.cell(i, 1, row['excel_code'])
         cmp_sheet.cell(i, 2, row['excel_name'])
-        cmp_sheet.cell(i, 3, excel_kg)
-        cmp_sheet.cell(i, 4, row['product_id'])
-        cmp_sheet.cell(i, 5, row['recipe_code'])
-        cmp_sheet.cell(i, 6, row['product_name'])
-        cmp_sheet.cell(i, 7, row['match'])
-        cmp_sheet.cell(i, 8, system_kg)
-        if excel_kg and system_kg is not None:
-            cmp_sheet.cell(i, 9, f'=H{i}-C{i}')
-            pct = cmp_sheet.cell(i, 10, f'=(H{i}-C{i})/C{i}*100')
+        cmp_sheet.cell(i, 3, excel_g)
+        cmp_sheet.cell(i, 4, system_g)
+        if excel_g:
+            cmp_sheet.cell(i, 5, f'=D{i}-C{i}')
+            pct = cmp_sheet.cell(i, 6, f'=(D{i}-C{i})/C{i}*100')
             pct.number_format = _PCT_FORMAT
-        cmp_sheet.cell(i, 11, row['fix'])
+        cmp_sheet.cell(i, 7, row['fix'])
     last = 1 + len(result['rm_compare'])
     if last >= 2:
-        _colour_pct(cmp_sheet, f'J2:J{last}')
+        _colour_pct(cmp_sheet, f'F2:F{last}')
     extra = book.create_sheet('System only')
     extra.append(['product_id', 'recipe_code', 'name', 'system_kg', 'unit', 'fix'])
     for row in result['system_only']:

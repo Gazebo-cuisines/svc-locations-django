@@ -78,6 +78,12 @@ def _qty(value):
     return str(value)
 
 
+def _g(kg: Decimal | None) -> Decimal | None:
+    if kg is None:
+        return None
+    return kg * Decimal('1000')
+
+
 def load_code_map(path: Path | None = None) -> dict[str, str]:
     target = path or (Path(settings.BASE_DIR) / DEFAULT_MAP)
     if not target.exists():
@@ -327,22 +333,29 @@ def _rm_payload(row, sys, dry_run) -> dict:
     product = row['product']
     excel_kg = row['kg']
     sys_kg = sys['kg'] if sys else None
-    diff = pct = None
+    excel_g = _g(excel_kg)
+    sys_g = _g(sys_kg)
+    diff_kg = diff_g = pct = None
     if sys_kg is not None:
-        diff = sys_kg - excel_kg
+        diff_kg = sys_kg - excel_kg
+        if excel_g is not None:
+            diff_g = sys_g - excel_g if sys_g is not None else None
         if excel_kg:
-            pct = (diff / excel_kg) * Decimal('100')
+            pct = (diff_kg / excel_kg) * Decimal('100')
     return {
         'excel_code': row['code'],
         'excel_name': row['name'],
         'sheet': row.get('sheet'),
         'excel_kg': _qty(excel_kg),
+        'excel_g': _qty(excel_g),
         'match': row['how'],
         'product_id': product.id if product else None,
         'recipe_code': product.recipe_code if product else None,
         'product_name': product.name if product else None,
         'system_kg': _qty(sys_kg),
-        'diff_kg': _qty(diff),
+        'system_g': _qty(sys_g),
+        'diff_kg': _qty(diff_kg),
+        'diff_g': _qty(diff_g),
         'diff_pct': float(round(pct, 2)) if pct is not None else None,
         'fix': _fix_note(
             product=product, sys=sys, excel_kg=excel_kg, dry_run=dry_run,

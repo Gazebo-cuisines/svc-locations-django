@@ -104,12 +104,15 @@ class WriteReportPctTests(SimpleTestCase):
                 'excel_code': 'RMHAR002-01',
                 'excel_name': 'PEAS (FROZEN)',
                 'excel_kg': '387.5',
+                'excel_g': '387500',
                 'product_id': 1,
                 'recipe_code': 'VEGFRO-01',
                 'product_name': 'PEAS (FROZEN)',
                 'match': 'map',
                 'system_kg': '387.1',
+                'system_g': '387100',
                 'diff_kg': None,
+                'diff_g': None,
                 'diff_pct': None,
                 'fix': None,
             }],
@@ -119,8 +122,9 @@ class WriteReportPctTests(SimpleTestCase):
             path = Path(tmp) / 'compare.xlsx'
             _write_report(path, result)
             sheet = load_workbook(path)['RM compare']
-        self.assertEqual(sheet['C2'].value, 387.5)
-        self.assertEqual(sheet['H2'].value, 387.1)
-        self.assertEqual(sheet['J2'].value, '=(H2-C2)/C2*100')
-        self.assertEqual(sheet['J2'].number_format, '+0.00"%";-0.00"%"')
+        self.assertEqual(sheet['C2'].value, 387500)
+        self.assertEqual(sheet['D2'].value, 387100)
+        self.assertEqual(sheet['E2'].value, '=D2-C2')
+        self.assertEqual(sheet['F2'].value, '=(D2-C2)/C2*100')
+        self.assertEqual(sheet['F2'].number_format, '+0.00"%";-0.00"%"')
         self.assertEqual(len(sheet.conditional_formatting._cf_rules), 1)
