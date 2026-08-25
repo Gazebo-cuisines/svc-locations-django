@@ -18,6 +18,12 @@ def _dec(value) -> str | None:
     return str(value)
 
 
+def _cost_per_unit(cost, multiplier) -> str | None:
+    if cost is None:
+        return None
+    return str((cost / multiplier).quantize(Decimal('0.000001')))
+
+
 def supplier_product_dict(row: ProductSupplier) -> dict:
     return {
         'id': row.id,
@@ -28,6 +34,8 @@ def supplier_product_dict(row: ProductSupplier) -> dict:
         'supplier_code': row.supplier_code,
         'supplier_product_name': row.supplier_product_name,
         'cost': _dec(row.cost),
+        'cost_per_unit': _cost_per_unit(row.cost, row.multiplier),
+        'moq': row.moq,
         'outer_qty': _dec(row.outer_qty),
         'outer_unit_id': row.outer_unit_id,
         'outer_unit_name': row.outer_unit.name,
@@ -181,6 +189,12 @@ def _validate_write_fields(body: dict, *, partial: bool = False) -> dict:
         if cost is not None and cost < 0:
             raise ValueError('cost cannot be negative.')
         data['cost'] = cost
+
+    if 'moq' in body:
+        moq = _parse_optional_int(body.get('moq'), 'moq')
+        if moq is not None and moq <= 0:
+            raise ValueError('moq must be greater than 0.')
+        data['moq'] = moq
 
     if 'purchase_shape_format_id' in body:
         format_id = body.get('purchase_shape_format_id')
