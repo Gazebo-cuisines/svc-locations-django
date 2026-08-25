@@ -57,26 +57,16 @@ def auth_middleware(view_func):
 
 
 container_urlpatterns = [
+    
     path('', auth_middleware(container_index_api), name='container-index'),
+    
     path('locations/', csrf_exempt(auth_middleware(location_list_api)), name='location-list'),
-    path(
-        'locations/audit/',
-        auth_middleware(location_audit_list_api),
-        name='location-audit-list',
-    ),
-    path(
-        'locations/<int:location_id>/',
-        csrf_exempt(auth_middleware(location_detail_api)),
-        name='location-detail',
-    ),
-    path(
-        'locations/<int:location_id>/image/',
-        csrf_exempt(auth_middleware(location_image_api)),
-        name='location-image',
-    ),
-    path(
-        'locations/<int:location_id>/audit/',
-        auth_middleware(location_audit_api),
+    
+    path('locations/audit/', auth_middleware(location_audit_list_api), name='location-audit-list'),
+    
+    path('locations/<int:location_id>/',csrf_exempt(auth_middleware(location_detail_api)),name='location-detail'),
+    path('locations/<int:location_id>/image/', csrf_exempt(auth_middleware(location_image_api)), name='location-image' ),
+    path( 'locations/<int:location_id>/audit/', auth_middleware(location_audit_api),
         name='location-audit',
     ),
     path(

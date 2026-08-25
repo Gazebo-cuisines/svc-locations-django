@@ -158,19 +158,25 @@ class ExplodeBatchBomTests(TestCase):
         mixer = PlanRequirement.objects.get(run=run, product_id=self.mixer.id)
         self.assertEqual(mixer.calc_json['kind'], 'demand')
         self.assertEqual(mixer.calc_json['steps'][0]['op'], 'gross')
-        self.assertEqual(mixer.calc_json['steps'][0]['formula'], 'net / process_loss')
+        self.assertEqual(mixer.calc_json['steps'][0]['formula'], 'net / recipe_yield')
+        self.assertIn('recipe yield 100%', mixer.calc_json['steps'][0]['from'])
         stock = next(s for s in mixer.calc_json['steps'] if s['op'] == 'stock_net')
         self.assertTrue(stock['skipped'])
 
         scale = next(s for s in potato.calc_json['steps'] if s['op'] == 'scale_bom')
+        self.assertEqual(scale['formula'], 'parent_gross × bom_qty / batch')
+        self.assertEqual(scale['from'], '4812000 × 96000 / 186080')
         self.assertEqual(
             Decimal(scale['to']).quantize(Decimal('0.000001')),
             potato.net_required,
         )
         self.assertEqual(potato.calc_json['kind'], 'child')
         self.assertEqual(potato.calc_json['inputs']['recipe_version_number'], None)
+        self.assertEqual(potato.calc_json['inputs']['source_recipe_version_number'], 1)
+        self.assertEqual(mixer.calc_json['inputs']['recipe_version_number'], 1)
+        self.assertEqual(mixer.calc_json['inputs']['source_recipe_version_number'], 1)
         self.assertEqual(run.stamp_json['what'], 'explode')
-        self.assertEqual(run.stamp_json['driver'], 'explode-1.3')
+        self.assertEqual(run.stamp_json['driver'], 'explode-1.4')
         self.assertEqual(run.stamp_json['line_count'], 1)
 
         resp = self.client.get(
@@ -186,6 +192,12 @@ class ExplodeBatchBomTests(TestCase):
         self.assertEqual(by_name['Potato']['category_name'], 'Meals')
         self.assertEqual(by_name['Potato']['product_class_name'], 'Finished')
         self.assertEqual(by_name['Potato']['calc_json']['kind'], 'child')
+        self.assertEqual(by_name['Mixer']['recipe_version_number'], 1)
+        self.assertEqual(by_name['Mixer']['source_recipe_version_number'], 1)
+        self.assertIsNone(by_name['Potato']['recipe_version_number'])
+        self.assertEqual(by_name['Potato']['source_recipe_version_number'], 1)
+        self.assertEqual(by_name['Potato']['source_product_id'], self.mixer.id)
+        self.assertEqual(by_name['Mixer']['process_loss'], '1')
 
 
 class ExplodePastryUomTests(TestCase):

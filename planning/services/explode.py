@@ -25,7 +25,7 @@ from product.models import Product, Unit
 from recipe.utils import batch_scale_denom, scaled_child_net
 from stock_ledger.util.conversions import StockValidationError, to_product_unit
 
-DRIVER_VERSION = 'explode-1.3'
+DRIVER_VERSION = 'explode-1.4'
 MAX_BOM_DEPTH = 20
 
 
@@ -62,6 +62,49 @@ def _qty(value: Decimal | None) -> str | None:
     if '.' in text:
         text = text.rstrip('0').rstrip('.')
     return text
+
+
+def _is_one(value: Decimal) -> bool:
+    return value == 1
+
+
+def _recipe_yield_pct(keep: Decimal) -> str:
+    pct = (keep * Decimal('100')).quantize(Decimal('0.01'))
+    return _qty(pct)
+
+
+def _gross_step(net: Decimal, keep: Decimal, gross: Decimal) -> dict:
+    pct = _recipe_yield_pct(keep)
+    return {
+        'op': 'gross',
+        'formula': 'net / recipe_yield',
+        'from': f'{_qty(net)} / {_qty(keep)} (recipe yield {pct}%)',
+        'to': _qty(gross),
+    }
+
+
+def _scale_bom_labels(
+    parent_gross: Decimal,
+    bom_qty: Decimal,
+    denom: Decimal | None,
+    yf: Decimal,
+) -> tuple[str, str]:
+    p, b = _qty(parent_gross), _qty(bom_qty)
+    skip_y = _is_one(yf)
+    if denom:
+        d = _qty(denom)
+        if skip_y:
+            return 'parent_gross × bom_qty / batch', f'{p} × {b} / {d}'
+        return (
+            'parent_gross × bom_qty / batch / product_yield',
+            f'{p} × {b} / {d} / {_qty(yf)}',
+        )
+    if skip_y:
+        return 'parent_gross × bom_qty', f'{p} × {b}'
+    return (
+        'parent_gross × bom_qty / product_yield',
+        f'{p} × {b} / {_qty(yf)}',
+    )
 
 
 def _unit_names(unit_ids: list[int | None]) -> dict[int, str]:
@@ -289,19 +332,17 @@ def _explode_line(plan: Plan, run: PlanRun, line: PlanLine) -> None:
             'inputs': {
                 'plan_line_qty': _qty(line.quantity),
                 'process_loss': _qty(process_loss),
+                'recipe_yield_pct': _recipe_yield_pct(process_loss),
                 'recipe_version_id': version_id,
                 'recipe_version_number': version_number,
+                'source_recipe_version_id': version_id,
+                'source_recipe_version_number': version_number,
                 'consider_stock': consider,
                 'full_batches': full,
                 'align_last_batch': align,
             },
             'steps': [
-                {
-                    'op': 'gross',
-                    'formula': 'net / process_loss',
-                    'from': f'{_qty(line.quantity)} / {_qty(process_loss)}',
-                    'to': _qty(gross_before_stock),
-                },
+                _gross_step(line.quantity, process_loss, gross_before_stock),
                 stock_step,
                 {
                     'op': 'batch_split',
@@ -466,17 +507,9 @@ def _explode_children(
             }
 
         yf = child_product.yield_factor
-        if denom:
-            scale_formula = 'parent_gross × bom_qty / denom / yield'
-            scale_from = (
-                f'{_qty(parent_gross)} × {_qty(component.quantity)} '
-                f'/ {_qty(denom)} / {_qty(yf)}'
-            )
-        else:
-            scale_formula = 'parent_gross × bom_qty / yield'
-            scale_from = (
-                f'{_qty(parent_gross)} × {_qty(component.quantity)} / {_qty(yf)}'
-            )
+        scale_formula, scale_from = _scale_bom_labels(
+            parent_gross, component.quantity, denom, yf,
+        )
         stock_note = (
             'Stock not applied.'
             if not stock['applied']
@@ -493,12 +526,7 @@ def _explode_children(
         if uom_step is not None:
             steps.append(uom_step)
         steps.extend([
-            {
-                'op': 'gross',
-                'formula': 'net / process_loss',
-                'from': f'{_qty(net_in_stock)} / {_qty(child_loss)}',
-                'to': _qty(gross_before_stock),
-            },
+            _gross_step(net_in_stock, child_loss, gross_before_stock),
             _stock_step(stock, gross_before_stock),
         ])
         if batch_step is not None:
@@ -512,7 +540,12 @@ def _explode_children(
                 f'{_qty(net_child)} from parent {_qty(parent_gross)} × BOM '
                 f'{_qty(component.quantity)}'
                 + (f' / {_qty(denom)}' if denom else '')
-                + f' / yield {_qty(yf)}. {stock_note}'
+                + (
+                    ''
+                    if _is_one(yf)
+                    else f' / product_yield {_qty(yf)}'
+                )
+                + f'. {stock_note}'
             ),
             'inputs': {
                 'parent_gross': _qty(parent_gross),
@@ -524,8 +557,11 @@ def _explode_children(
                 'denom': _qty(denom),
                 'yield_factor': _qty(yf),
                 'process_loss': _qty(child_loss),
+                'recipe_yield_pct': _recipe_yield_pct(child_loss),
                 'recipe_version_id': child_version_id,
                 'recipe_version_number': child_version_number,
+                'source_recipe_version_id': recipe_version_id,
+                'source_recipe_version_number': recipe_spec.version_number,
                 'consider_stock': consider,
                 'bom_unit': names.get(component.unit_id),
                 'stock_unit': names.get(child_product.unit_id),
