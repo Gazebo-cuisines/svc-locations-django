@@ -80,7 +80,7 @@ def scaled_child_net(
 
 
 def apply_bom_batch_quantity(version: RecipeVersion) -> list[str]:
-    """Cache BOM sum. On spice/cook/steam/mix, fill empty batch_quantity from it."""
+    """Cache BOM sum. On spice/cook/steam/mix, set batch_quantity from it."""
     components = list(version.components.all())
     bom_sum = sum((c.quantity for c in components), Decimal('0'))
     fields: list[str] = []
@@ -92,14 +92,32 @@ def apply_bom_batch_quantity(version: RecipeVersion) -> list[str]:
     if (
         is_process_batch_recipe(product.recipe_code, product.name)
         and bom_sum >= _SMALL_PROCESS_BOM_MIN
-        and (version.batch_quantity is None or version.batch_quantity <= 0)
     ):
-        version.batch_quantity = bom_sum
-        fields.append('batch_quantity')
+        if version.batch_quantity != bom_sum:
+            version.batch_quantity = bom_sum
+            fields.append('batch_quantity')
         if version.batch_unit_id is None and components:
             version.batch_unit_id = components[0].unit_id
             fields.append('batch_unit_id')
     return fields
+
+
+def sync_active_bom_batch_quantities() -> int:
+    """Recompute batch_quantity from BOM on every active mix/spice/cook/steam version."""
+    versions = (
+        RecipeVersion.objects.filter(status=RecipeVersionStatus.ACTIVE)
+        .select_related('recipe__product')
+        .prefetch_related('components')
+        .order_by('id')
+    )
+    updated = 0
+    for version in versions:
+        fields = apply_bom_batch_quantity(version)
+        if not fields:
+            continue
+        version.save(update_fields=[*fields, 'updated_at'])
+        updated += 1
+    return updated
 
 
 class RecipeValidationError(ValueError):
