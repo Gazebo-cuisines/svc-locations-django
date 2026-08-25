@@ -44,8 +44,15 @@ from planning.services import (
 )
 
 
+def _fmt_qty(value: Decimal) -> str:
+    text = format(value.normalize(), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
 def _dec(value):
-    return str(value) if value is not None else None
+    return _fmt_qty(value) if value is not None else None
 
 
 def _parse_json_body(request):
@@ -138,13 +145,6 @@ _LINE_PACK_SELECT = (
 def _plan_line_qs(manager=None):
     qs = manager if manager is not None else PlanLine.objects
     return qs.select_related(*_LINE_PACK_SELECT)
-
-
-def _fmt_qty(value: Decimal) -> str:
-    text = format(value.normalize(), 'f')
-    if '.' in text:
-        text = text.rstrip('0').rstrip('.')
-    return text
 
 
 def _json_num(value: Decimal | None):
@@ -240,11 +240,19 @@ def plan_run_dict(run: PlanRun) -> dict:
     }
 
 
+def _recipe_version_number(req: PlanRequirement | None) -> int | None:
+    if req is None or req.recipe_version_id is None:
+        return None
+    version = getattr(req, 'recipe_version', None)
+    return version.version_number if version is not None else None
+
+
 def requirement_dict(req: PlanRequirement) -> dict:
     product = req.product
     unit = getattr(product, 'unit', None)
     category = getattr(product, 'category', None) if product else None
     product_class = getattr(product, 'product_class', None) if product else None
+    source = req.parent_requirement if req.parent_requirement_id else req
     return {
         'id': req.id,
         'run_id': req.run_id,
@@ -255,12 +263,19 @@ def requirement_dict(req: PlanRequirement) -> dict:
         'position': req.position,
         'product_id': req.product_id,
         'product_name': product.name if product else None,
+        'recipe_code': product.recipe_code if product else None,
         'unit_name': unit.name if unit else None,
         'category_id': product.category_id if product else None,
         'category_name': category.name if category else None,
         'product_class_id': product.product_class_id if product else None,
         'product_class_name': product_class.name if product_class else None,
         'recipe_version_id': req.recipe_version_id,
+        'recipe_version_number': _recipe_version_number(req),
+        'source_recipe_version_id': (
+            source.recipe_version_id if source is not None else None
+        ),
+        'source_recipe_version_number': _recipe_version_number(source),
+        'source_product_id': source.product_id if source is not None else None,
         'net_required': _dec(req.net_required),
         'gross_required': _dec(req.gross_required),
         'yield_factor': _dec(req.yield_factor),
@@ -673,6 +688,8 @@ def plan_run_requirements_api(request, plan_id: int, run_id: int):
                 'product__unit',
                 'product__category',
                 'product__product_class',
+                'recipe_version',
+                'parent_requirement__recipe_version',
             )
             .order_by('level', 'batch_number', 'id')
         )
