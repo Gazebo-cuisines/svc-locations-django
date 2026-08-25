@@ -1,0 +1,128 @@
+[
+  {
+    "row": 4,
+    "B": "Purchase Code",
+    "C": "Purchase Ingredient Name",
+    "D": "Pack Size (Kg)",
+    "E": "Ingredients (G)",
+    "F": "Ingredients (KG)",
+    "G": "Bags/Qty  Required"
+  },
+  {
+    "row": 5,
+    "B": "AFFINITY",
+    "C": "Water",
+    "D": 1.0,
+    "E": 78000.0,
+    "F": 78.0,
+    "G": 78.0
+  },
+  {
+    "row": 6,
+    "B": "RMTOP001-16",
+    "C": "RICE FLOUR",
+    "D": 1.0,
+    "E": 39000.0,
+    "F": 39.0,
+    "G": 39.0
+  },
+  {
+    "row": 7,
+    "B": "RMTOP001-64",
+    "C": "CHINESE FIVE SPICE POWDER",
+    "D": 1.0,
+    "E": 4680.0,
+    "F": 4.68,
+    "G": 4.68
+  },
+  {
+    "row": 8,
+    "B": "RMVIR001-83",
+    "C": "Pepper Black Coarse HT (1X25 kg)",
+    "D": 1.0,
+    "E": 7800.0,
+    "F": 7.8,
+    "G": 7.8
+  },
+  {
+    "row": 9,
+    "B": "RMVIR001-85",
+    "C": "GARLIC MINCED 1-2.5MM (1x10kg)",
+    "D": 1.0,
+    "E": 7800.0,
+    "F": 7.8,
+    "G": 7.8
+  },
+  {
+    "row": 10,
+    "B": "RMELL001-02",
+    "C": "5% Malt Vinegar with Malt Extract (1 x 25 ltr)",
+    "D": 1.0,
+    "E": 31200.0,
+    "F": 31.2,
+    "G": 31.2
+  },
+  {
+    "row": 11,
+    "B": "RMKEN003-01",
+    "C": "SUCRANNA GRANULATED SUGAR ( Order 40 Bags)",
+    "D": 1.0,
+    "E": 7800.0,
+    "F": 7.8,
+    "G": 7.8
+  },
+  {
+    "row": 12,
+    "B": "RMKEN003-02",
+    "C": "PDV SALT ( Order 49 Bags)",
+    "D": 1.0,
+    "E": 312.0,
+    "F": 0.312,
+    "G": 0.312
+  },
+  {
+    "row": 13,
+    "B": "RMHAR002-34",
+    "C": "IQF Red Chilli Puree",
+    "D": 1.0,
+    "E": 31200.0,
+    "F": 31.2,
+    "G": 31.2
+  },
+  {
+    "row": 14,
+    "B": "RMUNI001-05",
+    "C": "Corn Flour",
+    "D": 1.0,
+    "E": 39000.0,
+    "F": 39.0,
+    "G": 39.0
+  },
+  {
+    "row": 15,
+    "B": "RMJFC001-06",
+    "C": "KIKKOMAN SOY SAUCE (S) 20L",
+    "D": 1.0,
+    "E": 43680.0,
+    "F": 43.68,
+    "G": 43.68
+  },
+  {
+    "row": 16,
+    "B": "RMHUS001-05",
+    "C": "Diced CHICKEN THIGH FILLET 18-22mm",
+    "D": 1.0,
+    "E": 1560000.0,
+    "F": 1560.0,
+    "G": 1560.0
+  },
+  {
+    "row": 17,
+    "B": "RMSOL001-01",
+    "C": "Gluten free Bread Crumbs (1X12.5KG)(MOQ:1000KG)",
+    "D": 1.0,
+    "E": 780000.0,
+    "F": 780.0,
+    "G": 780.0
+  }
+]

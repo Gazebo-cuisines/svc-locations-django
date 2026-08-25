@@ -13,6 +13,7 @@ from recipe.utils import activate_version, clone_version, next_version_number
 from recipe.views.helpers import (
     actor,
     audit,
+    factor_from_body,
     parse_date,
     parse_decimal,
     parse_json_body,
@@ -68,10 +69,9 @@ def recipe_version_collection_api(request, pk: int):
                     created_by_sub=sub,
                     created_by_name=name,
                 )
-                if 'process_loss' in body:
-                    version.process_loss = parse_decimal(
-                        body.get('process_loss', '1.0000'), 'process_loss',
-                    ) or Decimal('1.0000')
+                factor = factor_from_body(body)
+                if factor is not None:
+                    version.process_loss = factor
                 if 'batch_quantity' in body:
                     version.batch_quantity = parse_decimal(
                         body['batch_quantity'], 'batch_quantity',
@@ -110,9 +110,7 @@ def recipe_version_collection_api(request, pk: int):
                     status=RecipeVersionStatus.DRAFT,
                     created_by_sub=sub,
                     created_by_name=name,
-                    process_loss=parse_decimal(
-                        body.get('process_loss', '1.0000'), 'process_loss',
-                    ) or Decimal('1.0000'),
+                    process_loss=factor_from_body(body) or Decimal('1.0000'),
                     batch_quantity=parse_decimal(
                         body.get('batch_quantity'), 'batch_quantity',
                     ),
@@ -190,11 +188,9 @@ def recipe_version_update_api(request, version: RecipeVersion):
 
     before_data = recipe_version_detail_dict(version)
     try:
-        if 'process_loss' in body:
-            value = parse_decimal(body['process_loss'], 'process_loss')
-            if value is None or value <= 0:
-                return api_error('process_loss must be greater than 0.', status_code=400)
-            version.process_loss = value
+        factor = factor_from_body(body)
+        if factor is not None:
+            version.process_loss = factor
 
         for field in (
             'batch_quantity',
