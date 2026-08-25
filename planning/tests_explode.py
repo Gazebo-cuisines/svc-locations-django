@@ -164,7 +164,7 @@ class ExplodeBatchBomTests(TestCase):
         self.assertTrue(stock['skipped'])
 
         scale = next(s for s in potato.calc_json['steps'] if s['op'] == 'scale_bom')
-        self.assertEqual(scale['formula'], 'parent_gross × bom_qty / batch')
+        self.assertEqual(scale['formula'], 'parent_gross × bom_qty / batch_quantity')
         self.assertEqual(scale['from'], '4812000 × 96000 / 186080')
         self.assertEqual(
             Decimal(scale['to']).quantize(Decimal('0.000001')),

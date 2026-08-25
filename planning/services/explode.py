@@ -94,9 +94,9 @@ def _scale_bom_labels(
     if denom:
         d = _qty(denom)
         if skip_y:
-            return 'parent_gross × bom_qty / batch', f'{p} × {b} / {d}'
+            return 'parent_gross × bom_qty / batch_quantity', f'{p} × {b} / {d}'
         return (
-            'parent_gross × bom_qty / batch / product_yield',
+            'parent_gross × bom_qty / batch_quantity / product_yield',
             f'{p} × {b} / {d} / {_qty(yf)}',
         )
     if skip_y:
@@ -539,7 +539,7 @@ def _explode_children(
             'summary': (
                 f'{_qty(net_child)} from parent {_qty(parent_gross)} × BOM '
                 f'{_qty(component.quantity)}'
-                + (f' / {_qty(denom)}' if denom else '')
+                + (f' / batch_quantity {_qty(denom)}' if denom else '')
                 + (
                     ''
                     if _is_one(yf)
@@ -553,8 +553,7 @@ def _explode_children(
                 'parent_product_name': parent_product_name,
                 'bom_qty': _qty(component.quantity),
                 'bom_sum': _qty(bom_sum),
-                'batch_quantity': _qty(recipe_spec.batch_quantity),
-                'denom': _qty(denom),
+                'batch_quantity': _qty(denom or recipe_spec.batch_quantity),
                 'yield_factor': _qty(yf),
                 'process_loss': _qty(child_loss),
                 'recipe_yield_pct': _recipe_yield_pct(child_loss),
