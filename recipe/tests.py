@@ -14,6 +14,7 @@ from PIL import Image
 from locations.models import Location
 from product.models import Category, Product, ProductAudit, ProductClass, ProductImage, Range, Unit
 from recipe.models import Recipe, RecipeComponent, RecipeVersion, RecipeVersionStatus
+from recipe.utils import sync_active_bom_batch_quantities
 from users_rbac.models import AdminAccess, AdminArea, Department, RbacUser, UserDepartment
 
 POOL = 'eu-west-2_testpool'
@@ -906,6 +907,54 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         self.assertEqual(data['status'], 'active')
         self.assertEqual(data['batch_quantity'], '251.000000')
         self.assertEqual(data['sum_batch_quantity'], '251.000000')
+
+    def test_activate_overwrites_spice_batch_from_bom(self):
+        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+        parent = self._product('Tandoori Paneer Marination - 206 - Spice')
+        parent.recipe_code = 'GFF206R-S'
+        parent.save(update_fields=['recipe_code'])
+        child = self._product('TANDOORI MASALA')
+        recipe = Recipe.objects.create(product=parent, name=parent.name)
+        version = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.APPROVED,
+            batch_quantity=Decimal('999'),
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=child,
+            quantity=Decimal('251'),
+            unit_id=1,
+        )
+        resp = self._post(f'/recipe/versions/{version.id}/activate/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['data']['batch_quantity'], '251.000000')
+
+    def test_sync_active_overwrites_mix_batch_from_bom(self):
+        parent = self._product('Chicken Tikka Mix - Mix')
+        parent.recipe_code = 'GFF001R-Mx'
+        parent.save(update_fields=['recipe_code'])
+        child = self._product('Potato')
+        recipe = Recipe.objects.create(product=parent, name=parent.name)
+        version = RecipeVersion.objects.create(
+            recipe=recipe,
+            version_number=1,
+            status=RecipeVersionStatus.ACTIVE,
+            batch_quantity=Decimal('100000'),
+        )
+        RecipeComponent.objects.create(
+            recipe_version=version,
+            line_no=1,
+            component_product=child,
+            quantity=Decimal('186080'),
+            unit_id=1,
+        )
+        self.assertEqual(sync_active_bom_batch_quantities(), 1)
+        version.refresh_from_db()
+        self.assertEqual(version.batch_quantity, Decimal('186080'))
+        self.assertEqual(version.sum_batch_quantity, Decimal('186080'))
 
     def test_activate_does_not_fill_pack_batch(self):
         self._recipe_auth(it=True, sub='sub-it', username='it.user')
