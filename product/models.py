@@ -280,6 +280,7 @@ class ProductSupplier(models.Model):
     cost = models.DecimalField(
         max_digits=16, decimal_places=6, null=True, blank=True,
     )
+    moq = models.PositiveIntegerField(null=True, blank=True)
     # Shape Format: e.g. 2 Bag x 5 KG = 10 KG
     outer_qty = models.DecimalField(max_digits=16, decimal_places=6)
     outer_unit = models.ForeignKey(
@@ -325,6 +326,10 @@ class ProductSupplier(models.Model):
             models.CheckConstraint(
                 check=models.Q(multiplier__gt=0),
                 name='chk_product_supplier_multiplier_positive',
+            ),
+            models.CheckConstraint(
+                check=models.Q(moq__isnull=True) | models.Q(moq__gt=0),
+                name='chk_product_supplier_moq_positive',
             ),
             models.UniqueConstraint(
                 fields=['product'],
