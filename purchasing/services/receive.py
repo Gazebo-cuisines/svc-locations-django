@@ -274,7 +274,7 @@ def receive_purchase_order(
             raise ReceiveError(f'lines[{index}].line_id is required.')
         try:
             line = (
-                PurchaseOrderLine.objects.select_for_update()
+                PurchaseOrderLine.objects.select_for_update(of=('self',))
                 .select_related(
                     'product',
                     'product_supplier',

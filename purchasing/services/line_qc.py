@@ -75,7 +75,7 @@ def submit_line_qc(
 ) -> dict:
     try:
         po = (
-            PurchaseOrder.objects.select_for_update()
+            PurchaseOrder.objects.select_for_update(of=('self',))
             .select_related('supplier', 'ship_to_location')
             .get(pk=po_id)
         )
@@ -101,7 +101,7 @@ def submit_line_qc(
 
     try:
         line = (
-            PurchaseOrderLine.objects.select_for_update()
+            PurchaseOrderLine.objects.select_for_update(of=('self',))
             .select_related('product', 'unit', 'product_supplier')
             .get(pk=line_id, purchase_order_id=po.id)
         )
