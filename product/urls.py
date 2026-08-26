@@ -40,6 +40,7 @@ from product.views.stock_policy_views import product_stock_policy_api
 from product.views.supplier_product_views import (
     product_supplier_detail_api,
     product_suppliers_api,
+    purchase_costing_report_api,
     supplier_products_list_api,
 )
 from product.views.technical_views import product_technical_api
@@ -71,6 +72,11 @@ urlpatterns = [
     path('delivery-state/', product_delivery_state_list_api, name='product-delivery-state-list'),
     path('allergen-code/', product_allergen_code_list_api, name='product-allergen-code-list'),
     path('supplier-products/', supplier_products_list_api, name='supplier-products-list'),
+    path(
+        'purchase-costing-report/',
+        purchase_costing_report_api,
+        name='purchase-costing-report',
+    ),
     path('sleeving/', product_sleeving_create_api, name='product-sleeving-create'),
     path('high-risk/', product_high_risk_create_api, name='product-high-risk-create'),
     path('', product_collection_api, name='product-collection'),

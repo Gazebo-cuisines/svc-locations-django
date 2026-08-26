@@ -9,19 +9,30 @@ from locations.models import Location, LocationRole
 from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
 from product.query import active_products
-from product.models import Product, ProductSupplier, PurchaseShapeFormat, Unit
+from product.models import (
+    Category,
+    Product,
+    ProductSupplier,
+    PurchaseShapeFormat,
+    Unit,
+)
+
+_PURCHASE_CATEGORY_NAMES = ('Raw Materials', 'Packaging Material')
 
 
 def _dec(value) -> str | None:
     if value is None:
         return None
-    return str(value)
+    text = format(value.normalize(), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
 
 
 def _cost_per_unit(cost, multiplier) -> str | None:
     if cost is None:
         return None
-    return str((cost / multiplier).quantize(Decimal('0.000001')))
+    return _dec((cost / multiplier).quantize(Decimal('0.000001')))
 
 
 def supplier_product_dict(row: ProductSupplier) -> dict:
@@ -34,7 +45,9 @@ def supplier_product_dict(row: ProductSupplier) -> dict:
         'supplier_code': row.supplier_code,
         'supplier_product_name': row.supplier_product_name,
         'cost': _dec(row.cost),
+        # cost / multiplier — unit is pack inner (e.g. Kg), not product.unit
         'cost_per_unit': _cost_per_unit(row.cost, row.multiplier),
+        'cost_unit_name': row.inner_unit.name,
         'moq': row.moq,
         'outer_qty': _dec(row.outer_qty),
         'outer_unit_id': row.outer_unit_id,
@@ -64,6 +77,65 @@ def _base_qs():
     )
 
 
+def _report_qs():
+    return _base_qs().select_related(
+        'product__product_class',
+        'product__category',
+    )
+
+
+def _category_subtree_ids(root_ids: list[int]) -> list[int]:
+    """Root ids plus all descendant category ids (by parent)."""
+    if not root_ids:
+        return []
+    children_by_parent: dict[int | None, list[int]] = {}
+    for cid, parent_id in Category.objects.values_list('id', 'parent_id'):
+        children_by_parent.setdefault(parent_id, []).append(cid)
+
+    out: list[int] = []
+    stack = list(root_ids)
+    seen: set[int] = set()
+    while stack:
+        cid = stack.pop()
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+        stack.extend(children_by_parent.get(cid, []))
+    return out
+
+
+def _purchase_category_ids(category_id: int | None = None) -> list[int]:
+    roots = list(
+        Category.objects.filter(name__in=_PURCHASE_CATEGORY_NAMES).values_list(
+            'id', flat=True,
+        )
+    )
+    allowed = set(_category_subtree_ids(roots))
+    if category_id is None:
+        return list(allowed)
+    if category_id not in allowed:
+        return []
+    return _category_subtree_ids([category_id])
+
+
+def purchase_costing_row_dict(row: ProductSupplier) -> dict:
+    data = supplier_product_dict(row)
+    product = row.product
+    category = product.category
+    data.update({
+        'goods_in_type': product.goods_in_type,
+        'product_class_id': product.product_class_id,
+        'product_class_name': product.product_class.name,
+        'category_id': product.category_id,
+        'category_name': category.name if category else None,
+        'recipe_code': product.recipe_code,
+        'alternate_recipe_code': product.alternate_recipe_code,
+        'base_unit_id': product.unit_id,
+    })
+    return data
+
+
 def _supplier_qs(product_id: int):
     return _base_qs().filter(product_id=product_id)
 
@@ -75,6 +147,64 @@ def _parse_optional_int(raw, field_name: str):
         return int(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f'Invalid integer for {field_name}.') from exc
+
+
+def _parse_optional_bool(raw, field_name: str):
+    if raw in (None, ''):
+        return None
+    value = str(raw).strip().lower()
+    if value in ('1', 'true', 'yes'):
+        return True
+    if value in ('0', 'false', 'no'):
+        return False
+    raise ValueError(f'Invalid boolean for {field_name}.')
+
+
+@require_GET
+def purchase_costing_report_api(request):
+    try:
+        category_id = _parse_optional_int(request.GET.get('category_id'), 'category_id')
+        supplier_id = _parse_optional_int(request.GET.get('supplier_id'), 'supplier_id')
+        product_id = _parse_optional_int(request.GET.get('product_id'), 'product_id')
+        is_default = _parse_optional_bool(request.GET.get('is_default'), 'is_default')
+        is_active = _parse_optional_bool(request.GET.get('is_active'), 'is_active')
+        has_cost = _parse_optional_bool(request.GET.get('has_cost'), 'has_cost')
+    except ValueError as exc:
+        return api_error(str(exc), status_code=400)
+
+    category_ids = _purchase_category_ids(category_id)
+    if category_id is not None and not category_ids:
+        return api_error(
+            'category_id must be Raw Materials, Packaging Material, or a child of those.',
+            status_code=400,
+        )
+
+    qs = _report_qs().filter(
+        product__is_active=True,
+        product__category_id__in=category_ids,
+    )
+    if supplier_id is not None:
+        qs = qs.filter(supplier_id=supplier_id)
+    if product_id is not None:
+        qs = qs.filter(product_id=product_id)
+    if is_default is not None:
+        qs = qs.filter(is_default=is_default)
+    if is_active is None or is_active:
+        qs = qs.filter(is_active=True)
+    else:
+        qs = qs.filter(is_active=False)
+    if has_cost is True:
+        qs = qs.filter(cost__isnull=False)
+    elif has_cost is False:
+        qs = qs.filter(cost__isnull=True)
+
+    rows = qs.order_by(
+        'product__name', 'supplier__name', 'supplier_code',
+    )
+    return api_success(
+        'Purchase costing report fetched successfully.',
+        [purchase_costing_row_dict(row) for row in rows],
+    )
 
 
 @require_GET
