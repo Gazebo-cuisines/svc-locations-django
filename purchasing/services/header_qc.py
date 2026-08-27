@@ -45,7 +45,7 @@ def submit_header_qc(
 ) -> dict:
     try:
         po = (
-            PurchaseOrder.objects.select_for_update()
+            PurchaseOrder.objects.select_for_update(of=('self',))
             .select_related('supplier', 'ship_to_location')
             .prefetch_related('lines__product')
             .get(pk=po_id)

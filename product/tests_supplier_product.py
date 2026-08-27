@@ -164,6 +164,33 @@ class SupplierProductCostMoqTests(TestCase):
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertIn('moq', resp.json()['message'])
 
+    def test_sage_product_code_round_trip(self):
+        resp = self.client.post(
+            f'/product/{self.starch.id}/suppliers/',
+            data=json.dumps({
+                'supplier_id': self.supplier.id,
+                'supplier_code': 'STARCH-SAGE',
+                'sage_product_code': 'VEGFRO-01',
+                'supplier_product_name': 'Starch 25kg',
+                'outer_qty': '1',
+                'outer_unit_id': self.case.id,
+                'inner_qty': '25',
+                'inner_unit_id': self.kg.id,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['sage_product_code'], 'VEGFRO-01')
+
+        patch = self.client.patch(
+            f'/product/{self.starch.id}/suppliers/{data["id"]}/',
+            data=json.dumps({'sage_product_code': None}),
+            content_type='application/json',
+        )
+        self.assertEqual(patch.status_code, 200, patch.content)
+        self.assertIsNone(patch.json()['data']['sage_product_code'])
+
 
 class PurchaseCostingReportTests(TestCase):
     def setUp(self):
@@ -215,6 +242,7 @@ class PurchaseCostingReportTests(TestCase):
             product=self.salt,
             supplier=self.supplier_a,
             supplier_code='SALT-A',
+            sage_product_code='SAGE-SALT-A',
             supplier_product_name='Salt 25kg A',
             cost=Decimal('10'),
             outer_qty=Decimal('1'),
@@ -269,6 +297,10 @@ class PurchaseCostingReportTests(TestCase):
         self.assertEqual(sample['category_name'], 'GROUND')
         self.assertEqual(sample['recipe_code'], 'RM-SALT')
         self.assertEqual(sample['alternate_recipe_code'], 'ALT-SALT')
+        salt_a = next(row for row in salt_rows if row['id'] == self.salt_a.id)
+        self.assertEqual(salt_a['sage_product_code'], 'SAGE-SALT-A')
+        salt_b = next(row for row in salt_rows if row['id'] == self.salt_b.id)
+        self.assertIsNone(salt_b['sage_product_code'])
         self.assertEqual(sample['base_unit_id'], self.kg.id)
         self.assertEqual(sample['cost_unit_name'], 'Kg')
 
