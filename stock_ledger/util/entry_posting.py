@@ -89,7 +89,7 @@ def post_entry(
 ) -> dict:
     entry = (
         StockEntry.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .select_related('lot__product', 'unit', 'location', 'label', 'posting')
         .filter(pk=entry_id)
         .first()
