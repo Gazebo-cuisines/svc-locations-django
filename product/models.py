@@ -276,6 +276,7 @@ class ProductSupplier(models.Model):
         related_name='supplied_products',
     )
     supplier_code = models.CharField(max_length=64)
+    sage_product_code = models.CharField(max_length=64, null=True, blank=True)
     supplier_product_name = models.CharField(max_length=128)
     cost = models.DecimalField(
         max_digits=16, decimal_places=6, null=True, blank=True,

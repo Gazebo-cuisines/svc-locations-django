@@ -43,6 +43,7 @@ def supplier_product_dict(row: ProductSupplier) -> dict:
         'supplier_id': row.supplier_id,
         'supplier_name': row.supplier.name,
         'supplier_code': row.supplier_code,
+        'sage_product_code': row.sage_product_code,
         'supplier_product_name': row.supplier_product_name,
         'cost': _dec(row.cost),
         # cost / multiplier — unit is pack inner (e.g. Kg), not product.unit
@@ -289,6 +290,10 @@ def _validate_write_fields(body: dict, *, partial: bool = False) -> dict:
             if not code:
                 raise ValueError('supplier_code cannot be empty.')
             data['supplier_code'] = code
+
+    if 'sage_product_code' in body:
+        sage = (body.get('sage_product_code') or '').strip() or None
+        data['sage_product_code'] = sage
 
     if 'supplier_product_name' in body or not partial:
         if 'supplier_product_name' not in body and not partial:
