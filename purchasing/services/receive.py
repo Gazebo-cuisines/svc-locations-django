@@ -218,7 +218,7 @@ def receive_purchase_order(
     audit = dict(audit or {})
     try:
         po = (
-            PurchaseOrder.objects.select_for_update()
+            PurchaseOrder.objects.select_for_update(of=('self',))
             .select_related('supplier')
             .get(pk=po_id)
         )
