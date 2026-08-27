@@ -118,7 +118,7 @@ def post_entry(
 
     posting = (
         StockEntryPosting.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .select_related('stock_entry')
         .get(pk=posting.pk)
     )

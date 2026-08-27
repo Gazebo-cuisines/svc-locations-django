@@ -42,7 +42,7 @@ def soft_allocate(
     req = (
         PlanRequirement.objects
         .select_related('run__plan', 'product')
-        .select_for_update()
+        .select_for_update(of=('self',))
         .get(pk=requirement_id)
     )
     plan = req.run.plan
@@ -114,7 +114,7 @@ def commit_plan_allocations(
 
     qs = (
         PlanAllocation.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .filter(
             requirement__run_id=latest.id,
             stock_reservation__isnull=True,

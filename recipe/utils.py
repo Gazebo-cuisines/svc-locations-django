@@ -228,7 +228,7 @@ def activate_version(version: RecipeVersion) -> RecipeVersion:
     Keeps history (no wipe of component lines).
     """
     locked = (
-        RecipeVersion.objects.select_for_update()
+        RecipeVersion.objects.select_for_update(of=('self',))
         .select_related('recipe__product')
         .prefetch_related('components')
         .filter(recipe_id=version.recipe_id)

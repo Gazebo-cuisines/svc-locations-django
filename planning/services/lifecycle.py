@@ -62,7 +62,7 @@ def close_plan(plan_id: int, *, actor_user_id: int | None = None) -> Plan:
 
     allocs = (
         PlanAllocation.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .filter(requirement__run__plan_id=plan.id)
     )
     for alloc in allocs:

@@ -315,7 +315,7 @@ def consume_unit(
     with transaction.atomic():
         unit = (
             StockUnit.objects
-            .select_for_update()
+            .select_for_update(of=('self',))
             .select_related('lot', 'unit', 'location')
             .filter(unit_serial=serial)
             .first()
@@ -487,7 +487,7 @@ def reprint_unit(
     with transaction.atomic():
         unit = (
             StockUnit.objects
-            .select_for_update()
+            .select_for_update(of=('self',))
             .select_related('lot__product', 'unit', 'location')
             .filter(unit_serial=serial)
             .first()

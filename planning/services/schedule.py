@@ -207,7 +207,7 @@ def sequence_plan(plan_id: int) -> list[PlanResourceSlot]:
 
     requirements = list(
         PlanRequirement.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .filter(run_id=run.id, closed=False, default_resource_id__isnull=False)
         .select_related('default_resource')
     )
@@ -274,7 +274,7 @@ def reorder_resource_day(
 
     existing = list(
         PlanResourceSlot.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .filter(resource_id=resource_id, slot_date=slot_date)
         .select_related('requirement')
     )
@@ -324,7 +324,7 @@ def assign_requirement(
 
     siblings = list(
         PlanResourceSlot.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .filter(resource_id=resource_id, slot_date=slot_date)
         .select_related('requirement')
         .order_by('position')
@@ -360,7 +360,7 @@ def assign_requirement(
 def unschedule_requirement(requirement_id: int) -> None:
     slot = (
         PlanResourceSlot.objects
-        .select_for_update()
+        .select_for_update(of=('self',))
         .filter(requirement_id=requirement_id)
         .select_related('requirement')
         .first()
