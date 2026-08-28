@@ -12,6 +12,20 @@ MAX_TREE_DEPTH = 20
 _BATCH_BOM_MIN = Decimal('1000')
 _SMALL_PROCESS_BOM_MIN = Decimal('100')
 
+# Deli 1300g pack SKUs: fill/cook grams are per retail unit, not batch totals.
+PACK_FILL_PER_UNIT_CODES = frozenset({
+    'CPOBO1',
+    'CCBAL',
+    'CCCHET2',
+    'CCSAA',
+    'CCSTIM',
+    'CVPJAL',
+})
+
+
+def is_pack_fill_per_unit_recipe(recipe_code: str | None) -> bool:
+    return (recipe_code or '') in PACK_FILL_PER_UNIT_CODES
+
 
 def is_process_batch_recipe(recipe_code: str | None, name: str | None) -> bool:
     """Spice / cook / steam / mix SKUs — BOM grams are for one batch, not one unit."""
@@ -37,7 +51,10 @@ def batch_scale_denom(
     batch_quantity: Decimal | None,
     bom_sum: Decimal | None,
     process_batch: bool = False,
+    parent_recipe_code: str | None = None,
 ) -> Decimal | None:
+    if is_pack_fill_per_unit_recipe(parent_recipe_code):
+        return None
     total = bom_sum if bom_sum is not None else component_qty
     if total >= _BATCH_BOM_MIN or (
         process_batch and total >= _SMALL_PROCESS_BOM_MIN
@@ -57,6 +74,7 @@ def scaled_child_net(
     batch_quantity: Decimal | None = None,
     bom_sum: Decimal | None = None,
     process_batch: bool = False,
+    parent_recipe_code: str | None = None,
 ) -> Decimal:
     """Child qty from parent gross.
 
@@ -73,6 +91,7 @@ def scaled_child_net(
         batch_quantity=batch_quantity,
         bom_sum=bom_sum,
         process_batch=process_batch,
+        parent_recipe_code=parent_recipe_code,
     )
     if denom:
         return parent_gross * component_qty / denom / yf

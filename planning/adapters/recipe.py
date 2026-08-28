@@ -53,6 +53,7 @@ def get_recipe_version(version_id: int) -> RecipeVersionSpec:
     return RecipeVersionSpec(
         version_id=version.id,
         product_id=version.recipe.product_id,
+        recipe_code=product.recipe_code or '',
         version_number=version.version_number,
         process_loss=version.process_loss,
         batch_quantity=version.batch_quantity,
