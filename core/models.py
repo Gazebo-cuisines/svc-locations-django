@@ -59,3 +59,17 @@ class AppVersion(models.Model):
 
     def __str__(self):
         return f'{self.platform}:{self.min_version}'
+
+
+class MaintenanceNotice(models.Model):
+    is_active = models.BooleanField(default=False)
+    message = models.CharField(max_length=256, blank=True, default='')
+    resume_at = models.DateTimeField(null=True, blank=True)
+    updated_by_username = models.CharField(max_length=128, blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ops_maintenance'
+
+    def __str__(self):
+        return f'active={self.is_active}'

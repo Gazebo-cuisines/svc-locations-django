@@ -9,6 +9,7 @@ import jwt
 
 from core.api_response import error_response
 from users_rbac.models import RbacUser
+from users_rbac.presence import stamp_presence
 
 _jwks_client = None
 
@@ -138,6 +139,7 @@ def attach_user(request, *, missing='error', invalid='error'):
     request.cognito_claims = claims
     request.client_ip = client_ip(request)
     request.user_agent = request.META.get('HTTP_USER_AGENT') or ''
+    stamp_presence(user, ip=request.client_ip, user_agent=request.user_agent)
     return None
 
 

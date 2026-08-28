@@ -1,10 +1,12 @@
 import json
 
 from django.db.models import Q
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core.api_response import error_response, success_response
+from core.maintenance import maintenance_dict
 from users_rbac.audit import profile_snapshot, record_event
 from users_rbac.auth import require_admin, require_auth
 from users_rbac.grants import (
@@ -16,6 +18,7 @@ from users_rbac.grants import (
 )
 from users_rbac.models import RbacAuditAction, RbacUser
 from users_rbac.photos import upload_photo
+from users_rbac.presence import IDLE_AFTER, presence_dict
 from users_rbac.services import create_identity, reset_password, set_active
 
 
@@ -35,9 +38,24 @@ def _get_user(user_id: int) -> RbacUser | None:
 @require_GET
 @require_auth
 def me_view(request):
+    data = user_dict(request.rbac_user)
+    data['maintenance'] = maintenance_dict()
     return success_response(
         'Your profile was fetched.',
-        data=user_dict(request.rbac_user),
+        data=data,
+    )
+
+
+@csrf_exempt
+@require_GET
+@require_admin
+def presence_list(request):
+    qs = RbacUser.objects.filter(last_seen_at__isnull=False).order_by('-last_seen_at')
+    if request.GET.get('all') not in ('1', 'true', 'yes'):
+        qs = qs.filter(last_seen_at__gte=timezone.now() - IDLE_AFTER)
+    return success_response(
+        'Active users fetched.',
+        data=[presence_dict(row) for row in qs],
     )
 
 

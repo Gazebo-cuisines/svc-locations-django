@@ -3,6 +3,7 @@
 from django.urls import include, path
 
 from core.app_version import app_version
+from core.maintenance import maintenance_view
 from core.ops_views import error_detail, errors_collection
 from core.search import global_search_api
 
@@ -11,6 +12,7 @@ urlpatterns = [
     path('search/', global_search_api, name='global-search'),
     path('ops/errors/', errors_collection, name='ops-errors'),
     path('ops/errors/<int:pk>/', error_detail, name='ops-error-detail'),
+    path('ops/maintenance/', maintenance_view, name='ops-maintenance'),
     path('', include('locations.urls')),
     path('product/', include('product.urls')),
     path('recipe/', include('recipe.urls')),

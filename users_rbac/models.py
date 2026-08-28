@@ -48,12 +48,18 @@ class RbacUser(models.Model):
     photo_key = models.CharField(max_length=512, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_by_sub = models.CharField(max_length=64, null=True, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_ip = models.CharField(max_length=45, null=True, blank=True)
+    last_user_agent = models.CharField(max_length=256, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'rbac_user'
         ordering = ['username']
+        indexes = [
+            models.Index(fields=['-last_seen_at'], name='idx_rbac_user_last_seen'),
+        ]
 
     def __str__(self):
         return self.username
