@@ -64,38 +64,48 @@ def seed_global_unit_conversions() -> int:
     return written
 
 
+def sync_product_unit_conversion_for_product(product_id: int) -> int:
+    """
+    Upsert unit/Box/Liter factors from that product's packaging.unitary_weight.
+    Returns upserts count. Skips if missing/non-positive weight or downtime.
+    """
+    packaging = (
+        ProductPackaging.objects
+        .filter(product_id=product_id)
+        .select_related('product')
+        .first()
+    )
+    if packaging is None or packaging.product.is_downtime:
+        return 0
+    weight = packaging.unitary_weight
+    if weight is None or weight <= 0:
+        return 0
+    units = Unit.objects.filter(name__in=PRODUCT_SPECIFIC_UNIT_NAMES)
+    written = 0
+    for unit in units:
+        StockUnitConversion.objects.update_or_create(
+            unit_id=unit.id,
+            product_id=product_id,
+            defaults={'to_kg': weight, 'source': 'product_packaging'},
+        )
+        written += 1
+    return written
+
+
 def sync_product_unit_conversions_from_packaging() -> int:
     """
     Upsert product-specific unit/Box/Liter factors from packaging.unitary_weight.
     Skips rows with missing/non-positive weight. Returns upserts count.
     """
-    units = {
-        u.name: u
-        for u in Unit.objects.filter(name__in=PRODUCT_SPECIFIC_UNIT_NAMES)
-    }
-    if not units:
-        return 0
-
     written = 0
     qs = (
         ProductPackaging.objects
         .exclude(unitary_weight__isnull=True)
         .filter(unitary_weight__gt=0)
-        .select_related('product')
+        .values_list('product_id', flat=True)
     )
-    for packaging in qs:
-        if packaging.product.is_downtime:
-            continue
-        for name, unit in units.items():
-            StockUnitConversion.objects.update_or_create(
-                unit_id=unit.id,
-                product_id=packaging.product_id,
-                defaults={
-                    'to_kg': packaging.unitary_weight,
-                    'source': 'product_packaging',
-                },
-            )
-            written += 1
+    for product_id in qs:
+        written += sync_product_unit_conversion_for_product(product_id)
     return written
 
 

@@ -117,11 +117,36 @@ class WriteReportPctTests(SimpleTestCase):
                 'fix': None,
             }],
             'system_only': [],
+            'explode_audit': [{
+                'level': 5,
+                'product_id': 7,
+                'recipe_code': 'PASTRY-01',
+                'product_name': 'SAMOSA PASTRY - LARGE CUT',
+                'unit': 'grams',
+                'kind': 'child',
+                'summary': '17955.5616 from parent 579.96 × BOM 1.',
+                'step': 2,
+                'op': 'convert_uom',
+                'formula': 'bom_unit → stock_unit',
+                'from': '579.96 unit',
+                'to': '17955.5616 grams',
+                'skipped': '',
+                'reason': '',
+                'factor': '1 unit = 0.030960 kg (product_packaging)',
+                'conversion': '579.96 × 0.030960 kg/unit ÷ 0.001000 kg/grams',
+                'conversion_source': 'product_packaging',
+                'result_net': '',
+                'result_gross': '',
+            }],
         }
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / 'compare.xlsx'
             _write_report(path, result)
-            sheet = load_workbook(path)['RM compare']
+            book = load_workbook(path)
+            sheet = book['RM compare']
+            explode = book['Explode']
+            self.assertEqual(explode['O2'].value, '1 unit = 0.030960 kg (product_packaging)')
+            self.assertEqual(explode['P2'].value, '579.96 × 0.030960 kg/unit ÷ 0.001000 kg/grams')
         self.assertEqual(sheet['C2'].value, 387500)
         self.assertEqual(sheet['D2'].value, 387100)
         self.assertEqual(sheet['E2'].value, '=D2-C2')

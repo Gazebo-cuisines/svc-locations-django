@@ -23,6 +23,7 @@ from planning.services.eligibility import required_min_shelf_life_days
 from planning.services.exceptions import PlanningError, PlanningStateError
 from product.models import Product, Unit
 from recipe.utils import batch_scale_denom, scaled_child_net
+from stock_ledger.models import StockUnitConversion
 from stock_ledger.util.conversions import StockValidationError, to_product_unit
 
 DRIVER_VERSION = 'explode-1.4'
@@ -114,6 +115,26 @@ def _unit_names(unit_ids: list[int | None]) -> dict[int, str]:
     return dict(Unit.objects.filter(pk__in=ids).values_list('id', 'name'))
 
 
+def _lookup_to_kg(unit_id: int, product_id: int) -> tuple[Decimal | None, str | None]:
+    row = (
+        StockUnitConversion.objects
+        .filter(unit_id=unit_id, product_id=product_id)
+        .only('to_kg', 'source')
+        .first()
+    )
+    if row is not None:
+        return row.to_kg, row.source or 'product'
+    row = (
+        StockUnitConversion.objects
+        .filter(unit_id=unit_id, product__isnull=True)
+        .only('to_kg', 'source')
+        .first()
+    )
+    if row is not None:
+        return row.to_kg, row.source or 'global'
+    return None, None
+
+
 def _convert_bom_to_stock(
     qty: Decimal,
     *,
@@ -142,12 +163,29 @@ def _convert_bom_to_stock(
             'from': f'{_qty(qty)} {bom_name or bom_unit_id}',
             'to': f'{_qty(qty)} {stock_name or stock_unit_id}',
         }, 'missing_uom_conversion'
-    return converted, {
+    bom_kg, bom_src = _lookup_to_kg(bom_unit_id, product_id)
+    stock_kg, stock_src = _lookup_to_kg(stock_unit_id, product_id)
+    step = {
         'op': 'convert_uom',
         'formula': 'bom_unit → stock_unit',
         'from': f'{_qty(qty)} {bom_name or bom_unit_id}',
         'to': f'{_qty(converted)} {stock_name or stock_unit_id}',
-    }, None
+    }
+    if bom_kg is not None:
+        step['bom_to_kg'] = _qty(bom_kg)
+        step['conversion_source'] = bom_src
+        if bom_name:
+            step['factor'] = f'1 {bom_name} = {_qty(bom_kg)} kg ({bom_src})'
+    if stock_kg is not None:
+        step['stock_to_kg'] = _qty(stock_kg)
+        if stock_src and stock_src != bom_src:
+            step['stock_conversion_source'] = stock_src
+    if bom_kg is not None and stock_kg is not None:
+        step['conversion'] = (
+            f'{_qty(qty)} × {_qty(bom_kg)} kg/{bom_name or "unit"}'
+            f' ÷ {_qty(stock_kg)} kg/{stock_name or "unit"}'
+        )
+    return converted, step, None
 
 
 def _stock_step(stock: dict, gross_before: Decimal) -> dict:
