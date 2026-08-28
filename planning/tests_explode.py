@@ -91,6 +91,25 @@ class ScaledChildNetTests(SimpleTestCase):
             Decimal('1280000'),
         )
 
+    def test_deli_pack_fill_per_unit_not_batch_scaled(self):
+        """CPOBO1-style: 1250g cook per pack × 86 units, not ÷ bom_sum."""
+        self.assertEqual(
+            scaled_child_net(
+                Decimal('86'),
+                Decimal('1250'),
+                bom_sum=Decimal('1251.5'),
+                parent_recipe_code='CPOBO1',
+            ),
+            Decimal('107500'),
+        )
+        wrong = scaled_child_net(
+            Decimal('86'),
+            Decimal('1250'),
+            bom_sum=Decimal('1251.5'),
+            parent_recipe_code='OTHER-PACK',
+        )
+        self.assertEqual(wrong, Decimal('107500') / Decimal('1251.5'))
+
 
 class ExplodeBatchBomTests(TestCase):
     def setUp(self):

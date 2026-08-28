@@ -489,6 +489,7 @@ def _explode_children(
             batch_quantity=recipe_spec.batch_quantity,
             bom_sum=bom_sum,
             process_batch=recipe_spec.process_batch,
+            parent_recipe_code=recipe_spec.recipe_code,
         )
         net_scaled = scaled_child_net(
             parent_gross,
@@ -497,6 +498,7 @@ def _explode_children(
             batch_quantity=recipe_spec.batch_quantity,
             bom_sum=bom_sum,
             process_batch=recipe_spec.process_batch,
+            parent_recipe_code=recipe_spec.recipe_code,
         )
         net_in_stock, uom_step, uom_warning = _convert_bom_to_stock(
             net_scaled,

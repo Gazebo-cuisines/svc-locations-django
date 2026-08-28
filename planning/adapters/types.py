@@ -39,6 +39,7 @@ class ComponentSpec:
 class RecipeVersionSpec:
     version_id: int
     product_id: int
+    recipe_code: str
     version_number: int
     process_loss: Decimal
     batch_quantity: Optional[Decimal]

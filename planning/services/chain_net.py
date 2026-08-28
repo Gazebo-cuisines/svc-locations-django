@@ -313,6 +313,7 @@ def _explode_children(
             batch_quantity=recipe_spec.batch_quantity,
             bom_sum=bom_sum,
             process_batch=recipe_spec.process_batch,
+            parent_recipe_code=recipe_spec.recipe_code,
         )
         children.append(
             net_node(
