@@ -155,6 +155,20 @@ def _write_report(path: Path, result: dict):
     last = 1 + len(result['rm_compare'])
     if last >= 2:
         _colour_pct(cmp_sheet, f'F2:F{last}')
+    explode_sheet = book.create_sheet('Explode')
+    explode_sheet.append([
+        'level', 'product_id', 'recipe_code', 'product_name', 'unit', 'kind',
+        'summary', 'step', 'op', 'formula', 'from', 'to', 'skipped', 'reason',
+        'factor', 'conversion', 'conversion_source', 'result_net', 'result_gross',
+    ])
+    for row in result.get('explode_audit', []):
+        explode_sheet.append([
+            row['level'], row['product_id'], row['recipe_code'], row['product_name'],
+            row['unit'], row['kind'], row['summary'], row['step'], row['op'],
+            row['formula'], row['from'], row['to'], row['skipped'], row['reason'],
+            row['factor'], row['conversion'], row['conversion_source'],
+            row['result_net'], row['result_gross'],
+        ])
     extra = book.create_sheet('System only')
     extra.append(['product_id', 'recipe_code', 'name', 'system_kg', 'unit', 'fix'])
     for row in result['system_only']:

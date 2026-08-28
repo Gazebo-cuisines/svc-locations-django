@@ -84,6 +84,72 @@ def _g(kg: Decimal | None) -> Decimal | None:
     return kg * Decimal('1000')
 
 
+def build_explode_audit(run_id: int | None) -> list[dict]:
+    """Flatten plan_requirement.calc_json into one row per calc step."""
+    if run_id is None:
+        return []
+    reqs = (
+        PlanRequirement.objects.filter(run_id=run_id)
+        .select_related('product', 'product__unit')
+        .order_by('level', 'position', 'id')
+    )
+    rows = []
+    for req in reqs:
+        calc = req.calc_json or {}
+        kind = calc.get('kind', '')
+        summary = calc.get('summary', '')
+        unit = req.product.unit.name if req.product.unit_id else ''
+        result = calc.get('result', {})
+        steps = calc.get('steps', [])
+        if not steps:
+            rows.append({
+                'level': req.level,
+                'product_id': req.product_id,
+                'recipe_code': req.product.recipe_code,
+                'product_name': req.product.name,
+                'unit': unit,
+                'kind': kind,
+                'summary': summary,
+                'step': '',
+                'op': '',
+                'formula': '',
+                'from': '',
+                'to': '',
+                'skipped': '',
+                'reason': '',
+                'factor': '',
+                'conversion': '',
+                'conversion_source': '',
+                'result_net': result.get('net', ''),
+                'result_gross': result.get('gross', ''),
+            })
+            continue
+        last = len(steps)
+        for i, step in enumerate(steps, start=1):
+            rows.append({
+                'level': req.level,
+                'product_id': req.product_id,
+                'recipe_code': req.product.recipe_code,
+                'product_name': req.product.name,
+                'unit': unit,
+                'kind': kind,
+                'summary': summary if i == 1 else '',
+                'step': i,
+                'op': step.get('op', ''),
+                'formula': step.get('formula', ''),
+                'from': step.get('from', ''),
+                'to': step.get('to', ''),
+                'skipped': step.get('skipped', ''),
+                'reason': step.get('reason', ''),
+                'factor': step.get('factor', ''),
+                'conversion': step.get('conversion', ''),
+                'conversion_source': step.get('conversion_source', ''),
+                'result_net': result.get('net', '') if i == last else '',
+                'result_gross': result.get('gross', '') if i == last else '',
+            })
+    return rows
+
+
 def load_code_map(path: Path | None = None) -> dict[str, str]:
     target = path or (Path(settings.BASE_DIR) / DEFAULT_MAP)
     if not target.exists():
@@ -460,6 +526,7 @@ def run_excel_compare(
         'finished_goods': [_fg_payload(r) for r in mapped_fg],
         'rm_compare': rm_rows,
         'system_only': system_only,
+        'explode_audit': build_explode_audit(run.id if run else None),
         '_mapped_fg': mapped_fg,
         '_mapped_rm': mapped_rm,
         '_sys_by_id': sys_by_id,

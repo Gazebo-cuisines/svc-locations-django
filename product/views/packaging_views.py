@@ -14,6 +14,7 @@ from product.models import (
     Product,
     ProductPackaging,
 )
+from stock_ledger.util.conversions import sync_product_unit_conversion_for_product
 
 
 def _dec(value):
@@ -143,6 +144,7 @@ def product_packaging_api(request, pk: int):
             product_id=pk,
             defaults=defaults,
         )
+        sync_product_unit_conversion_for_product(pk)
     except ValueError as exc:
         return api_error(str(exc), status_code=400)
 

@@ -269,6 +269,9 @@ class ExplodePastryUomTests(TestCase):
             s for s in pastry.calc_json['steps'] if s['op'] == 'convert_uom'
         )
         self.assertFalse(convert.get('skipped'))
+        self.assertEqual(convert['bom_to_kg'], str(kg_per_sheet))
+        self.assertEqual(convert['conversion_source'], 'product_packaging')
+        self.assertIn('1 unit =', convert['factor'])
         self.assertIsNone(pastry.calc_json.get('warnings'))
 
     def test_missing_conversion_keeps_sheets_and_warns(self):
