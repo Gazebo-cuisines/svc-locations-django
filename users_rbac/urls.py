@@ -5,6 +5,7 @@ from users_rbac.views import login_view, refresh_view
 from users_rbac.views_users import (
     me_photo,
     me_view,
+    presence_list,
     user_detail,
     user_grants,
     user_photo,
@@ -24,6 +25,9 @@ urlpatterns = [
 
     # Caller uploads own profile photo (private S3; returns short-lived photo_url).
     path('me/photo/', me_photo, name='users_rbac_me_photo'),
+
+    # Admin: people actively using the app (last_seen + IP).
+    path('presence/', presence_list, name='users_rbac_presence'),
 
     # Admin: list RBAC audit events (filters + pagination).
     path('audit/', audit_list, name='users_rbac_audit'),

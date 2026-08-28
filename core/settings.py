@@ -49,6 +49,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.OpsErrorMiddleware',
+    'core.middleware.MaintenanceWriteLockMiddleware',
     'core.middleware.ApiAuditMiddleware',
 ]
 
@@ -142,6 +143,7 @@ APP_UPDATE_MESSAGE = os.getenv(
     'Hand this device to IT to install the update.',
 )
 APP_VERSION_API_TOKEN = os.getenv('APP_VERSION_API_TOKEN', '')
+MAINTENANCE_WEBHOOK_URL = os.getenv('MAINTENANCE_WEBHOOK_URL', '')
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 AWS_PROFILE = os.getenv('AWS_PROFILE')
