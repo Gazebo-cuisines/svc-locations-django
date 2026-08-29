@@ -44,8 +44,13 @@ UX: short screens, one job each, no fluff. Server owns multipliers, QC ranges, l
 | `src/services/purchasing.ts` | Keep for Tab A |
 | `src/navigation/types.ts` | Extend `GoodsInComplete` / `GoodsInVerify` params |
 
-Product search: `GET /product/?q=` (or existing search client if any).  
-Packs: `GET /product/{id}/suppliers/` (already in `goodsInService.listProductSuppliers`).
+Product search: `GET /product/?q=` with optional `category_id` (subtree).
+
+For Without PO / Stock Adjustment raw materials only:
+
+`GET /product/?q=turmeric&category_id=73`
+
+`73` = **Raw Materials** root (`product_category`). Includes all descendant categories via `path_nodes`. **Not** `goods_in_type`.
 
 ---
 

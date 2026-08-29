@@ -22,6 +22,15 @@ todos:
     status: pending
   - id: go-frontend-mode
     content: "Phase2+: Goods Out with/without plan"
+    status: in_progress
+  - id: go-c1-journey
+    content: "Phase2 Chunk1: Freeze Goods Out With plan / Without plan journey (docs/goods-out-phase2-brief.md)"
+    status: completed
+  - id: go-c2-transfer-no-req
+    content: "Phase2 Chunk2: Django transfer without requirement_ids + Postman"
+    status: completed
+  - id: go-c3-mobile-tabs
+    content: "Phase2 Chunk3: Mobile Goods Out 2 tabs; Without-plan wizard; reuse Complete/Verify"
     status: pending
 isProject: false
 ---

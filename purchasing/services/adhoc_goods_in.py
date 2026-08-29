@@ -31,6 +31,10 @@ from purchasing.services.qc_answers import (
     normalize_answer,
     parse_date,
 )
+from purchasing.services.qc_fail_details import (
+    build_line_qc_fail_details,
+    line_qc_blocked_message,
+)
 from stock_ledger.models import StockEntry, StockLotOrigin
 from stock_ledger.util import entry_labels
 from stock_ledger.util import entry_posting
@@ -372,8 +376,10 @@ def submit_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
     normalized = {}
     failed_codes = []
     warnings = []
+    items_by_code = {}
 
     for item in template.items.all():
+        items_by_code[item.code] = item
         if item.code not in raw_answers:
             if item.required:
                 raise AdhocGoodsInError(f'Answer required for {item.code}.')
@@ -418,7 +424,8 @@ def submit_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
             delivery_date=delivery_date,
             min_days=min_days,
         ):
-            failed_codes.append('use_by')
+            if 'use_by' not in failed_codes:
+                failed_codes.append('use_by')
             normalized.setdefault('use_by', {})['shelf_life_fail'] = True
             normalized['use_by']['min_acceptable_shelf_life_days'] = min_days
 
@@ -469,7 +476,23 @@ def submit_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
         session.status = AdhocGoodsInStatus.QC_COMPLETE
         session.save(update_fields=['status', 'updated_at'])
 
-    return session_form_dict(_load_session(session.id))
+    failed_details = build_line_qc_fail_details(
+        failed_codes=failed_codes,
+        items_by_code=items_by_code,
+        normalized=normalized,
+        delivery_date=delivery_date,
+    )
+    form = session_form_dict(_load_session(session.id))
+    form['line_check_ok'] = line_ok
+    form['failed_codes'] = failed_codes
+    form['warnings'] = warnings
+    form['failed_details'] = failed_details
+    if not line_ok:
+        form['qc_blocked_message'] = line_qc_blocked_message()
+    form['line']['failed_codes'] = failed_codes
+    form['line']['warnings'] = warnings
+    form['line']['failed_details'] = failed_details
+    return form
 
 
 def get_adhoc_goods_in(session_id: int) -> dict:

@@ -4,7 +4,9 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.db import models
-from django.http import StreamingHttpResponse
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.http import HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
@@ -12,7 +14,13 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from locations.models import Location, LocationRole
 from locations.utils.api_response import api_error, api_success
-from product.models import Product, ProductSupplier, PurchaseShapeFormat, Unit
+from product.models import (
+    Product,
+    ProductGoodsInType,
+    ProductSupplier,
+    PurchaseShapeFormat,
+    Unit,
+)
 from product.query import active_products
 from recipe.models import RecipeVersion
 from stock_ledger.models import (
@@ -23,6 +31,7 @@ from stock_ledger.models import (
     StockEntryType,
     StockLot,
     StockLotOrigin,
+    StockReportEmailRecipient,
     StockReservation,
     StockUnit,
     StockUnitConversion,
@@ -64,6 +73,10 @@ from stock_ledger.util.recall import (
     build_product_genealogy_index,
     build_recall_report,
 )
+from stock_ledger.util.reports import closing_balances_as_of, movements_report
+from stock_ledger.util.closing_stock_email import (
+    recipient_id_from_unsubscribe_token,
+)
 from stock_ledger.util.trace import (
     mass_balance_for_output,
     trace_backward,
@@ -75,6 +88,7 @@ from users_rbac.permissions import (
     gate_floor_write,
     gate_production_write,
     gate_warehouse_write,
+    require_any_admin,
 )
 
 
@@ -662,7 +676,10 @@ def reservation_dict(row: StockReservation) -> dict:
 
 def _require_lot(lot_id) -> StockLot:
     try:
-        lot = StockLot.objects.select_related('product').get(pk=lot_id)
+        lot = StockLot.objects.select_related(
+            'product',
+            'product__destination_container',
+        ).get(pk=lot_id)
     except StockLot.DoesNotExist as exc:
         raise StockValidationError(f'lot_id={lot_id} not found') from exc
     if not lot.product.is_active:
@@ -1444,6 +1461,38 @@ def _parse_requirement_ids(raw) -> list[int] | None:
         raise StockValidationError('requirement_ids must be integers.') from exc
 
 
+def _product_destination_fields(product: Product) -> dict:
+    """Auto dest for Goods Out without plan — product.destination_container."""
+    dest = getattr(product, 'destination_container', None)
+    dest_id = product.destination_container_id
+    if dest is None and dest_id:
+        dest = Location.objects.filter(pk=dest_id).only('id', 'name').first()
+    return {
+        'destination_container_id': dest_id,
+        'destination_container_name': dest.name if dest is not None else None,
+        'to_location_id': dest_id,
+        'to_location_name': dest.name if dest is not None else None,
+        'dest_ok': dest_id is not None,
+    }
+
+
+def _resolve_transfer_to_location_id(body: dict, lot: StockLot) -> int:
+    """
+    With plan / explicit body: to_location_id required.
+    Without plan: omit to_location_id → product.destination_container.
+    """
+    raw = body.get('to_location_id')
+    if raw not in (None, ''):
+        return int(raw)
+    dest_id = lot.product.destination_container_id
+    if dest_id is None:
+        raise StockValidationError(
+            'This product has no destination location. '
+            'Set destination_container on the product before Goods Out without plan.',
+        )
+    return int(dest_id)
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 @gate_warehouse_write()
@@ -1457,11 +1506,16 @@ def transfer_api(request):
         queue_stock = body.get('queue_stock') in (True, 'true', '1', 'yes', 'True')
         audit = _common_write_kwargs(request, body)
         req_ids = _parse_requirement_ids(body.get('requirement_ids'))
+        auto_dest = body.get('to_location_id') in (None, '')
         if req_ids:
             audit['source_document_type'] = 'plan_requirement'
             audit['source_document_id'] = req_ids[0]
+        elif auto_dest and not audit.get('source_document_type'):
+            # Without-plan goods out — dest from product; never invent a plan line.
+            audit['source_document_type'] = 'goods_out_adhoc'
         lot = _resolve_lot(body)
         from_location_id = int(body['from_location_id'])
+        to_location_id = _resolve_transfer_to_location_id(body, lot)
         quantity = _parse_decimal(body['quantity'], 'quantity')
         source_entry = _resolve_source_entry(body)
         if source_entry is not None:
@@ -1498,7 +1552,7 @@ def transfer_api(request):
             idempotency_key=body['idempotency_key'],
             lot=lot,
             from_location_id=from_location_id,
-            to_location_id=int(body['to_location_id']),
+            to_location_id=to_location_id,
             quantity=quantity,
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
@@ -1944,6 +1998,258 @@ def audit_timeline_api(request):
 
     rows = [audit_event_dict(entry) for entry in qs[:row_limit]]
     return api_success('Stock audit timeline fetched.', rows)
+
+
+def _report_optional_filters(request):
+    """Shared optional filters for stock report endpoints."""
+    product_id = request.GET.get('product_id')
+    location_id = request.GET.get('location_id')
+    # Plan name product_type → model field goods_in_type (alias both).
+    goods_in_type = request.GET.get('goods_in_type') or request.GET.get('product_type')
+
+    parsed_product_id = None
+    if product_id not in (None, ''):
+        parsed_product_id = int(product_id)
+
+    parsed_location_id = None
+    if location_id not in (None, ''):
+        parsed_location_id = int(location_id)
+
+    if goods_in_type not in (None, ''):
+        valid = {c.value for c in ProductGoodsInType}
+        if goods_in_type not in valid:
+            raise ValueError(
+                f'Invalid goods_in_type. Use one of: {", ".join(sorted(valid))}.'
+            )
+
+    return parsed_product_id, goods_in_type or None, parsed_location_id
+
+
+@csrf_exempt
+@require_GET
+def goods_in_report_api(request):
+    """Goods in (receipt) movements by effective_at date range."""
+    try:
+        date_from = _parse_date(request.GET.get('date_from'), 'date_from')
+        date_to = _parse_date(request.GET.get('date_to'), 'date_to')
+        if date_from is None or date_to is None:
+            return api_error('date_from and date_to are required (YYYY-MM-DD).')
+        if date_from > date_to:
+            return api_error('date_from must be on or before date_to.')
+        product_id, goods_in_type, location_id = _report_optional_filters(request)
+        limit = request.GET.get('limit')
+        row_limit = int(limit) if limit not in (None, '') else 200
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    rows = movements_report(
+        entry_type=StockEntryType.RECEIPT,
+        date_from=date_from,
+        date_to=date_to,
+        product_id=product_id,
+        goods_in_type=goods_in_type,
+        location_id=location_id,
+        limit=row_limit,
+    )
+    return api_success(
+        'Goods in report fetched.',
+        {
+            'date_from': date_from.isoformat(),
+            'date_to': date_to.isoformat(),
+            'count': len(rows),
+            'results': rows,
+        },
+    )
+
+
+@csrf_exempt
+@require_GET
+def goods_out_report_api(request):
+    """Goods out (issue) movements by effective_at date range."""
+    try:
+        date_from = _parse_date(request.GET.get('date_from'), 'date_from')
+        date_to = _parse_date(request.GET.get('date_to'), 'date_to')
+        if date_from is None or date_to is None:
+            return api_error('date_from and date_to are required (YYYY-MM-DD).')
+        if date_from > date_to:
+            return api_error('date_from must be on or before date_to.')
+        product_id, goods_in_type, location_id = _report_optional_filters(request)
+        limit = request.GET.get('limit')
+        row_limit = int(limit) if limit not in (None, '') else 200
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    rows = movements_report(
+        entry_type=StockEntryType.ISSUE,
+        date_from=date_from,
+        date_to=date_to,
+        product_id=product_id,
+        goods_in_type=goods_in_type,
+        location_id=location_id,
+        limit=row_limit,
+    )
+    return api_success(
+        'Goods out report fetched.',
+        {
+            'date_from': date_from.isoformat(),
+            'date_to': date_to.isoformat(),
+            'count': len(rows),
+            'results': rows,
+        },
+    )
+
+
+@csrf_exempt
+@require_GET
+def closing_stock_report_api(request):
+    """Closing stock balances as of end of selected calendar day."""
+    try:
+        as_of = _parse_date(request.GET.get('as_of'), 'as_of')
+        if as_of is None:
+            return api_error('as_of is required (YYYY-MM-DD).')
+        product_id, goods_in_type, location_id = _report_optional_filters(request)
+        include_zero = str(request.GET.get('include_zero', '')).lower() in (
+            '1', 'true', 'yes',
+        )
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    rows = closing_balances_as_of(
+        as_of=as_of,
+        product_id=product_id,
+        goods_in_type=goods_in_type,
+        location_id=location_id,
+        include_zero=include_zero,
+    )
+    return api_success(
+        'Closing stock report fetched.',
+        {
+            'as_of': as_of.isoformat(),
+            'count': len(rows),
+            'results': rows,
+        },
+    )
+
+
+def _recipient_dict(row: StockReportEmailRecipient) -> dict:
+    return {
+        'id': row.id,
+        'email': row.email,
+        'is_active': row.is_active,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+        'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+def _gate_report_recipients(request):
+    denied = attach_user(request)
+    if denied:
+        return denied
+    return require_any_admin(request)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def report_email_recipients_api(request):
+    """List or add closing-stock report email recipients (admin)."""
+    denied = _gate_report_recipients(request)
+    if denied:
+        return denied
+
+    if request.method == 'GET':
+        rows = StockReportEmailRecipient.objects.all()
+        return api_success(
+            'Report email recipients fetched.',
+            [_recipient_dict(row) for row in rows],
+        )
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid request body.')
+    email = (body.get('email') or '').strip().lower()
+    if not email:
+        return api_error('email is required.')
+    try:
+        validate_email(email)
+    except ValidationError:
+        return api_error('Enter a valid email address.')
+    if StockReportEmailRecipient.objects.filter(email__iexact=email).exists():
+        return api_error('That email is already on the list.', status_code=409)
+    row = StockReportEmailRecipient.objects.create(email=email)
+    return api_success(
+        'Report email recipient added.',
+        _recipient_dict(row),
+        status_code=201,
+    )
+
+
+@csrf_exempt
+@require_http_methods(['PATCH', 'DELETE'])
+def report_email_recipient_detail_api(request, pk: int):
+    """Update or remove a closing-stock report email recipient (admin)."""
+    denied = _gate_report_recipients(request)
+    if denied:
+        return denied
+
+    row = StockReportEmailRecipient.objects.filter(pk=pk).first()
+    if row is None:
+        return api_error("We couldn't find that recipient.", status_code=404)
+
+    if request.method == 'DELETE':
+        row.delete()
+        return api_success('Report email recipient removed.', {'ref': pk})
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid request body.')
+    if 'is_active' not in body:
+        return api_error('is_active is required.')
+    row.is_active = bool(body['is_active'])
+    if body.get('email'):
+        email = str(body['email']).strip().lower()
+        try:
+            validate_email(email)
+        except ValidationError:
+            return api_error('Enter a valid email address.')
+        clash = (
+            StockReportEmailRecipient.objects.filter(email__iexact=email)
+            .exclude(pk=row.pk)
+            .exists()
+        )
+        if clash:
+            return api_error('That email is already on the list.', status_code=409)
+        row.email = email
+    row.save()
+    return api_success('Report email recipient updated.', _recipient_dict(row))
+
+
+@csrf_exempt
+@require_GET
+def report_email_unsubscribe_api(request):
+    """One-click unsubscribe from closing-stock emails (no auth; signed token)."""
+    token = request.GET.get('token') or ''
+    try:
+        pk = recipient_id_from_unsubscribe_token(token)
+    except ValueError:
+        return HttpResponse(
+            '<html><body><p>This unsubscribe link is not valid.</p></body></html>',
+            status=400,
+            content_type='text/html; charset=utf-8',
+        )
+    row = StockReportEmailRecipient.objects.filter(pk=pk).first()
+    if row is None:
+        return HttpResponse(
+            '<html><body><p>You are already unsubscribed.</p></body></html>',
+            content_type='text/html; charset=utf-8',
+        )
+    if row.is_active:
+        row.is_active = False
+        row.save(update_fields=['is_active', 'updated_at'])
+    return HttpResponse(
+        '<html><body><p>You have been unsubscribed from closing stock emails.</p>'
+        '<p>An admin can re-enable you in Stock report settings.</p></body></html>',
+        content_type='text/html; charset=utf-8',
+    )
 
 
 @csrf_exempt
@@ -2553,6 +2859,7 @@ def scan_goods_out_api(request):
     batches = _fifo_batch_rows(product_id=product.id, location_id=loc_id)
     oldest = batches[0] if batches else None
     fifo_ok = oldest is not None and oldest['lot_id'] == lot.id
+    dest = _product_destination_fields(product)
     data = {
         'scanned_code': (code or '').strip(),
         'match_type': match['match_type'],
@@ -2565,6 +2872,8 @@ def scan_goods_out_api(request):
             'name': product.name,
             'recipe_code': product.recipe_code,
             'unit': product.unit.name if product.unit_id else None,
+            'destination_container_id': dest['destination_container_id'],
+            'destination_container_name': dest['destination_container_name'],
         },
         'lot_id': lot.id,
         'trace_number': lot.trace_number,
@@ -2573,6 +2882,10 @@ def scan_goods_out_api(request):
             lot.production_date.isoformat() if lot.production_date else None
         ),
         'location_id': loc_id,
+        'from_location_id': loc_id,
+        'to_location_id': dest['to_location_id'],
+        'to_location_name': dest['to_location_name'],
+        'dest_ok': dest['dest_ok'],
         'quantity': _dec(qty),
         'sticker_initial': _dec(sticker_initial),
         'lot_quantity': _dec(lot_qty),
@@ -2587,6 +2900,11 @@ def scan_goods_out_api(request):
             {**row, 'quantity': _dec(row['quantity'])} for row in queued_draws
         ],
     }
+    if not dest['dest_ok']:
+        data['dest_message'] = (
+            'This product has no destination location. '
+            'Fix product master before Goods Out without plan.'
+        )
     if not fifo_ok and oldest is not None:
         data['recommended_lot_id'] = oldest['lot_id']
         data['recommended_trace'] = oldest.get('trace_number')

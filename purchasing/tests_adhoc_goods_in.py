@@ -29,7 +29,7 @@ from purchasing.services.adhoc_goods_in import (
     submit_adhoc_line_qc,
 )
 from purchasing.services.julian import julian_trace_number
-from stock_ledger.models import StockEntry, StockPeriod, StockPeriodStatus
+from stock_ledger.models import StockEntry
 
 
 class AdhocGoodsInQcTests(TestCase):
@@ -77,11 +77,6 @@ class AdhocGoodsInQcTests(TestCase):
             inner_unit=self.kg,
             is_default=True,
             is_active=True,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
 
     def _qc_complete(self, product=None):
@@ -245,6 +240,65 @@ class AdhocGoodsInQcTests(TestCase):
         )
         self.assertEqual(line['status'], AdhocGoodsInStatus.QC_COMPLETE)
         self.assertEqual(line['line']['use_by'], use_by)
+
+    def test_line_qc_returns_failed_details(self):
+        from product.models import (
+            ProductAcceptance,
+            ProductStorageRegime,
+            ProductTechnical,
+        )
+
+        ProductTechnical.objects.create(
+            product=self.food,
+            storage_regime=ProductStorageRegime.FROZEN,
+            temp_check_lower_bound=Decimal('-25'),
+            temp_check_upper_bound=Decimal('-18'),
+        )
+        ProductAcceptance.objects.create(
+            product=self.food,
+            min_acceptable_shelf_life_days=14,
+        )
+        form = start_adhoc_goods_in(
+            product_id=self.food.id,
+            location_id=self.wh.id,
+        )
+        delivery = date.today()
+        submit_adhoc_header_qc(
+            form['session_id'],
+            body={
+                'checked_by_user_id': 1,
+                'delivery_date': delivery.isoformat(),
+                'answers': {
+                    'vehicle_clean_fb_pest_odour': {'value': True},
+                    'primary_outer_packaging_damaged': {'value': False},
+                    'reject_delivery': {'value': False},
+                },
+            },
+        )
+        use_by = (delivery + timedelta(days=2)).isoformat()
+        result = submit_adhoc_line_qc(
+            form['session_id'],
+            body={
+                'answers': {
+                    'use_by': {'value': use_by},
+                    'product_temperature': {'value': '2.5'},
+                    'spec_check': {'value': True},
+                },
+            },
+        )
+        self.assertFalse(result['line_check_ok'])
+        self.assertFalse(result['line']['line_check_ok'])
+        self.assertEqual(result['status'], AdhocGoodsInStatus.OPEN)
+        self.assertIn('use_by', result['failed_codes'])
+        self.assertIn('product_temperature', result['failed_codes'])
+        self.assertTrue(result['failed_details'])
+        by_code = {d['code']: d for d in result['failed_details']}
+        self.assertEqual(by_code['use_by']['reason'], 'shelf_life')
+        self.assertIn('14 days', by_code['use_by']['message'])
+        self.assertEqual(by_code['product_temperature']['reason'], 'out_of_range')
+        self.assertIn('-25', by_code['product_temperature']['message'])
+        self.assertIn('-18', by_code['product_temperature']['message'])
+        self.assertIn('Inform QC/QA', result['qc_blocked_message'])
 
     def test_http_start_and_get(self):
         client = Client()

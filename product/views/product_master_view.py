@@ -309,13 +309,20 @@ def product_collection_api(request):
                 request.GET.get('destination_container_id'),
                 'destination_container_id',
             )
+            category_id = _parse_optional_int(
+                request.GET.get('category_id'), 'category_id',
+            )
         except ValueError as exc:
             return api_error(str(exc), status_code=400)
+
+        if category_id is not None and not Category.objects.filter(pk=category_id).exists():
+            return api_error(f'category_id={category_id} not found.', status_code=404)
 
         products = active_products(
             source_container_id=source_id,
             destination_container_id=dest_id,
             q=(request.GET.get('q') or '').strip() or None,
+            category_id=category_id,
         )
         return api_success(
             'Product list fetched successfully.',
