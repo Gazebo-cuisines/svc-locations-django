@@ -24,6 +24,7 @@ urlpatterns = [
     path('issue/', views.issue_api, name='stock-issue'),
     path('production/', views.production_api, name='stock-production'),
     path('production/<int:entry_id>/', views.production_detail_api, name='stock-production-detail'),
+    
     # downtime
     path('downtime/', views.downtime_api, name='stock-downtime'),
     
