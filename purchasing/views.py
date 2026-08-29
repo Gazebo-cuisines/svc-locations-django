@@ -13,9 +13,14 @@ from purchasing.serialize import po_detail_dict, po_list_dict
 from purchasing.services.adhoc_goods_in import (
     AdhocGoodsInError,
     get_adhoc_goods_in,
+    receive_adhoc_goods_in,
     start_adhoc_goods_in,
     submit_adhoc_header_qc,
     submit_adhoc_line_qc,
+)
+from purchasing.services.stock_adjustment import (
+    StockAdjustmentError,
+    receive_stock_adjustment,
 )
 from purchasing.services.attachments import (
     AttachmentError,
@@ -557,3 +562,38 @@ def adhoc_goods_in_line_qc_api(request, session_id: int):
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
     return api_success('Line QC saved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
+def adhoc_goods_in_receive_api(request, session_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        audit = _common_write_kwargs(request, body)
+        data = receive_adhoc_goods_in(session_id, body=body, audit=audit)
+    except AdhocGoodsInError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Goods received successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_warehouse_write(action='goods_in')
+def stock_adjustment_api(request):
+    """Goods In tab C — add qty + labels, no QC / no PO."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        audit = _common_write_kwargs(request, body)
+        data = receive_stock_adjustment(body=body, audit=audit)
+    except StockAdjustmentError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Stock adjustment posted.', data, status_code=201)

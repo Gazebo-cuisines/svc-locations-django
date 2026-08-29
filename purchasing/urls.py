@@ -5,6 +5,7 @@ from purchasing.views import (
     adhoc_goods_in_detail_api,
     adhoc_goods_in_header_qc_api,
     adhoc_goods_in_line_qc_api,
+    adhoc_goods_in_receive_api,
     legacy_csv_import_api,
     po_attachment_detail_api,
     po_attachments_api,
@@ -24,6 +25,7 @@ from purchasing.views import (
     po_receive_api,
     po_release_api,
     po_timeline_api,
+    stock_adjustment_api,
 )
 
 urlpatterns = [
@@ -64,9 +66,13 @@ urlpatterns = [
     path('pos/<int:po_id>/print/', po_print_api, name='purchasing-po-print'),
     path('imports/legacy-csv/', legacy_csv_import_api, name='purchasing-legacy-csv-import'),
 
-    # Without-PO goods-in QC (Chunk 2; receive in Chunk 3)
+    # Without-PO goods-in QC + receive
     path('adhoc-goods-in/', adhoc_goods_in_collection_api, name='purchasing-adhoc-goods-in-start'),
     path('adhoc-goods-in/<int:session_id>/', adhoc_goods_in_detail_api, name='purchasing-adhoc-goods-in-detail'),
     path('adhoc-goods-in/<int:session_id>/qc/header/', adhoc_goods_in_header_qc_api, name='purchasing-adhoc-goods-in-header-qc'),
     path('adhoc-goods-in/<int:session_id>/qc/line/', adhoc_goods_in_line_qc_api, name='purchasing-adhoc-goods-in-line-qc'),
+    path('adhoc-goods-in/<int:session_id>/receive/', adhoc_goods_in_receive_api, name='purchasing-adhoc-goods-in-receive'),
+
+    # Stock Adjustment (Goods In tab C — no QC)
+    path('stock-adjustment/', stock_adjustment_api, name='purchasing-stock-adjustment'),
 ]

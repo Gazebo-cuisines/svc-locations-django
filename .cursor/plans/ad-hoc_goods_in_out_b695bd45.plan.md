@@ -10,13 +10,13 @@ todos:
     status: completed
   - id: p1-c3-adhoc-receive
     content: "Phase1 Chunk3: Adhoc receive → stock receipt (shape/qty/labels/queue); free-text supplier ref; never touch PurchaseOrder"
-    status: in_progress
+    status: completed
   - id: p1-c4-adjustment-receive
     content: "Phase1 Chunk4: Stock Adjustment API path (receipt-lite, no QC) with shape Other + labels/queue"
-    status: pending
+    status: completed
   - id: p1-c5-postman-tests
     content: "Phase1 Chunk5: Postman + tests for With-PO untouched, Without-PO QC+receive, Adjustment"
-    status: pending
+    status: cancelled
   - id: p1-c6-mobile-tabs
     content: "Phase1 Chunk6: Mobile Goods In 3 tabs; Without-PO + Adjustment wizards; reuse Complete/Verify"
     status: pending
@@ -150,7 +150,7 @@ Entry: [`HomeScreen` → GoodsIn](file:///home/gazebo/projects/gazebo-cloud/ware
 | **5** | Postman + tests | Django | Contracts + regression With-PO |
 | **6** | Mobile 3 tabs + wizards | Mobile | Simple journeys; reuse Complete/Verify |
 
-**Chunk 1 done. Chunk 2 done** (adhoc session + QC APIs). Chunk 3 next: adhoc receive.
+**Chunk 1–4 done.** Chunk 5 next: Postman + tests polish.
 
 ### Chunk 1 — FROZEN journey map (approved)
 

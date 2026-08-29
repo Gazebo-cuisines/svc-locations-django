@@ -567,10 +567,11 @@ class AdhocGoodsInStatus(models.TextChoices):
     OPEN = 'open', 'Open'
     REJECTED = 'rejected', 'Rejected'
     QC_COMPLETE = 'qc_complete', 'QC complete'
+    RECEIVED = 'received', 'Received'
 
 
 class AdhocGoodsInSession(models.Model):
-    """Without-PO goods-in QC visit (Chunk 2). Receive lands in Chunk 3."""
+    """Without-PO goods-in QC visit. Receive posts stock without a PurchaseOrder."""
 
     status = models.CharField(
         max_length=16,
@@ -601,6 +602,11 @@ class AdhocGoodsInSession(models.Model):
     qc_tl_checked_by_user_id = models.IntegerField(null=True, blank=True)
     qc_tl_checked_at = models.DateTimeField(null=True, blank=True)
     qc_tl_comment = models.TextField(null=True, blank=True)
+    # Chunk 3 — receive (never linked to PurchaseOrder)
+    item_po_ref = models.CharField(max_length=64, null=True, blank=True)
+    label_format = models.CharField(max_length=16, null=True, blank=True)
+    label_count = models.PositiveIntegerField(null=True, blank=True)
+    receive_idempotency_key = models.CharField(max_length=128, null=True, blank=True)
     created_by_user_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -615,6 +621,7 @@ class AdhocGoodsInSession(models.Model):
                         AdhocGoodsInStatus.OPEN,
                         AdhocGoodsInStatus.REJECTED,
                         AdhocGoodsInStatus.QC_COMPLETE,
+                        AdhocGoodsInStatus.RECEIVED,
                     ],
                 ),
                 name='chk_adhoc_gin_status',
@@ -656,6 +663,22 @@ class AdhocGoodsInLine(models.Model):
     line_template_id = models.BigIntegerField(null=True, blank=True)
     line_template_version = models.IntegerField(null=True, blank=True)
     line_check_ok = models.BooleanField(default=False)
+    product_supplier = models.ForeignKey(
+        'product.ProductSupplier',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='adhoc_goods_in_lines',
+    )
+    qty_entered = models.DecimalField(
+        max_digits=16, decimal_places=6, null=True, blank=True,
+    )
+    stock_qty = models.DecimalField(
+        max_digits=16, decimal_places=6, null=True, blank=True,
+    )
+    shape_format_label = models.CharField(max_length=128, null=True, blank=True)
+    shape_other = models.JSONField(null=True, blank=True)
+    last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

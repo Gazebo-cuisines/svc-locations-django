@@ -1,6 +1,7 @@
-"""Without-PO goods-in QC session (Chunk 2)."""
+"""Without-PO goods-in QC + receive (Chunks 2–3)."""
 
 from datetime import date, timedelta
+from decimal import Decimal
 from uuid import uuid4
 
 from django.test import Client, TestCase
@@ -12,6 +13,7 @@ from product.models import (
     ProductClass,
     ProductGoodsInType,
     ProductLabelMode,
+    ProductSupplier,
     Range,
     Unit,
 )
@@ -21,11 +23,13 @@ from purchasing.management.commands.seed_goods_in_templates import (
 from purchasing.models import AdhocGoodsInStatus
 from purchasing.services.adhoc_goods_in import (
     AdhocGoodsInError,
+    receive_adhoc_goods_in,
     start_adhoc_goods_in,
     submit_adhoc_header_qc,
     submit_adhoc_line_qc,
 )
 from purchasing.services.julian import julian_trace_number
+from stock_ledger.models import StockEntry, StockPeriod, StockPeriodStatus
 
 
 class AdhocGoodsInQcTests(TestCase):
@@ -35,7 +39,9 @@ class AdhocGoodsInQcTests(TestCase):
         Category.objects.create(id=81, name='Adhoc Cat')
         Range.objects.create(id=81, name='Adhoc Range')
         self.kg = Unit.objects.create(id=81, name='Kg')
+        self.bag = Unit.objects.create(id=82, name='Bag')
         self.wh = Location.objects.create(id=81, name='Adhoc WH', visible=True)
+        self.supplier = Location.objects.create(id=82, name='Adhoc Supplier', visible=True)
         self.product = Product.objects.create(
             name=f'Turmeric {uuid4().hex[:8]}',
             recipe_code=f'TU{uuid4().hex[:6]}',
@@ -60,6 +66,73 @@ class AdhocGoodsInQcTests(TestCase):
             source_container=self.wh,
             destination_container=self.wh,
         )
+        self.mapping = ProductSupplier.objects.create(
+            product=self.product,
+            supplier=self.supplier,
+            supplier_code='TURM-1X5',
+            supplier_product_name='Turmeric 1x5kg',
+            outer_qty=Decimal('1'),
+            outer_unit=self.bag,
+            inner_qty=Decimal('5'),
+            inner_unit=self.kg,
+            is_default=True,
+            is_active=True,
+        )
+        StockPeriod.objects.get_or_create(
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 12, 31),
+            defaults={'status': StockPeriodStatus.OPEN},
+        )
+
+    def _qc_complete(self, product=None):
+        product = product or self.product
+        form = start_adhoc_goods_in(
+            product_id=product.id,
+            location_id=self.wh.id,
+            created_by_user_id=7,
+        )
+        sid = form['session_id']
+        if product.goods_in_type == ProductGoodsInType.RAW_MATERIAL:
+            submit_adhoc_header_qc(
+                sid,
+                body={
+                    'checked_by_user_id': 7,
+                    'delivery_date': date.today().isoformat(),
+                    'answers': {
+                        'vehicle_clean_fb_pest_odour': {'value': True},
+                        'primary_outer_packaging_damaged': {'value': False},
+                        'reject_delivery': {'value': False},
+                    },
+                },
+            )
+            use_by = (date.today() + timedelta(days=30)).isoformat()
+            submit_adhoc_line_qc(
+                sid,
+                body={
+                    'answers': {
+                        'use_by': {'value': use_by},
+                        'product_temperature': {'value': '4'},
+                        'spec_check': {'value': True},
+                    },
+                },
+            )
+        else:
+            submit_adhoc_header_qc(
+                sid,
+                body={
+                    'checked_by_user_id': 7,
+                    'delivery_date': date.today().isoformat(),
+                    'answers': {
+                        'damaged_product': {'value': False},
+                        'reject_delivery': {'value': False},
+                    },
+                },
+            )
+            submit_adhoc_line_qc(
+                sid,
+                body={'answers': {'spec_check': {'value': True}}},
+            )
+        return sid
 
     def test_start_header_line_qc_happy_path(self):
         form = start_adhoc_goods_in(
@@ -191,3 +264,66 @@ class AdhocGoodsInQcTests(TestCase):
         get_resp = client.get(f'/purchasing/adhoc-goods-in/{session_id}/')
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.json()['data']['session_id'], session_id)
+
+    def test_receive_requires_qc_complete(self):
+        form = start_adhoc_goods_in(
+            product_id=self.product.id,
+            location_id=self.wh.id,
+        )
+        with self.assertRaises(AdhocGoodsInError) as ctx:
+            receive_adhoc_goods_in(
+                form['session_id'],
+                body={
+                    'idempotency_key': f'adhoc-{uuid4()}',
+                    'quantity': '1',
+                    'product_supplier_id': self.mapping.id,
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                },
+            )
+        self.assertIn('line QC', str(ctx.exception).lower())
+
+    def test_receive_pack_shape_queued(self):
+        sid = self._qc_complete()
+        key = f'adhoc-recv-{uuid4()}'
+        result = receive_adhoc_goods_in(
+            sid,
+            body={
+                'idempotency_key': key,
+                'item_po_ref': 'SUP-PO-99',
+                'product_supplier_id': self.mapping.id,
+                'quantity': '2',
+                'label_format': 'pallet',
+                'label_count': 1,
+            },
+        )
+        self.assertEqual(result['status'], AdhocGoodsInStatus.RECEIVED)
+        self.assertEqual(result['item_po_ref'], 'SUP-PO-99')
+        self.assertEqual(result['stock_qty'], '10.000000')
+        self.assertEqual(len(result['receive_results']), 1)
+        entry_id = result['receive_results'][0]['stock_entry_id']
+        entry = StockEntry.objects.get(pk=entry_id)
+        self.assertEqual(entry.source_document_type, 'adhoc_goods_in')
+        self.assertEqual(entry.source_document_id, sid)
+        self.assertIsNone(entry.po_number)
+        self.assertIn('SUP-PO-99', entry.remarks or '')
+        self.assertEqual(result['receive_results'][0]['posting_status'], 'queued')
+
+    def test_receive_free_qty(self):
+        sid = self._qc_complete()
+        result = receive_adhoc_goods_in(
+            sid,
+            body={
+                'idempotency_key': f'adhoc-free-{uuid4()}',
+                'quantity': '5',
+                'label_format': 'box',
+                'label_count': 1,
+                'supplier_id': self.supplier.id,
+            },
+        )
+        self.assertEqual(result['status'], AdhocGoodsInStatus.RECEIVED)
+        self.assertEqual(result['stock_qty'], '5.000000')
+        entry = StockEntry.objects.get(
+            pk=result['receive_results'][0]['stock_entry_id'],
+        )
+        self.assertEqual(entry.quantity, Decimal('5'))
