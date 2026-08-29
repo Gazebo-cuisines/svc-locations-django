@@ -10,6 +10,13 @@ from purchasing.models import (
     PurchaseOrderStatus,
 )
 from purchasing.serialize import po_detail_dict, po_list_dict
+from purchasing.services.adhoc_goods_in import (
+    AdhocGoodsInError,
+    get_adhoc_goods_in,
+    start_adhoc_goods_in,
+    submit_adhoc_header_qc,
+    submit_adhoc_line_qc,
+)
 from purchasing.services.attachments import (
     AttachmentError,
     delete_attachment,
@@ -479,3 +486,74 @@ def po_delivery_print_api(request, po_id: int, delivery_id: int):
         return pdf_http_response(po_id, delivery_id=delivery_id)
     except GoodsInFormError as exc:
         return api_error(str(exc), status_code=404)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def adhoc_goods_in_collection_api(request):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    product_id = body.get('product_id')
+    location_id = body.get('location_id')
+    if product_id in (None, '') or location_id in (None, ''):
+        return api_error('product_id and location_id are required.')
+    try:
+        data = start_adhoc_goods_in(
+            product_id=int(product_id),
+            location_id=int(location_id),
+            created_by_user_id=(
+                int(body['created_by_user_id'])
+                if body.get('created_by_user_id') not in (None, '')
+                else None
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+    except AdhocGoodsInError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Adhoc goods-in session started.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def adhoc_goods_in_detail_api(request, session_id: int):
+    try:
+        data = get_adhoc_goods_in(session_id)
+    except AdhocGoodsInError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Adhoc goods-in session fetched.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def adhoc_goods_in_header_qc_api(request, session_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = submit_adhoc_header_qc(session_id, body=body)
+    except AdhocGoodsInError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Header QC saved successfully.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def adhoc_goods_in_line_qc_api(request, session_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = submit_adhoc_line_qc(session_id, body=body)
+    except AdhocGoodsInError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Line QC saved successfully.', data)
