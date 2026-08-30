@@ -32,6 +32,7 @@ from purchasing.services.header_qc import HeaderQcError
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.line_qc import LineQcError
 from purchasing.services.qc_answer_store import load_answers, upsert_answers
+from purchasing.services.qc_lock import claim_lock
 from purchasing.services.qc_answers import QcAnswerError, normalize_answer, parse_date
 
 
@@ -113,6 +114,8 @@ def draft_header_qc(
         normalized, items_by_code = _partial_answers(template, body.get('answers'))
     except (ValueError, QcAnswerError) as exc:
         raise HeaderQcError(str(exc)) from exc
+
+    claim_lock(delivery, checked_by, noun='delivery')
 
     if body.get('delivery_date') not in (None, ''):
         try:
@@ -202,6 +205,8 @@ def draft_line_qc(
     except (ValueError, QcAnswerError) as exc:
         raise LineQcError(str(exc)) from exc
 
+    claim_lock(dline, checked_by, noun='line')
+
     upsert_answers(
         answers=normalized,
         items_by_code=items_by_code,
@@ -260,6 +265,8 @@ def draft_adhoc_header_qc(session_id: int, *, body: dict) -> dict:
         normalized, items_by_code = _partial_answers(template, body.get('answers'))
     except (ValueError, QcAnswerError) as exc:
         raise AdhocGoodsInError(str(exc)) from exc
+
+    claim_lock(session, checked_by, noun='delivery')
 
     if body.get('delivery_date') not in (None, ''):
         try:
@@ -329,6 +336,8 @@ def draft_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
         normalized, items_by_code = _partial_answers(template, raw_answers)
     except (ValueError, QcAnswerError) as exc:
         raise AdhocGoodsInError(str(exc)) from exc
+
+    claim_lock(line, checked_by, noun='line')
 
     upsert_answers(
         answers=normalized,

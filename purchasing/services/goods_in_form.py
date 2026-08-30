@@ -15,6 +15,7 @@ from purchasing.services.delivery import (
 )
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.qc_answer_store import load_answers
+from purchasing.services.qc_lock import lock_info
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
 from purchasing.serialize import _qty_str, rbac_names, shortfall_reason_options
@@ -230,6 +231,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             'saved_answers': saved_answers,
             'line_check_ok': line_check_ok,
             'qc_draft': bool(saved_answers) and not line_check_ok,
+            'lock': lock_info(dline) if dline is not None else None,
             'label_format': line.label_format,
             'label_count': line.label_count,
             'template': _template_block(line_template),
@@ -282,6 +284,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         'qc_tl_comment': session.qc_tl_comment,
         'saved_header_answers': saved_header,
         'qc_draft': bool(saved_header) and session.checked_at is None,
+        'lock': lock_info(delivery) if delivery is not None else None,
         'header': _template_block(header_template),
         'shortfall_reasons': shortfall_reason_options(),
         'lines': line_blocks,

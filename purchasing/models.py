@@ -276,6 +276,8 @@ class PurchaseOrderDelivery(models.Model):
     qc_tl_checked_by_user_id = models.IntegerField(null=True, blank=True)
     qc_tl_checked_at = models.DateTimeField(null=True, blank=True)
     qc_tl_comment = models.TextField(null=True, blank=True)
+    editor_user_id = models.IntegerField(null=True, blank=True)
+    editor_heartbeat_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -338,6 +340,8 @@ class PurchaseOrderDeliveryLine(models.Model):
     line_template_version = models.IntegerField(null=True, blank=True)
     line_check_ok = models.BooleanField(default=False)
     last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
+    editor_user_id = models.IntegerField(null=True, blank=True)
+    editor_heartbeat_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -731,6 +735,8 @@ class AdhocGoodsInSession(models.Model):
     label_count = models.PositiveIntegerField(null=True, blank=True)
     receive_idempotency_key = models.CharField(max_length=128, null=True, blank=True)
     created_by_user_id = models.IntegerField(null=True, blank=True)
+    editor_user_id = models.IntegerField(null=True, blank=True)
+    editor_heartbeat_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -802,6 +808,8 @@ class AdhocGoodsInLine(models.Model):
     shape_format_label = models.CharField(max_length=128, null=True, blank=True)
     shape_other = models.JSONField(null=True, blank=True)
     last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
+    editor_user_id = models.IntegerField(null=True, blank=True)
+    editor_heartbeat_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

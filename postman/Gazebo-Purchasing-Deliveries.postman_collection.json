@@ -53,6 +53,19 @@
       }
     },
     {
+      "name": "Get delivery checklist",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/checklist/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "checklist", ""]
+        },
+        "description": "### Get delivery checklist\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/checklist/`\n\nExpo step list for this truck’s **header** QC. Same answers as GET form, remapped: each question already has `state`, `value`, `comment`, plus a progress `summary`. Existing GET form is unchanged. Adhoc twin: `GET /purchasing/adhoc-goods-in/:sessionId/checklist/`.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK on this PO |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods-in checklist resolved successfully.`\n\n`data.checklist_version` is the header template version. `data.steps[]` starts with a virtual `delivery_date` step (`group=delivery`), then header items (`group=header`).\n\n| Field | Meaning |\n| --- | --- |\n| `id` / `code` | Stable check code |\n| `kind` | Same as template `input_type` (`bool` \\| `decimal` \\| `text` \\| `date`) |\n| `state` | `pending` (no answer) \\| `done` \\| `needs_comment` (fail, comment required, empty) \\| `fail` |\n| `image_key` | Slug for bundled art (`vehicle-clean-fb-pest-odour`), never a URL. `null` for `delivery_date` and `comment` |\n| `value` / `comment` | Saved answer, or `null` |\n\n`data.summary`: `done`, `total`, `remaining`, `blocking[]` (required steps still `pending` or `needs_comment`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
+      }
+    },
+    {
       "name": "Header QC",
       "request": {
         "method": "POST",

@@ -23,6 +23,7 @@ from purchasing.services.goods_in_form import (
 )
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.qc_answer_store import upsert_answers
+from purchasing.services.qc_lock import claim_lock
 from purchasing.services.qc_answers import (
     QcAnswerError,
     answer_fails,
@@ -144,6 +145,8 @@ def submit_header_qc(
         checked_by = int(checked_by)
     except (TypeError, ValueError) as exc:
         raise HeaderQcError('checked_by_user_id must be an integer.') from exc
+
+    claim_lock(delivery, checked_by, noun='delivery')
 
     before = {
         'delivery_id': delivery.id,
