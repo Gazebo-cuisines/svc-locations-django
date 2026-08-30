@@ -1,0 +1,272 @@
+{
+  "info": {
+    "name": "Gazebo - Stock Reports",
+    "description": "Sage-style stock criteria reports backed by `stock_entry`, plus daily closing-stock email recipients (AWS SES).\n\n**Domain:** goods in (receipts), goods out (issues), closing stock as-of date, report email recipients.\n\n**Tables:** `stock_entry` (posted only — excludes queued/cancelled); `stock_report_email_recipient`.\n\n**Vars:** `{{base_url}}`, `{{date_from}}`, `{{date_to}}`, `{{as_of}}`, `{{product_id}}`, `{{location_id}}`, `{{recipient_id}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "date_from",
+      "value": "2026-08-01"
+    },
+    {
+      "key": "date_to",
+      "value": "2026-08-20"
+    },
+    {
+      "key": "as_of",
+      "value": "2026-08-20"
+    },
+    {
+      "key": "product_id",
+      "value": "1"
+    },
+    {
+      "key": "location_id",
+      "value": "8"
+    },
+    {
+      "key": "recipient_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "Goods in report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/goods-in/?date_from={{date_from}}&date_to={{date_to}}&goods_in_type=raw_material",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "goods-in", ""],
+          "query": [
+            {
+              "key": "date_from",
+              "value": "{{date_from}}",
+              "description": "Range start YYYY-MM-DD (inclusive, on effective_at)"
+            },
+            {
+              "key": "date_to",
+              "value": "{{date_to}}",
+              "description": "Range end YYYY-MM-DD (inclusive, on effective_at)"
+            },
+            {
+              "key": "goods_in_type",
+              "value": "raw_material",
+              "description": "Optional: raw_material | packaging | other (alias: product_type)"
+            },
+            {
+              "key": "product_id",
+              "value": "{{product_id}}",
+              "disabled": true,
+              "description": "Optional product PK"
+            },
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "disabled": true,
+              "description": "Optional location PK"
+            },
+            {
+              "key": "limit",
+              "value": "200",
+              "disabled": true,
+              "description": "Optional row cap 1–1000 (default 200)"
+            }
+          ]
+        },
+        "description": "### Goods in report\n\n`GET /stock/reports/goods-in/`\n\nLists posted **receipt** stock movements whose business date (`effective_at`) falls between `date_from` and `date_to` (inclusive). Use from a criteria popup like Sage Day Books: pick a date range, optionally filter raw materials (`goods_in_type=raw_material`), then OK.\n\nExample: `date_from=2026-08-01` & `date_to=2026-08-20` returns every live goods-in line in that window.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date_from` | yes | Start date `YYYY-MM-DD` (inclusive) |\n| `date_to` | yes | End date `YYYY-MM-DD` (inclusive) |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one warehouse/location |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods in report fetched.\", data: { date_from, date_to, count, results: [ { entry_id, entry_type, effective_at, product_id, product_name, recipe_code, gff_code, goods_in_type, lot_id, trace_number, location_id, location_name, quantity, unit_id, unit_name, source_document_type, source_document_id, po_number, remarks } ] } }`\n\nQuantities are signed ledger amounts (receipts positive).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including empty `results`) |\n| 400 | Missing/invalid dates, inverted range, bad `goods_in_type` / ids |"
+      }
+    },
+    {
+      "name": "Goods out report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/goods-out/?date_from={{date_from}}&date_to={{date_to}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "goods-out", ""],
+          "query": [
+            {
+              "key": "date_from",
+              "value": "{{date_from}}",
+              "description": "Range start YYYY-MM-DD (inclusive, on effective_at)"
+            },
+            {
+              "key": "date_to",
+              "value": "{{date_to}}",
+              "description": "Range end YYYY-MM-DD (inclusive, on effective_at)"
+            },
+            {
+              "key": "goods_in_type",
+              "value": "raw_material",
+              "disabled": true,
+              "description": "Optional: raw_material | packaging | other"
+            },
+            {
+              "key": "product_id",
+              "value": "{{product_id}}",
+              "disabled": true,
+              "description": "Optional product PK"
+            },
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "disabled": true,
+              "description": "Optional location PK"
+            },
+            {
+              "key": "limit",
+              "value": "200",
+              "disabled": true,
+              "description": "Optional row cap 1–1000 (default 200)"
+            }
+          ]
+        },
+        "description": "### Goods out report\n\n`GET /stock/reports/goods-out/`\n\nLists posted **issue** stock movements in the `effective_at` date range (inclusive). Same criteria shape as goods in. Does **not** include disposal, transfer, or production consumption — issues only.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date_from` | yes | Start date `YYYY-MM-DD` (inclusive) |\n| `date_to` | yes | End date `YYYY-MM-DD` (inclusive) |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one location |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods out report fetched.\", data: { date_from, date_to, count, results: [ …same movement row shape as goods in… ] } }`\n\nIssue quantities are negative in the ledger.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing/invalid dates, inverted range, bad filters |"
+      }
+    },
+    {
+      "name": "Closing stock report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/closing-stock/?as_of={{as_of}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "closing-stock", ""],
+          "query": [
+            {
+              "key": "as_of",
+              "value": "{{as_of}}",
+              "description": "Closing date YYYY-MM-DD (balance through end of that day)"
+            },
+            {
+              "key": "goods_in_type",
+              "value": "raw_material",
+              "disabled": true,
+              "description": "Optional: raw_material | packaging | other"
+            },
+            {
+              "key": "product_id",
+              "value": "{{product_id}}",
+              "disabled": true,
+              "description": "Optional product PK"
+            },
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "disabled": true,
+              "description": "Optional location PK"
+            },
+            {
+              "key": "include_zero",
+              "value": "0",
+              "disabled": true,
+              "description": "1/true to keep zero qty rows (default omit zeros)"
+            }
+          ]
+        },
+        "description": "### Closing stock report\n\n`GET /stock/reports/closing-stock/`\n\nReturns lot×location closing balances **as of end of** `as_of` (23:59:59 local). Sums posted `stock_entry.quantity` where `effective_at` ≤ that cutoff. Use a single date picker in the criteria popup (Sage-style “as of” / day close).\n\nZero balances are omitted unless `include_zero=1`. Queued/cancelled receipts and downtime rows are excluded.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `as_of` | yes | Closing date `YYYY-MM-DD` |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one location |\n| `include_zero` | no | Include zero qty rows when `1` / `true` / `yes` |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Closing stock report fetched.\", data: { as_of, count, results: [ { as_of, product_id, product_name, recipe_code, gff_code, goods_in_type, lot_id, trace_number, use_by, location_id, location_name, unit_id, unit_name, quantity, quantity_base } ] } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing/invalid `as_of` or bad filters |"
+      }
+    },
+    {
+      "name": "List report email recipients",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "description": "Admin JWT required"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/email-recipients/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "email-recipients", ""]
+        },
+        "description": "### List report email recipients\n\n`GET /stock/reports/email-recipients/`\n\nReturns every address that can receive the nightly closing-stock CSV (AWS SES). Used by the frontend settings screen that configures who gets the daily report.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipients fetched.\", data: [ { id, email, is_active, created_at, updated_at } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |"
+      }
+    },
+    {
+      "name": "Add report email recipient",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "description": "Admin JWT required"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"ops@example.com\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/stock/reports/email-recipients/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "email-recipients", ""]
+        },
+        "description": "### Add report email recipient\n\n`POST /stock/reports/email-recipients/`\n\nAdds an email to the daily closing-stock distribution list. Stored lowercased; must be unique. New rows start `is_active=true` and are included the next time `manage.py email_closing_stock_report` runs.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `email` | yes | Valid email address |\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipient added.\", data: { id, email, is_active, created_at, updated_at } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Created |\n| 400 | Missing/invalid email |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |\n| 409 | Email already on the list |"
+      }
+    },
+    {
+      "name": "Update report email recipient",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "description": "Admin JWT required"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"is_active\": false\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/stock/reports/email-recipients/{{recipient_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "email-recipients", "{{recipient_id}}", ""]
+        },
+        "description": "### Update report email recipient\n\n`PATCH /stock/reports/email-recipients/:id/`\n\nToggle whether a recipient gets the nightly closing-stock email, or change the address. Inactive addresses stay in the list but are skipped by the SES command.\n\n**Path parameters**\n\n| Param | Description |\n| --- | --- |\n| `id` | Recipient PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `is_active` | yes | `true` / `false` |\n| `email` | no | New address if changing |\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipient updated.\", data: { id, email, is_active, created_at, updated_at } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Updated |\n| 400 | Missing `is_active` or invalid email |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |\n| 404 | Unknown id |\n| 409 | Email already on the list |"
+      }
+    },
+    {
+      "name": "Delete report email recipient",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "description": "Admin JWT required"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/email-recipients/{{recipient_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "reports", "email-recipients", "{{recipient_id}}", ""]
+        },
+        "description": "### Delete report email recipient\n\n`DELETE /stock/reports/email-recipients/:id/`\n\nRemoves an address from the daily closing-stock distribution list permanently.\n\n**Path parameters**\n\n| Param | Description |\n| --- | --- |\n| `id` | Recipient PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipient removed.\", data: { ref: <id> } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Removed |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |\n| 404 | Unknown id |"
+      }
+    }
+  ]
+}

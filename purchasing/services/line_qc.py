@@ -27,6 +27,10 @@ from purchasing.services.qc_answers import (
     normalize_answer,
     parse_date,
 )
+from purchasing.services.qc_fail_details import (
+    build_line_qc_fail_details,
+    line_qc_blocked_message,
+)
 from purchasing.services.timeline import actor_json, record_history
 
 
@@ -143,8 +147,10 @@ def submit_line_qc(
     normalized = {}
     failed_codes = []
     warnings = []
+    items_by_code = {}
 
     for item in template.items.all():
+        items_by_code[item.code] = item
         if item.code not in raw_answers:
             if item.required:
                 raise LineQcError(f'Answer required for {item.code}.')
@@ -189,7 +195,8 @@ def submit_line_qc(
             delivery_date=delivery_date,
             min_days=min_days,
         ):
-            failed_codes.append('use_by')
+            if 'use_by' not in failed_codes:
+                failed_codes.append('use_by')
             normalized.setdefault('use_by', {})['shelf_life_fail'] = True
             normalized['use_by']['min_acceptable_shelf_life_days'] = min_days
 
@@ -245,6 +252,13 @@ def submit_line_qc(
     line.trace_number = trace_number
     line.save()
 
+    failed_details = build_line_qc_fail_details(
+        failed_codes=failed_codes,
+        items_by_code=items_by_code,
+        normalized=normalized,
+        delivery_date=delivery_date,
+    )
+
     event = (
         PurchaseOrderHistoryEvent.ACCEPT
         if line_ok
@@ -267,10 +281,19 @@ def submit_line_qc(
             'line_check_ok': line_ok,
             'failed_codes': failed_codes,
             'warnings': warnings,
+            'failed_details': failed_details,
             'answers': normalized,
             'trace_number': trace_number,
         },
         actor=actor or actor_json(user_id=body.get('checked_by_user_id')),
     )
 
-    return resolve_goods_in_form(po.id, delivery_id=delivery.id)
+    form = resolve_goods_in_form(po.id, delivery_id=delivery.id)
+    form['line_id'] = line.id
+    form['line_check_ok'] = line_ok
+    form['failed_codes'] = failed_codes
+    form['warnings'] = warnings
+    form['failed_details'] = failed_details
+    if not line_ok:
+        form['qc_blocked_message'] = line_qc_blocked_message()
+    return form

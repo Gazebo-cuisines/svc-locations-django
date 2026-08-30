@@ -24,7 +24,12 @@ def parse_gs1(text: str) -> dict[str, str]:
 def _product_by_id(product_id: int) -> Product | None:
     return (
         Product.objects
-        .select_related('unit', 'product_class', 'range')
+        .select_related(
+            'unit',
+            'product_class',
+            'range',
+            'destination_container',
+        )
         .filter(pk=product_id)
         .first()
     )
@@ -44,6 +49,7 @@ def _entry_by_id(entry_id: int) -> StockEntry | None:
             'lot__product__unit',
             'lot__product__product_class',
             'lot__product__range',
+            'lot__product__destination_container',
             'unit',
             'location',
             'label',

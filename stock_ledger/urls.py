@@ -24,6 +24,7 @@ urlpatterns = [
     path('issue/', views.issue_api, name='stock-issue'),
     path('production/', views.production_api, name='stock-production'),
     path('production/<int:entry_id>/', views.production_detail_api, name='stock-production-detail'),
+    
     # downtime
     path('downtime/', views.downtime_api, name='stock-downtime'),
     
@@ -60,6 +61,28 @@ urlpatterns = [
     path('stock-units/<str:unit_serial>/', views.stock_units_detail_api, name='stock-units-detail'),
     path('entries/<int:pk>/', views.entry_detail_api, name='stock-entry-detail'),
     path('audit/timeline/', views.audit_timeline_api, name='stock-audit-timeline'),
+    path('reports/goods-in/', views.goods_in_report_api, name='stock-report-goods-in'),
+    path('reports/goods-out/', views.goods_out_report_api, name='stock-report-goods-out'),
+    path(
+        'reports/closing-stock/',
+        views.closing_stock_report_api,
+        name='stock-report-closing-stock',
+    ),
+    path(
+        'reports/email-recipients/',
+        views.report_email_recipients_api,
+        name='stock-report-email-recipients',
+    ),
+    path(
+        'reports/email-recipients/<int:pk>/',
+        views.report_email_recipient_detail_api,
+        name='stock-report-email-recipient-detail',
+    ),
+    path(
+        'reports/email-unsubscribe/',
+        views.report_email_unsubscribe_api,
+        name='stock-report-email-unsubscribe',
+    ),
     path('balances/', views.balance_list_api, name='stock-balances'),
     path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),
     path('warehouse/remaining/', views.warehouse_remaining_api, name='stock-warehouse-remaining'),

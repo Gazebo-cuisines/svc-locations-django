@@ -561,3 +561,129 @@ class GoodsInCheckItem(models.Model):
 
     def __str__(self):
         return f'gin_item:{self.template_id}:{self.code}'
+
+
+class AdhocGoodsInStatus(models.TextChoices):
+    OPEN = 'open', 'Open'
+    REJECTED = 'rejected', 'Rejected'
+    QC_COMPLETE = 'qc_complete', 'QC complete'
+    RECEIVED = 'received', 'Received'
+
+
+class AdhocGoodsInSession(models.Model):
+    """Without-PO goods-in QC visit. Receive posts stock without a PurchaseOrder."""
+
+    status = models.CharField(
+        max_length=16,
+        choices=AdhocGoodsInStatus.choices,
+        default=AdhocGoodsInStatus.OPEN,
+    )
+    location = models.ForeignKey(
+        'locations.Location',
+        on_delete=models.PROTECT,
+        related_name='adhoc_goods_in_sessions',
+    )
+    product = models.ForeignKey(
+        'product.Product',
+        on_delete=models.PROTECT,
+        related_name='adhoc_goods_in_sessions',
+    )
+    delivery_at = models.DateField(null=True, blank=True)
+    delivery_trace_number = models.CharField(max_length=64, null=True, blank=True)
+    vehicle_temperature = models.DecimalField(
+        max_digits=5, decimal_places=1, null=True, blank=True,
+    )
+    reject_delivery = models.BooleanField(default=False)
+    header_checks = models.JSONField(default=dict, blank=True)
+    header_template_id = models.BigIntegerField(null=True, blank=True)
+    header_template_version = models.IntegerField(null=True, blank=True)
+    checked_by_user_id = models.IntegerField(null=True, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+    qc_tl_checked_by_user_id = models.IntegerField(null=True, blank=True)
+    qc_tl_checked_at = models.DateTimeField(null=True, blank=True)
+    qc_tl_comment = models.TextField(null=True, blank=True)
+    # Chunk 3 — receive (never linked to PurchaseOrder)
+    item_po_ref = models.CharField(max_length=64, null=True, blank=True)
+    label_format = models.CharField(max_length=16, null=True, blank=True)
+    label_count = models.PositiveIntegerField(null=True, blank=True)
+    receive_idempotency_key = models.CharField(max_length=128, null=True, blank=True)
+    created_by_user_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'po_adhoc_goods_in_session'
+        ordering = ['-id']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(
+                    status__in=[
+                        AdhocGoodsInStatus.OPEN,
+                        AdhocGoodsInStatus.REJECTED,
+                        AdhocGoodsInStatus.QC_COMPLETE,
+                        AdhocGoodsInStatus.RECEIVED,
+                    ],
+                ),
+                name='chk_adhoc_gin_status',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'created_at'],
+                name='idx_adhoc_gin_status_created',
+            ),
+            models.Index(
+                fields=['product', 'status'],
+                name='idx_adhoc_gin_product_status',
+            ),
+        ]
+
+    def __str__(self):
+        return f'adhoc_gin:{self.id}:{self.status}'
+
+
+class AdhocGoodsInLine(models.Model):
+    session = models.OneToOneField(
+        AdhocGoodsInSession,
+        on_delete=models.CASCADE,
+        related_name='line',
+    )
+    product = models.ForeignKey(
+        'product.Product',
+        on_delete=models.PROTECT,
+        related_name='adhoc_goods_in_lines',
+    )
+    production_date = models.DateField(null=True, blank=True)
+    use_by = models.DateField(null=True, blank=True)
+    trace_number = models.CharField(max_length=64, null=True, blank=True)
+    product_temperature = models.DecimalField(
+        max_digits=5, decimal_places=1, null=True, blank=True,
+    )
+    line_checks = models.JSONField(default=dict, blank=True)
+    line_template_id = models.BigIntegerField(null=True, blank=True)
+    line_template_version = models.IntegerField(null=True, blank=True)
+    line_check_ok = models.BooleanField(default=False)
+    product_supplier = models.ForeignKey(
+        'product.ProductSupplier',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='adhoc_goods_in_lines',
+    )
+    qty_entered = models.DecimalField(
+        max_digits=16, decimal_places=6, null=True, blank=True,
+    )
+    stock_qty = models.DecimalField(
+        max_digits=16, decimal_places=6, null=True, blank=True,
+    )
+    shape_format_label = models.CharField(max_length=128, null=True, blank=True)
+    shape_other = models.JSONField(null=True, blank=True)
+    last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'po_adhoc_goods_in_line'
+
+    def __str__(self):
+        return f'adhoc_gin_line:{self.session_id}:{self.product_id}'

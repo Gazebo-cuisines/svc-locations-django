@@ -81,7 +81,7 @@ def seed_goods_in_templates():
             'required': False,
             'is_critical': False,
             'fail_when': GoodsInFailWhen.FALSE,
-            'allows_comment': True,
+            'allows_comment': False,
             'sort_order': 40,
         },
         {

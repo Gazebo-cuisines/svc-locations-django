@@ -148,6 +148,13 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 AWS_PROFILE = os.getenv('AWS_PROFILE')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-2')
+SES_FROM_EMAIL = os.getenv('SES_FROM_EMAIL', '')
+SES_LOGO_PATH = os.getenv('SES_LOGO_PATH', '')
+# Public API origin for one-click email unsubscribe links
+PUBLIC_API_BASE_URL = os.getenv(
+    'PUBLIC_API_BASE_URL',
+    'http://127.0.0.1:8000',
+).rstrip('/')
 CORS_ALLOW_HEADERS = (
     'accept',
     'authorization',

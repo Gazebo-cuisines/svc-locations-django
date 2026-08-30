@@ -1,0 +1,87 @@
+{
+  "info": {
+    "name": "Gazebo - Stock Goods Out Without Plan",
+    "description": "Phase 2 Tab B — Goods Out without a planning requirement.\n\n**Flow:** warehouse product list → scan bag → FIFO/trace → dest auto from `product.destination_container` → `POST /stock/transfer/` queue (omit `requirement_ids` and optionally omit `to_location_id`) → print/verify/post.\n\n**Tables:** `stock_entry` transfer pair + `stock_entry_posting` / label (same as With plan).\n\n**Vars:** `{{base_url}}`, `{{location_id}}`, `{{code}}`, `{{lot_id}}`, `{{entry_id}}`, `{{quantity}}`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "location_id", "value": "8" },
+    { "key": "code", "value": "E725" },
+    { "key": "lot_id", "value": "1" },
+    { "key": "entry_id", "value": "725" },
+    { "key": "quantity", "value": "10" }
+  ],
+  "item": [
+    {
+      "name": "Warehouse remaining (product list)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/warehouse/remaining/?location_id={{location_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "warehouse", "remaining", ""],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "description": "App warehouse (Unit 2 / Unit 11)"
+            }
+          ]
+        },
+        "description": "### Warehouse remaining (product list)\n\n`GET /stock/warehouse/remaining/?location_id=`\n\nProduct list for Goods Out without plan browse. Same remaining API as the warehouse home screen.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | One warehouse; omit for all storage units |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: [ { location_id, location_name, products: [ { product_id, product_name, remaining_qty, … } ] } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+      }
+    },
+    {
+      "name": "Scan bag for Goods Out (FIFO + auto dest)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/scan/goods-out/?code={{code}}&location_id={{location_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "scan", "goods-out", ""],
+          "query": [
+            {
+              "key": "code",
+              "value": "{{code}}",
+              "description": "Bag sticker E{entry_id} (not P product-only)"
+            },
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "description": "From / source warehouse"
+            },
+            {
+              "key": "expected_product_id",
+              "value": "",
+              "disabled": true,
+              "description": "Optional — 409 wrong_product if mismatch"
+            }
+          ]
+        },
+        "description": "### Scan bag for Goods Out\n\n`GET /stock/scan/goods-out/`\n\nScan-first popup for Without plan. Returns bag qty, FIFO/trace check (`fifo_ok`, `recommended_trace`), and **auto destination** from `product.destination_container` (`to_location_id`, `dest_ok`).\n\nMain floor control = **trace / FIFO**. Dest is not picked by the user.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `code` | yes | `E{id}` bag / sticker code |\n| `location_id` | yes | Source warehouse |\n| `expected_product_id` | no | Lock product when browsing from list |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: { product: { product_id, name, destination_container_id, destination_container_name }, lot_id, trace_number, quantity, fifo_ok, recommended_trace?, to_location_id, to_location_name, dest_ok, dest_message? } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Scan ok (check `fifo_ok` / `dest_ok`) |\n| 400 | Bad/incomplete code |\n| 409 | No stock here / wrong product |"
+      }
+    },
+    {
+      "name": "Queue transfer without plan (auto dest)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"idempotency_key\": \"go-adhoc-{{$guid}}\",\n  \"lot_id\": {{lot_id}},\n  \"from_location_id\": {{location_id}},\n  \"quantity\": \"{{quantity}}\",\n  \"queue_stock\": true,\n  \"source_entry_id\": {{entry_id}}\n}\n"
+        },
+        "url": {
+          "raw": "{{base_url}}/stock/transfer/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "transfer", ""]
+        },
+        "description": "### Queue Goods Out without plan\n\n`POST /stock/transfer/`\n\nSame queue/print path as With plan, but **omit** `requirement_ids` and **omit** `to_location_id` so the server uses `product.destination_container`. Sets `source_document_type=goods_out_adhoc`.\n\nIf scanned lot is not FIFO oldest, send `fifo_override_reason` (same as classic Goods Out).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `idempotency_key` | yes | Unique key |\n| `lot_id` | yes | From scan |\n| `from_location_id` | yes | App warehouse |\n| `to_location_id` | no | Omit → product dest |\n| `quantity` | yes | Default full bag from scan |\n| `queue_stock` | yes | `true` for print→verify |\n| `source_entry_id` | no | Sticker draw-down |\n| `requirement_ids` | no | **Omit** for without plan |\n| `fifo_override_reason` | if not oldest | Audit reason |\n\n**Response body**\n\n`{ status, message, data: { out, in, posting, label, goods_out_label } }` — print from `goods_out_label`, then verify/post like Tab A.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Queued |\n| 400 | Missing dest on product, FIFO override required, qty too high |"
+      }
+    }
+  ]
+}

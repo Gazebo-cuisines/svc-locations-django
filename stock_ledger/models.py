@@ -1045,3 +1045,19 @@ class StockFifoOverride(models.Model):
 
     def __str__(self):
         return f'stock_fifo_override:{self.id}:product:{self.product_id}'
+
+
+class StockReportEmailRecipient(models.Model):
+    """Addresses that receive the daily closing-stock report email."""
+
+    email = models.EmailField(unique=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'stock_report_email_recipient'
+        ordering = ['email']
+
+    def __str__(self):
+        return f'stock_report_email_recipient:{self.email}'
