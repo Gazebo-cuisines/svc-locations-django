@@ -39,6 +39,12 @@ from purchasing.services.goods_in_form import (
     GoodsInFormError,
     resolve_goods_in_form,
 )
+from purchasing.services.draft_qc import (
+    draft_adhoc_header_qc,
+    draft_adhoc_line_qc,
+    draft_header_qc,
+    draft_line_qc,
+)
 from purchasing.services.header_qc import HeaderQcError, submit_header_qc
 from purchasing.services.legacy_csv import LegacyCsvError, import_legacy_csv
 from purchasing.services.line_qc import LineQcError, submit_line_qc
@@ -406,44 +412,62 @@ def po_delivery_detail_api(request, po_id: int, delivery_id: int):
 
 
 @csrf_exempt
-@require_http_methods(['POST'])
+@require_http_methods(['POST', 'PATCH'])
 def po_delivery_header_qc_api(request, po_id: int, delivery_id: int):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_header_qc(
-            po_id,
-            body=body,
-            delivery_id=delivery_id,
-            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
-        )
+        if request.method == 'PATCH':
+            data = draft_header_qc(po_id, body=body, delivery_id=delivery_id)
+        else:
+            data = submit_header_qc(
+                po_id,
+                body=body,
+                delivery_id=delivery_id,
+                actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+            )
     except HeaderQcError as exc:
         msg = str(exc)
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
-    return api_success('Header QC saved successfully.', data)
+    message = (
+        'Header QC draft saved successfully.'
+        if request.method == 'PATCH'
+        else 'Header QC saved successfully.'
+    )
+    return api_success(message, data)
 
 
 @csrf_exempt
-@require_http_methods(['POST'])
+@require_http_methods(['POST', 'PATCH'])
 def po_delivery_line_qc_api(request, po_id: int, delivery_id: int, line_id: int):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_line_qc(
-            po_id,
-            line_id,
-            body=body,
-            delivery_id=delivery_id,
-            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
-        )
+        if request.method == 'PATCH':
+            data = draft_line_qc(
+                po_id, line_id, body=body, delivery_id=delivery_id,
+            )
+        else:
+            data = submit_line_qc(
+                po_id,
+                line_id,
+                body=body,
+                delivery_id=delivery_id,
+                actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+            )
     except LineQcError as exc:
         msg = str(exc)
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
-    return api_success('Line QC saved successfully.', data)
+    message = (
+        'Line QC draft saved successfully.'
+        if request.method == 'PATCH'
+        else 'Line QC saved successfully.'
+    )
+    return api_success(message, data)
 
 
 @csrf_exempt
@@ -535,33 +559,49 @@ def adhoc_goods_in_detail_api(request, session_id: int):
 
 
 @csrf_exempt
-@require_http_methods(['POST'])
+@require_http_methods(['POST', 'PATCH'])
 def adhoc_goods_in_header_qc_api(request, session_id: int):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_adhoc_header_qc(session_id, body=body)
+        if request.method == 'PATCH':
+            data = draft_adhoc_header_qc(session_id, body=body)
+        else:
+            data = submit_adhoc_header_qc(session_id, body=body)
     except AdhocGoodsInError as exc:
         msg = str(exc)
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
-    return api_success('Header QC saved successfully.', data)
+    message = (
+        'Header QC draft saved successfully.'
+        if request.method == 'PATCH'
+        else 'Header QC saved successfully.'
+    )
+    return api_success(message, data)
 
 
 @csrf_exempt
-@require_http_methods(['POST'])
+@require_http_methods(['POST', 'PATCH'])
 def adhoc_goods_in_line_qc_api(request, session_id: int):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid JSON body.', status_code=400)
     try:
-        data = submit_adhoc_line_qc(session_id, body=body)
+        if request.method == 'PATCH':
+            data = draft_adhoc_line_qc(session_id, body=body)
+        else:
+            data = submit_adhoc_line_qc(session_id, body=body)
     except AdhocGoodsInError as exc:
         msg = str(exc)
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
-    return api_success('Line QC saved successfully.', data)
+    message = (
+        'Line QC draft saved successfully.'
+        if request.method == 'PATCH'
+        else 'Line QC saved successfully.'
+    )
+    return api_success(message, data)
 
 
 @csrf_exempt

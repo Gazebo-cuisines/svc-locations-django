@@ -563,6 +563,129 @@ class GoodsInCheckItem(models.Model):
         return f'gin_item:{self.template_id}:{self.code}'
 
 
+class GoodsInAnswer(models.Model):
+    """One answered goods-in question. Unanswered = no row."""
+
+    delivery = models.ForeignKey(
+        PurchaseOrderDelivery,
+        on_delete=models.CASCADE,
+        related_name='answers',
+        null=True,
+        blank=True,
+    )
+    delivery_line = models.ForeignKey(
+        PurchaseOrderDeliveryLine,
+        on_delete=models.CASCADE,
+        related_name='answers',
+        null=True,
+        blank=True,
+    )
+    adhoc_session = models.ForeignKey(
+        'AdhocGoodsInSession',
+        on_delete=models.CASCADE,
+        related_name='answers',
+        null=True,
+        blank=True,
+    )
+    adhoc_line = models.ForeignKey(
+        'AdhocGoodsInLine',
+        on_delete=models.CASCADE,
+        related_name='answers',
+        null=True,
+        blank=True,
+    )
+    scope = models.CharField(max_length=16, choices=GoodsInCheckScope.choices)
+    check_code = models.CharField(max_length=64)
+    input_type = models.CharField(max_length=16, choices=GoodsInInputType.choices)
+    value_bool = models.BooleanField(null=True, blank=True)
+    value_decimal = models.DecimalField(
+        max_digits=16, decimal_places=6, null=True, blank=True,
+    )
+    value_text = models.TextField(null=True, blank=True)
+    value_date = models.DateField(null=True, blank=True)
+    comment = models.TextField(null=True, blank=True)
+    answered_by_user_id = models.IntegerField(null=True, blank=True)
+    answered_at = models.DateTimeField()
+
+    class Meta:
+        db_table = 'po_goods_in_answer'
+        ordering = ['id']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(scope__in=['header', 'line']),
+                name='chk_gin_answer_scope',
+            ),
+            models.CheckConstraint(
+                check=models.Q(input_type__in=['bool', 'decimal', 'text', 'date']),
+                name='chk_gin_answer_input_type',
+            ),
+            models.CheckConstraint(
+                check=(
+                    models.Q(
+                        delivery_id__isnull=False,
+                        adhoc_session_id__isnull=True,
+                        adhoc_line_id__isnull=True,
+                    )
+                    & (
+                        models.Q(
+                            scope='header',
+                            delivery_line_id__isnull=True,
+                        )
+                        | models.Q(
+                            scope='line',
+                            delivery_line_id__isnull=False,
+                        )
+                    )
+                )
+                | (
+                    models.Q(
+                        adhoc_session_id__isnull=False,
+                        delivery_id__isnull=True,
+                        delivery_line_id__isnull=True,
+                    )
+                    & (
+                        models.Q(scope='header', adhoc_line_id__isnull=True)
+                        | models.Q(scope='line', adhoc_line_id__isnull=False)
+                    )
+                ),
+                name='chk_gin_answer_parent',
+            ),
+            models.UniqueConstraint(
+                fields=['delivery', 'check_code'],
+                condition=models.Q(scope='header', delivery_id__isnull=False),
+                name='uniq_gin_answer_po_header',
+            ),
+            models.UniqueConstraint(
+                fields=['delivery_line', 'check_code'],
+                condition=models.Q(delivery_line_id__isnull=False),
+                name='uniq_gin_answer_po_line',
+            ),
+            models.UniqueConstraint(
+                fields=['adhoc_session', 'check_code'],
+                condition=models.Q(scope='header', adhoc_session_id__isnull=False),
+                name='uniq_gin_answer_adhoc_header',
+            ),
+            models.UniqueConstraint(
+                fields=['adhoc_line', 'check_code'],
+                condition=models.Q(adhoc_line_id__isnull=False),
+                name='uniq_gin_answer_adhoc_line',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['delivery', 'scope'],
+                name='idx_gin_answer_delivery',
+            ),
+            models.Index(
+                fields=['adhoc_session', 'scope'],
+                name='idx_gin_answer_adhoc',
+            ),
+        ]
+
+    def __str__(self):
+        return f'gin_answer:{self.scope}:{self.check_code}:{self.id}'
+
+
 class AdhocGoodsInStatus(models.TextChoices):
     OPEN = 'open', 'Open'
     REJECTED = 'rejected', 'Rejected'

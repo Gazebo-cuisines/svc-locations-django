@@ -70,6 +70,23 @@
       }
     },
     {
+      "name": "Draft header QC",
+      "request": {
+        "method": "PATCH",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"checked_by_user_id\": 1,\n  \"answers\": {\n    \"damaged_product\": { \"value\": false }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/qc/header/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "qc", "header", ""]
+        },
+        "description": "### Draft header QC\n\n`PATCH /purchasing/pos/:po_id/deliveries/:delivery_id/qc/header/`\n\nSave one or more header answers without completing QC. The operator can leave and resume: GET form returns `saved_header_answers` and `qc_draft=true`. `checked_at` stays empty until POST submit with every required answer.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | yes | Warehouse user PK |\n| `answers` | yes | Partial object keyed by check code |\n| `delivery_date` | no | Stored on the delivery if sent |\n\n**Response body**\n\n`message`: `Header QC draft saved successfully.` Goods-in form. `qc_draft` true, `checked_at` null.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Draft saved |\n| 400 | Unknown code, header already submitted, delivery not open |\n| 404 | PO or delivery not found |"
+      }
+    },
+    {
       "name": "Line QC",
       "request": {
         "method": "POST",
@@ -84,6 +101,23 @@
           "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "lines", "{{line_id}}", "qc", ""]
         },
         "description": "### Line QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/lines/:line_id/qc/`\n\nProduct checks for this visit (use-by, temp, spec). Must follow passed header QC on the **same** open delivery. A previous visit’s line QC is not reused — truck 3 of a split drop needs its own lots / UBD.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n| `line_id` | yes | PO line PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | no | Actor for history |\n| `answers` | yes | Object keyed by line check code |\n| `trace_override` / `trace_number` | no | Lot trace; else delivery Julian |\n\n**Response body**\n\nGoods-in form. Line `line_check_ok` on this delivery line.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Saved |\n| 400 | Header not done, delivery rejected, missing answers |\n| 404 | PO, delivery, or line not found |"
+      }
+    },
+    {
+      "name": "Draft line QC",
+      "request": {
+        "method": "PATCH",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"checked_by_user_id\": 1,\n  \"answers\": {\n    \"spec_check\": { \"value\": true }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/lines/{{line_id}}/qc/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "lines", "{{line_id}}", "qc", ""]
+        },
+        "description": "### Draft line QC\n\n`PATCH /purchasing/pos/:po_id/deliveries/:delivery_id/lines/:line_id/qc/`\n\nSave one or more line answers without setting `line_check_ok`. Resume via GET form (`lines[].qc_draft`). POST submit still requires every shown required check.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n| `line_id` | yes | PO line PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | yes | Warehouse user PK |\n| `answers` | yes | Partial object keyed by line check code |\n\n**Response body**\n\n`message`: `Line QC draft saved successfully.` Goods-in form. Line `qc_draft` true, `line_check_ok` false.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Draft saved |\n| 400 | Unknown code, line already submitted, delivery rejected |\n| 404 | PO, delivery, or line not found |"
       }
     },
     {

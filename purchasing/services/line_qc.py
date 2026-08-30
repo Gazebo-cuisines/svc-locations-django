@@ -21,6 +21,7 @@ from purchasing.services.goods_in_form import (
     resolve_goods_in_form,
     resolve_template,
 )
+from purchasing.services.qc_answer_store import upsert_answers
 from purchasing.services.qc_answers import (
     QcAnswerError,
     answer_fails,
@@ -241,6 +242,14 @@ def submit_line_qc(
     dline.production_date = production_date
     dline.trace_number = trace_number
     dline.save()
+    upsert_answers(
+        answers=normalized,
+        items_by_code=items_by_code,
+        user_id=body.get('checked_by_user_id'),
+        scope='line',
+        delivery=delivery,
+        delivery_line=dline,
+    )
 
     line.line_checks = normalized
     line.line_template_id = template.id
