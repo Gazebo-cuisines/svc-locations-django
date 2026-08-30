@@ -1,0 +1,128 @@
+{
+  "info": {
+    "name": "Gazebo - Purchasing Check Templates",
+    "description": "Admin / QA master data for goods-in QC questions (GFF001F).\n\n**Tables:** `po_goods_in_check_template` + `po_goods_in_check_item`.\n\nEach template is `(goods_in_type, storage_regime, scope, version)`. Floor `GET /purchasing/pos/:id/goods-in-form/` picks the latest **active** version. Do not edit questions on a version that already has submitted QC (`in_use=true`) — clone a new version instead.\n\n**Auth:** Admin grant (`AdminAccess`). Warehouse floor users get 403.\n\n**Vars:** `{{base_url}}`, `{{template_id}}`, `{{item_id}}`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://127.0.0.1:8000"},
+    {"key": "template_id", "value": "10"},
+    {"key": "item_id", "value": "1"}
+  ],
+  "item": [
+    {
+      "name": "List check templates",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/?goods_in_type=raw_material&scope=header&latest=true",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", ""],
+          "query": [
+            {"key": "goods_in_type", "value": "raw_material", "description": "optional"},
+            {"key": "storage_regime", "value": "ambient", "disabled": true, "description": "optional; omit or * for fallback NULL"},
+            {"key": "scope", "value": "header", "description": "optional header|line"},
+            {"key": "is_active", "value": "true", "disabled": true, "description": "optional"},
+            {"key": "latest", "value": "true", "description": "optional; one row per type/regime/scope"}
+          ]
+        },
+        "description": "### List check templates\n\n`GET /purchasing/check-templates/`\n\nAdmin catalogue of QC checklists. Example: list the current food header per storage regime so QA can open ambient vs chilled.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `goods_in_type` | no | `raw_material` \\| `packaging` \\| `other` |\n| `storage_regime` | no | `ambient` \\| `chilled` \\| `frozen` \\| `non_food`. Empty or `*` = fallback (regime NULL) |\n| `scope` | no | `header` or `line` |\n| `is_active` | no | `true` / `false` |\n| `latest` | no | `true` = newest version only per key |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Check templates fetched successfully.` `data.count` plus `data.results[]` with `id`, `name`, `goods_in_type`, `storage_regime`, `scope`, `version`, `is_active`, `in_use`, `item_count`, `document`, `items[]` (`id`, `code`, `label`, `input_type`, `required`, `is_critical`, `fail_when`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Invalid filter |\n| 403 | Not an admin user |"
+      }
+    },
+    {
+      "name": "Get check template",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/{{template_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", "{{template_id}}", ""]
+        },
+        "description": "### Get check template\n\n`GET /purchasing/check-templates/:template_id/`\n\nOne checklist plus its questions. `in_use` is true when a delivery or adhoc session has already submitted QC against this version — then item writes return 409.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `template_id` | yes | Template PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Check template fetched successfully.` Same object as a list row.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 403 | Not an admin user |\n| 404 | Template not found |"
+      }
+    },
+    {
+      "name": "Create check template version",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"clone_from_id\": 10,\n  \"reason_for_change\": \"Added seal check\",\n  \"deactivate_previous\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", ""]
+        },
+        "description": "### Create check template version\n\n`POST /purchasing/check-templates/`\n\nPublish a new version. Prefer `clone_from_id` so questions copy, then add/edit items on the new id. Creating from scratch requires `items`. Floor goods-in immediately uses the new active version.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `clone_from_id` | no | Copy items and document block from this PK |\n| `name` | if no clone | Display name |\n| `goods_in_type` | if no clone | `raw_material` \\| `packaging` \\| `other` |\n| `storage_regime` | no | `ambient` / `chilled` / `frozen` / `non_food` / null fallback |\n| `scope` | if no clone | `header` or `line` |\n| `items` | if no clone | Full question list |\n| `deactivate_previous` | no | Default true — turns off other versions of the same key |\n| `document_no` / `issue_no` / dates / `reason_for_change` | no | QMS document control |\n\n**Response body**\n\n`201` `Check template created successfully.` New template object (`version` incremented).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Created |\n| 400 | Missing name/items or invalid field |\n| 403 | Not an admin user |\n| 404 | `clone_from_id` not found |\n| 409 | Type/regime/scope/version already exists |"
+      }
+    },
+    {
+      "name": "Update check template",
+      "request": {
+        "method": "PATCH",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Food goods inward — header (ambient)\",\n  \"is_active\": true,\n  \"reason_for_change\": \"Label tweak\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/{{template_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", "{{template_id}}", ""]
+        },
+        "description": "### Update check template\n\n`PATCH /purchasing/check-templates/:template_id/`\n\nChange name, `is_active`, or document-control fields. Allowed even when `in_use` is true (old QC stays stamped). `goods_in_type`, `storage_regime`, `scope`, and `version` are immutable — clone instead.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `template_id` | yes | Template PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `name` | no | Display name |\n| `is_active` | no | Floor resolve ignores inactive |\n| `document_no` / `issue_no` / dates / `reason_for_change` | no | QMS block |\n\n**Response body**\n\n`message`: `Check template updated successfully.` Updated template.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Saved |\n| 400 | Tried to change type/regime/scope/version, or invalid field |\n| 403 | Not an admin user |\n| 404 | Template not found |"
+      }
+    },
+    {
+      "name": "Add check item",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"code\": \"seal_ok\",\n  \"label\": \"Seal intact\",\n  \"input_type\": \"bool\",\n  \"required\": true,\n  \"is_critical\": true,\n  \"fail_when\": \"false\",\n  \"allows_comment\": true,\n  \"sort_order\": 80\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/{{template_id}}/items/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", "{{template_id}}", "items", ""]
+        },
+        "description": "### Add check item\n\n`POST /purchasing/check-templates/:template_id/items/`\n\nAdd one question to a version that has **no** submitted QC. If `in_use` is true, clone a new version first.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `template_id` | yes | Template PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `code` | yes | Stable slug, e.g. `seal_ok` |\n| `label` | yes | Question text shown on floor |\n| `input_type` | yes | `bool` \\| `decimal` \\| `text` \\| `date` |\n| `required` | no | Default true |\n| `is_critical` | no | Default false |\n| `fail_when` | no | `false` \\| `true` \\| `out_of_range` |\n| `min_value` / `max_value` | no | Decimal bounds |\n| `source` | no | e.g. `product.temp_bounds` |\n| `allows_comment` | no | Default true |\n| `sort_order` | no | Display order |\n\n**Response body**\n\n`201` `Check item added successfully.` Item object including `id`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Created |\n| 400 | Invalid field |\n| 403 | Not an admin user |\n| 404 | Template not found |\n| 409 | Template in use, or code already exists |"
+      }
+    },
+    {
+      "name": "Update check item",
+      "request": {
+        "method": "PATCH",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"Vehicle clean, free from FB, pest and odour?\",\n  \"required\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/{{template_id}}/items/{{item_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", "{{template_id}}", "items", "{{item_id}}", ""]
+        },
+        "description": "### Update check item\n\n`PATCH /purchasing/check-templates/:template_id/items/:item_id/`\n\nChange label, required, fail rule, etc. on a version with no submitted QC.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `template_id` | yes | Template PK |\n| `item_id` | yes | Item PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `code` / `label` / `input_type` / `required` / `is_critical` / `fail_when` / `min_value` / `max_value` / `source` / `allows_comment` / `sort_order` | no | Same meaning as add item |\n\n**Response body**\n\n`message`: `Check item updated successfully.` Updated item.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Saved |\n| 400 | Invalid field |\n| 403 | Not an admin user |\n| 404 | Template or item not found |\n| 409 | Template in use, or code clash |"
+      }
+    },
+    {
+      "name": "Delete check item",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/purchasing/check-templates/{{template_id}}/items/{{item_id}}/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "check-templates", "{{template_id}}", "items", "{{item_id}}", ""]
+        },
+        "description": "### Delete check item\n\n`DELETE /purchasing/check-templates/:template_id/items/:item_id/`\n\nRemove a question from a version that has no submitted QC. Floor forms hide it on the next GET.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `template_id` | yes | Template PK |\n| `item_id` | yes | Item PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Check item deleted successfully.` `data.ref` = item id.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Deleted |\n| 403 | Not an admin user |\n| 404 | Template or item not found |\n| 409 | Template in use |"
+      }
+    }
+  ]
+}

@@ -271,6 +271,7 @@ class AdhocGoodsInQcTests(TestCase):
                 'answers': {
                     'vehicle_clean_fb_pest_odour': {'value': True},
                     'primary_outer_packaging_damaged': {'value': False},
+                    'vehicle_temperature': {'value': '-18'},
                     'reject_delivery': {'value': False},
                 },
             },

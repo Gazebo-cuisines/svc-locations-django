@@ -1,7 +1,7 @@
 from datetime import date
 
 from product.goods_in import effective_goods_in_type
-from product.models import ProductGoodsInType, ProductTechnical
+from product.models import ProductGoodsInType, ProductStorageRegime, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
     GoodsInCheckTemplate,
@@ -107,6 +107,24 @@ def resolve_template(
     )
 
 
+_REGIME_RANK = {
+    ProductStorageRegime.FROZEN: 3,
+    ProductStorageRegime.CHILLED: 2,
+    ProductStorageRegime.AMBIENT: 1,
+}
+
+
+def _strictest_regime(regimes: list[str | None]) -> str | None:
+    best = None
+    best_rank = -1
+    for regime in regimes:
+        rank = _REGIME_RANK.get(regime, 0)
+        if rank > best_rank:
+            best_rank = rank
+            best = regime
+    return best
+
+
 def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
     if not lines:
         return ProductGoodsInType.OTHER, None
@@ -116,6 +134,15 @@ def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
         if gin_type == ProductGoodsInType.PACKAGING:
             tech = tech_by_product.get(line.product_id)
             return gin_type, tech.storage_regime if tech else None
+
+    rm_regimes = []
+    for line in lines:
+        if effective_goods_in_type(line.product) != ProductGoodsInType.RAW_MATERIAL:
+            continue
+        tech = tech_by_product.get(line.product_id)
+        rm_regimes.append(tech.storage_regime if tech else None)
+    if rm_regimes:
+        return ProductGoodsInType.RAW_MATERIAL, _strictest_regime(rm_regimes)
 
     first = lines[0]
     gin_type = effective_goods_in_type(first.product)
