@@ -130,3 +130,20 @@ class ErrorTicketTests(TestCase):
         with self._attach(self.admin):
             self.client.get('/ops/errors/')
         self.mock_audit.assert_not_called()
+
+    def test_client_error_logged_to_journal(self):
+        from unittest.mock import patch
+
+        from core.http_audit import _log_client_error
+        from django.http import JsonResponse
+        from django.test import RequestFactory
+
+        req = RequestFactory().post('/purchasing/stock-adjustment/')
+        resp = JsonResponse(
+            {'status': 'error', 'message': 'No stock_unit_conversion', 'data': None},
+            status=400,
+        )
+        with patch('core.http_audit.logger') as log:
+            _log_client_error(req, resp)
+            log.warning.assert_called_once()
+            self.assertIn('No stock_unit_conversion', log.warning.call_args.args[-1])
