@@ -27,8 +27,23 @@ from purchasing.views import (
     po_timeline_api,
     stock_adjustment_api,
 )
+from purchasing.views_check_templates import (
+    check_template_collection_api,
+    check_template_detail_api,
+    check_template_item_detail_api,
+    check_template_items_api,
+)
 
 urlpatterns = [
+    path('check-templates/', check_template_collection_api, name='purchasing-check-template-list'),
+    path('check-templates/<int:template_id>/', check_template_detail_api, name='purchasing-check-template-detail'),
+    path('check-templates/<int:template_id>/items/', check_template_items_api, name='purchasing-check-template-items'),
+    path(
+        'check-templates/<int:template_id>/items/<int:item_id>/',
+        check_template_item_detail_api,
+        name='purchasing-check-template-item-detail',
+    ),
+
     # PO API
     path('pos/', po_collection_api, name='purchasing-po-list'),
     path('pos/<int:po_id>/', po_detail_api, name='purchasing-po-detail'),

@@ -3,6 +3,7 @@ from datetime import date
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from product.models import ProductStorageRegime
 from purchasing.models import (
     GoodsInCheckItem,
     GoodsInCheckScope,
@@ -39,6 +40,18 @@ def _upsert_template(*, name, goods_in_type, storage_regime, scope, items):
         GoodsInCheckItem(template=template, **item) for item in items
     ])
     return template, created
+
+
+def _without_codes(items, *codes):
+    skip = set(codes)
+    return [item for item in items if item['code'] not in skip]
+
+
+def _require(items, code, required):
+    return [
+        {**item, 'required': required} if item['code'] == code else item
+        for item in items
+    ]
 
 
 def seed_goods_in_templates():
@@ -273,9 +286,55 @@ def seed_goods_in_templates():
         },
     ]
 
+    food_header_temp_required = _require(food_header, 'vehicle_temperature', True)
+    food_header_ambient = _without_codes(food_header, 'vehicle_temperature')
+    food_line_ambient = _without_codes(food_line, 'product_temperature')
+
     specs = [
         ('Food goods inward — header', 'raw_material', None, GoodsInCheckScope.HEADER, food_header),
         ('Food goods inward — line', 'raw_material', None, GoodsInCheckScope.LINE, food_line),
+        (
+            'Food goods inward — header (chilled)',
+            'raw_material',
+            ProductStorageRegime.CHILLED,
+            GoodsInCheckScope.HEADER,
+            food_header_temp_required,
+        ),
+        (
+            'Food goods inward — header (frozen)',
+            'raw_material',
+            ProductStorageRegime.FROZEN,
+            GoodsInCheckScope.HEADER,
+            food_header_temp_required,
+        ),
+        (
+            'Food goods inward — header (ambient)',
+            'raw_material',
+            ProductStorageRegime.AMBIENT,
+            GoodsInCheckScope.HEADER,
+            food_header_ambient,
+        ),
+        (
+            'Food goods inward — line (chilled)',
+            'raw_material',
+            ProductStorageRegime.CHILLED,
+            GoodsInCheckScope.LINE,
+            food_line,
+        ),
+        (
+            'Food goods inward — line (frozen)',
+            'raw_material',
+            ProductStorageRegime.FROZEN,
+            GoodsInCheckScope.LINE,
+            food_line,
+        ),
+        (
+            'Food goods inward — line (ambient)',
+            'raw_material',
+            ProductStorageRegime.AMBIENT,
+            GoodsInCheckScope.LINE,
+            food_line_ambient,
+        ),
         ('Packaging goods inward — header', 'packaging', None, GoodsInCheckScope.HEADER, packaging_header),
         ('Packaging goods inward — line', 'packaging', None, GoodsInCheckScope.LINE, packaging_line),
         ('Other goods inward — header', 'other', None, GoodsInCheckScope.HEADER, other_header),
