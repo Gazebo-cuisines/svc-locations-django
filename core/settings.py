@@ -136,6 +136,38 @@ CSRF_TRUSTED_ORIGINS = [
 
 AUDIT_S3_BUCKET = os.getenv('AUDIT_S3_BUCKET', 'gazebo-audit-logging')
 MEDIA_S3_BUCKET = os.getenv('MEDIA_S3_BUCKET', 'gazebo-media-files')
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'console': {
+            'format': '%(asctime)s %(levelname)s [%(name)s] %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'console',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'core.http_audit': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
+}
 APP_MIN_VERSION_ANDROID = os.getenv('APP_MIN_VERSION_ANDROID', '1.0.1')
 APP_LATEST_VERSION_ANDROID = os.getenv('APP_LATEST_VERSION_ANDROID', '') or APP_MIN_VERSION_ANDROID
 APP_UPDATE_MESSAGE = os.getenv(

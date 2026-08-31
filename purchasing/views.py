@@ -638,6 +638,15 @@ def adhoc_goods_in_receive_api(request, session_id: int):
     return api_success('Goods received successfully.', data, status_code=201)
 
 
+def _stock_adjustment_error_message(msg: str) -> str:
+    if 'No stock_unit_conversion' in msg:
+        return (
+            'This product is missing a Liter-to-kg conversion. '
+            'Set packaging unitary weight (kg per litre), then retry.'
+        )
+    return msg
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 @gate_warehouse_write(action='goods_in')
@@ -650,7 +659,7 @@ def stock_adjustment_api(request):
         audit = _common_write_kwargs(request, body)
         data = receive_stock_adjustment(body=body, audit=audit)
     except StockAdjustmentError as exc:
-        msg = str(exc)
+        msg = _stock_adjustment_error_message(str(exc))
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
     return api_success('Stock adjustment posted.', data, status_code=201)

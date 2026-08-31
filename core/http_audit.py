@@ -1,6 +1,7 @@
 """Best-effort S3 log of mutating API request/response JSON. Never raises."""
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone as dt_timezone
@@ -10,6 +11,8 @@ import boto3
 from django.conf import settings
 
 from users_rbac.auth import client_ip
+
+logger = logging.getLogger('core.http_audit')
 
 REDACT_KEYS = {
     'password',
@@ -138,7 +141,12 @@ def _put(payload: dict):
             ServerSideEncryption='AES256',
         )
     except Exception:
-        return
+        logger.exception(
+            'audit S3 put failed method=%s path=%s status=%s',
+            payload.get('method'),
+            payload.get('path'),
+            payload.get('status'),
+        )
 
 
 def _start_audit(payload: dict):
@@ -146,10 +154,31 @@ def _start_audit(payload: dict):
     Thread(target=_put, args=(payload,), daemon=True).start()
 
 
+def _log_client_error(request, response) -> None:
+    """Mirror 4xx/5xx API messages into journalctl (S3 already has full bodies)."""
+    if response is None or response.status_code < 400:
+        return
+    msg = ''
+    try:
+        out = response_json(response)
+        if isinstance(out, dict):
+            msg = str(out.get('message') or '')
+    except Exception:
+        msg = ''
+    logger.warning(
+        '%s %s -> %s %s',
+        request.method,
+        request.path,
+        response.status_code,
+        msg,
+    )
+
+
 def audit_request(request, response):
     try:
         if (request.path or '').startswith(SKIP_PREFIXES):
             return
+        _log_client_error(request, response)
         if request.method in ('GET', 'HEAD', 'OPTIONS'):
             return
         _start_audit(build_payload(request, response))
