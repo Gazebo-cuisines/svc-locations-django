@@ -1,6 +1,6 @@
 from django.urls import path
 
-from users_rbac.audit import audit_list, user_activity, user_audit
+from users_rbac.audit import audit_list, me_activity, user_activity, user_audit
 from users_rbac.views import login_view, refresh_view
 from users_rbac.views_users import (
     me_photo,
@@ -25,6 +25,9 @@ urlpatterns = [
 
     # Caller uploads own profile photo (private S3; returns short-lived photo_url).
     path('me/photo/', me_photo, name='users_rbac_me_photo'),
+
+    # Caller's own stock activity today (or from/to). Never other users.
+    path('me/activity/', me_activity, name='users_rbac_me_activity'),
 
     # Admin: people actively using the app (last_seen + IP).
     path('presence/', presence_list, name='users_rbac_presence'),

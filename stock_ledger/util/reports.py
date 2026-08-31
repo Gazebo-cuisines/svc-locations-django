@@ -8,11 +8,13 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
+from product.models import Product
 from stock_ledger.models import (
     StockEntry,
     StockEntryPostingStatus,
     StockEntryType,
 )
+from stock_ledger.util.conversions import stock_to_kg
 
 _POSTED_EXCLUDE = [
     StockEntryPostingStatus.QUEUED,
@@ -24,10 +26,17 @@ _MOVEMENT_SELECT = (
     'location',
     'counterparty_location',
     'lot__product',
+    'lot__product__unit',
 )
 
 _DEFAULT_LIMIT = 200
 _MAX_LIMIT = 1000
+
+# Warehouse goods-out posts transfer_out; plain issue stays for legacy/write-offs.
+_GOODS_OUT_TYPES = (
+    StockEntryType.ISSUE,
+    StockEntryType.TRANSFER_OUT,
+)
 
 
 def _dec(value) -> str | None:
@@ -59,11 +68,20 @@ def _apply_product_filters(qs, *, product_id=None, goods_in_type=None, location_
     return qs
 
 
+def _display_kg(qty: Decimal, product: Product | None) -> str | None:
+    """Kg mass for UI — FE should not convert packs/boxes."""
+    if product is None:
+        return None
+    return _dec(stock_to_kg(qty, product))
+
+
 def movement_row(entry: StockEntry) -> dict:
     lot = entry.lot
     product = lot.product if lot is not None else None
     location = entry.location
-    unit = entry.unit
+    # quantity is always product.unit (Kg / Litre / …) after ledger write.
+    unit = product.unit if product is not None and product.unit_id else entry.unit
+    counterparty = entry.counterparty_location
     return {
         'entry_id': entry.id,
         'entry_type': entry.entry_type,
@@ -79,9 +97,14 @@ def movement_row(entry: StockEntry) -> dict:
         'use_by': lot.use_by.isoformat() if lot is not None and lot.use_by else None,
         'location_id': entry.location_id,
         'location_name': location.name if location is not None else None,
+        'counterparty_location_id': entry.counterparty_location_id,
+        'counterparty_location_name': (
+            counterparty.name if counterparty is not None else None
+        ),
         'quantity': _dec(entry.quantity),
         'quantity_base': _dec(entry.quantity_base),
-        'unit_id': entry.unit_id,
+        'display_kg': _display_kg(entry.quantity, product),
+        'unit_id': unit.id if unit is not None else entry.unit_id,
         'unit_name': unit.name if unit is not None else None,
         'source_document_type': entry.source_document_type,
         'source_document_id': entry.source_document_id,
@@ -92,20 +115,26 @@ def movement_row(entry: StockEntry) -> dict:
 
 def movements_report(
     *,
-    entry_type: str,
     date_from: date,
     date_to: date,
+    entry_type: str | None = None,
+    entry_types: list[str] | tuple[str, ...] | None = None,
     product_id: int | None = None,
     goods_in_type: str | None = None,
     location_id: int | None = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> list[dict]:
-    """Posted receipt/issue rows by effective_at date range (inclusive)."""
+    """Posted movement rows by effective_at date range (inclusive)."""
+    types = list(entry_types) if entry_types else (
+        [entry_type] if entry_type else []
+    )
+    if not types:
+        raise ValueError('entry_type or entry_types is required')
     row_limit = max(1, min(int(limit), _MAX_LIMIT))
     qs = (
         _posted_entries()
         .filter(
-            entry_type=entry_type,
+            entry_type__in=types,
             effective_at__date__gte=date_from,
             effective_at__date__lte=date_to,
         )
@@ -121,6 +150,11 @@ def movements_report(
     return [movement_row(entry) for entry in qs[:row_limit]]
 
 
+def goods_out_movements_report(**kwargs) -> list[dict]:
+    """Issues + warehouse transfer_out (actual goods-out path)."""
+    return movements_report(entry_types=_GOODS_OUT_TYPES, **kwargs)
+
+
 def closing_balances_as_of(
     *,
     as_of: date,
@@ -132,6 +166,7 @@ def closing_balances_as_of(
     """
     Lot×location closing qty: SUM(quantity) where effective_at <= end of as_of day.
     Excludes queued/cancelled postings and downtime (qty 0, non-stock).
+    quantity / unit_name = product stock unit (Kg or Litre). display_kg = kg mass.
     """
     cutoff = _as_of_end(as_of)
     qs = (
@@ -175,6 +210,11 @@ def closing_balances_as_of(
         if not include_zero and qty == 0:
             continue
         use_by = row['lot__use_by']
+        # Minimal product stub — stock_to_kg only needs id + unit_id.
+        product = Product(
+            id=row['lot__product_id'],
+            unit_id=row['lot__product__unit_id'],
+        )
         rows.append({
             'as_of': as_of.isoformat(),
             'product_id': row['lot__product_id'],
@@ -191,5 +231,6 @@ def closing_balances_as_of(
             'unit_name': row['lot__product__unit__name'],
             'quantity': _dec(qty),
             'quantity_base': _dec(row['quantity_base']),
+            'display_kg': _display_kg(qty, product),
         })
     return rows

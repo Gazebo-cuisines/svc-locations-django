@@ -1,16 +1,17 @@
 """Append-only RBAC audit writes and list APIs."""
 
-from datetime import datetime
+from datetime import datetime, time
 
 from django.db.models import Q, TextField
 from django.db.models.functions import Cast
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from core.api_response import error_response, success_response
 from product.models import ProductAudit
 from stock_ledger.models import StockEntry
-from users_rbac.auth import client_ip, require_admin
+from users_rbac.auth import client_ip, require_admin, require_auth
 from users_rbac.models import RbacAuditEvent, RbacUser
 
 MAX_LIMIT = 200
@@ -190,20 +191,8 @@ def _in_range(at_iso, dt_from, dt_to) -> bool:
     return True
 
 
-def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
-    items = []
-    rbac_qs = RbacAuditEvent.objects.filter(
-        Q(actor_sub=user.cognito_sub) | Q(actor_username=user.username)
-    )
-    if dt_from:
-        rbac_qs = rbac_qs.filter(at__gte=dt_from)
-    if dt_to:
-        rbac_qs = rbac_qs.filter(at__lte=dt_to)
-    for row in rbac_qs:
-        item = event_dict(row)
-        item['source'] = 'rbac'
-        items.append(item)
-
+def _stock_activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
+    """Stock ledger rows stamped as this user (read-only)."""
     stock_qs = StockEntry.objects.filter(
         Q(actor_user_id=user.id) | Q(lan_username__iexact=user.username)
     ).select_related('unit', 'location', 'lot__product')
@@ -211,6 +200,7 @@ def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
         stock_qs = stock_qs.filter(recorded_at__gte=dt_from)
     if dt_to:
         stock_qs = stock_qs.filter(recorded_at__lte=dt_to)
+    items = []
     for entry in stock_qs:
         at = entry.recorded_at.isoformat() if entry.recorded_at else None
         items.append(
@@ -229,6 +219,24 @@ def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
                 'request_path': None,
             }
         )
+    return items
+
+
+def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
+    items = []
+    rbac_qs = RbacAuditEvent.objects.filter(
+        Q(actor_sub=user.cognito_sub) | Q(actor_username=user.username)
+    )
+    if dt_from:
+        rbac_qs = rbac_qs.filter(at__gte=dt_from)
+    if dt_to:
+        rbac_qs = rbac_qs.filter(at__lte=dt_to)
+    for row in rbac_qs:
+        item = event_dict(row)
+        item['source'] = 'rbac'
+        items.append(item)
+
+    items.extend(_stock_activity_items(user, dt_from, dt_to))
 
     product_rows = ProductAudit.objects.annotate(
         events_text=Cast('timeline_events', TextField()),
@@ -255,6 +263,45 @@ def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
 
     items.sort(key=lambda row: row.get('at') or '', reverse=True)
     return items
+
+
+def _today_range():
+    day = timezone.localdate()
+    tz = timezone.get_current_timezone()
+    start = timezone.make_aware(datetime.combine(day, time.min), tz)
+    end = timezone.make_aware(datetime.combine(day, time.max), tz)
+    return start, end
+
+
+@csrf_exempt
+@require_GET
+@require_auth
+def me_activity(request):
+    """Logged-in user's stock actions only (mobile \"my day\")."""
+    user = request.rbac_user
+    try:
+        raw_from = (request.GET.get('from') or '').strip()
+        raw_to = (request.GET.get('to') or '').strip()
+        if not raw_from and not raw_to:
+            dt_from, dt_to = _today_range()
+        else:
+            dt_from = _parse_dt(raw_from, 'from')
+            dt_to = _parse_dt(raw_to, 'to')
+        limit, offset = _page_params(request)
+    except ValueError as exc:
+        return error_response(str(exc), status_code=400)
+    items = _stock_activity_items(user, dt_from, dt_to)
+    items.sort(key=lambda row: row.get('at') or '', reverse=True)
+    count = len(items)
+    return success_response(
+        'My activity fetched.',
+        data={
+            'items': items[offset : offset + limit],
+            'count': count,
+            'limit': limit,
+            'offset': offset,
+        },
+    )
 
 
 @csrf_exempt
