@@ -151,6 +151,38 @@ class StockReportApiTests(TestCase):
         self.assertEqual(row['entry_id'], self.issue.id)
         self.assertEqual(row['entry_type'], 'issue')
         self.assertEqual(row['quantity'], '-30')
+        self.assertEqual(row['unit_name'], 'Kg')
+        self.assertIn('display_kg', row)
+
+    def test_goods_out_includes_transfer_out(self):
+        dest = Location.objects.create(id=82, name='Rpt Dest', visible=True)
+        out_entry, _in_entry = services.transfer(
+            idempotency_key=f'rpt-xfer-{uuid4()}',
+            lot=self.lot,
+            from_location_id=self.wh.id,
+            to_location_id=dest.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=self.d15,
+        )
+        resp = self.client.get(
+            '/stock/reports/goods-out/',
+            {
+                'date_from': '2026-08-01',
+                'date_to': '2026-08-20',
+                'product_id': self.product.id,
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        ids = {r['entry_id'] for r in resp.json()['data']['results']}
+        self.assertIn(self.issue.id, ids)
+        self.assertIn(out_entry.id, ids)
+        xfer = next(
+            r for r in resp.json()['data']['results']
+            if r['entry_id'] == out_entry.id
+        )
+        self.assertEqual(xfer['entry_type'], 'transfer_out')
+        self.assertEqual(xfer['quantity'], '-5')
 
     def test_closing_stock_as_of(self):
         # As of 20 Aug: 100 - 30 = 70 (late +10 not yet)
@@ -190,6 +222,7 @@ class StockReportApiTests(TestCase):
         StockEntryPosting.objects.create(
             stock_entry=queued,
             status=StockEntryPostingStatus.QUEUED,
+            queued_at=timezone.now(),
         )
         resp = self.client.get(
             '/stock/reports/goods-in/',

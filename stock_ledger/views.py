@@ -73,7 +73,11 @@ from stock_ledger.util.recall import (
     build_product_genealogy_index,
     build_recall_report,
 )
-from stock_ledger.util.reports import closing_balances_as_of, movements_report
+from stock_ledger.util.reports import (
+    closing_balances_as_of,
+    goods_out_movements_report,
+    movements_report,
+)
 from stock_ledger.util.closing_stock_email import (
     recipient_id_from_unsubscribe_token,
 )
@@ -2079,8 +2083,7 @@ def goods_out_report_api(request):
     except (TypeError, ValueError) as exc:
         return api_error(str(exc), status_code=400)
 
-    rows = movements_report(
-        entry_type=StockEntryType.ISSUE,
+    rows = goods_out_movements_report(
         date_from=date_from,
         date_to=date_to,
         product_id=product_id,
