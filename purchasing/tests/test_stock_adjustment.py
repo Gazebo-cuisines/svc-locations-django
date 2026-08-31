@@ -124,4 +124,3 @@ class StockAdjustmentTests(TestCase):
         entry = StockEntry.objects.get(pk=result['stock_entry_id'])
         self.assertEqual(entry.quantity, Decimal('3'))
         self.assertEqual(entry.source_document_type, 'stock_adjustment')
-
