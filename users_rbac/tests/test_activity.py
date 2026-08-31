@@ -1,14 +1,20 @@
 import json
 import time
+from datetime import date
+from decimal import Decimal
 from unittest.mock import patch
+from uuid import uuid4
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.test import Client, RequestFactory, TestCase
+from django.utils import timezone
 
 from locations.models import Location
 from product.audit_log import capture_product_audit
 from product.models import Category, Product, ProductAudit, ProductClass, Range, Unit
+from stock_ledger.models import StockLot, StockLotOrigin
+from stock_ledger.util import services
 from users_rbac.models import (
     AdminAccess,
     AdminArea,
@@ -212,3 +218,69 @@ class ActivityAndGateTests(TestCase):
             HTTP_AUTHORIZATION=self.floor_auth,
         )
         self.assertEqual(forbidden.status_code, 403)
+
+    def test_me_activity_stock_only_own_rows(self):
+        Location.objects.create(id=1, name='Src', visible=True)
+        Location.objects.create(id=2, name='Dst', visible=True)
+        ProductClass.objects.create(id=1, name='Finished')
+        Category.objects.create(id=1, name='Meals')
+        Range.objects.create(id=1, name='Main')
+        Unit.objects.create(id=1, name='Kg')
+        product = Product.objects.create(
+            name='Flour',
+            product_class_id=1,
+            category_id=1,
+            range_id=1,
+            unit_id=1,
+            source_container_id=1,
+            destination_container_id=2,
+        )
+        lot = StockLot.objects.create(
+            product=product,
+            trace_number=f'T{uuid4().hex[:8]}',
+            origin=StockLotOrigin.PURCHASE,
+            production_date=date(2026, 8, 1),
+            use_by=date(2026, 9, 1),
+        )
+        mine = services.receipt(
+            idempotency_key=f'me-act-{uuid4()}',
+            lot=lot,
+            location_id=1,
+            quantity=Decimal('10'),
+            unit_id=1,
+            effective_at=timezone.now(),
+            actor_user_id=self.floor.id,
+            lan_username='amit01',
+        )
+        other = RbacUser.objects.create(
+            cognito_sub='sub-other',
+            username='other01',
+            display_name='Other',
+        )
+        services.receipt(
+            idempotency_key=f'other-act-{uuid4()}',
+            lot=lot,
+            location_id=1,
+            quantity=Decimal('5'),
+            unit_id=1,
+            effective_at=timezone.now(),
+            actor_user_id=other.id,
+            lan_username='other01',
+        )
+
+        unauth = self.client.get('/auth/me/activity/')
+        self.assertEqual(unauth.status_code, 401)
+
+        response = self.client.get(
+            '/auth/me/activity/',
+            HTTP_AUTHORIZATION=self.floor_auth,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()['data']
+        ids = {item['entry_id'] for item in data['items']}
+        self.assertIn(mine.id, ids)
+        self.assertEqual(len(ids), 1)
+        self.assertTrue(all(item['source'] == 'stock' for item in data['items']))
+        self.assertTrue(
+            all(item['actor_user_id'] == self.floor.id for item in data['items'])
+        )
