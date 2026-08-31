@@ -29,3 +29,30 @@ def effective_goods_in_type(product: Product) -> str:
     if product.category_id:
         return goods_in_type_from_category(product.category)
     return ProductGoodsInType.OTHER
+
+
+def category_has_direct_consume(category: Category | None) -> bool:
+    """True if category or any ancestor has direct_consume."""
+    if category is None:
+        return False
+    current = category
+    seen = {current.id}
+    while True:
+        if current.direct_consume:
+            return True
+        if current.parent_id is None or current.parent_id in seen:
+            return False
+        parent = Category.objects.filter(pk=current.parent_id).first()
+        if parent is None:
+            return False
+        seen.add(parent.id)
+        current = parent
+
+
+def product_is_direct_consume(product: Product) -> bool:
+    if not product.category_id:
+        return False
+    category = getattr(product, 'category', None)
+    if category is None or category.pk != product.category_id:
+        category = Category.objects.filter(pk=product.category_id).first()
+    return category_has_direct_consume(category)

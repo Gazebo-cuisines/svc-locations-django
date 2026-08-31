@@ -1,6 +1,6 @@
 from datetime import date
 
-from product.goods_in import effective_goods_in_type
+from product.goods_in import effective_goods_in_type, product_is_direct_consume
 from product.models import ProductGoodsInType, ProductStorageRegime, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
@@ -217,6 +217,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             'product_id': line.product_id,
             'product_name': line.product.name,
             'goods_in_type': gin_type,
+            'direct_consume': product_is_direct_consume(line.product),
             'storage_regime': regime,
             'qty_ordered': _qty_str(line.qty_ordered),
             'qty_received': _qty_str(line.qty_received),
