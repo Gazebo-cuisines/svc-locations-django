@@ -54,6 +54,8 @@ class Category(models.Model):
     is_locked_path = models.BooleanField(default=False)
     remarks = models.TextField(null=True, blank=True)
     image_key = models.CharField(max_length=512, null=True, blank=True)
+    # Fresh bags: PO receive posts receipt+issue, no barcode/queue.
+    direct_consume = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'product_category'

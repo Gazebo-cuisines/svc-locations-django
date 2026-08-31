@@ -1,6 +1,6 @@
 from datetime import date
 
-from product.goods_in import effective_goods_in_type
+from product.goods_in import effective_goods_in_type, product_is_direct_consume
 from product.models import ProductGoodsInType, ProductStorageRegime, ProductTechnical
 from purchasing.models import (
     GoodsInCheckScope,
@@ -14,6 +14,8 @@ from purchasing.services.delivery import (
     open_delivery_for,
 )
 from purchasing.services.julian import julian_trace_number
+from purchasing.services.qc_answer_store import load_answers
+from purchasing.services.qc_lock import lock_info
 from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
 from purchasing.serialize import _qty_str, rbac_names, shortfall_reason_options
@@ -201,7 +203,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         )
         dline = dlines.get(line.id)
         if dline is not None:
-            saved_answers = dline.line_checks or {}
+            saved_answers = load_answers(delivery_line=dline) or dline.line_checks or {}
             line_check_ok = dline.line_check_ok
         elif delivery is None:
             saved_answers = line.line_checks or {}
@@ -215,6 +217,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             'product_id': line.product_id,
             'product_name': line.product.name,
             'goods_in_type': gin_type,
+            'direct_consume': product_is_direct_consume(line.product),
             'storage_regime': regime,
             'qty_ordered': _qty_str(line.qty_ordered),
             'qty_received': _qty_str(line.qty_received),
@@ -228,6 +231,8 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             'unit_name': line.unit.name if line.unit_id else None,
             'saved_answers': saved_answers,
             'line_check_ok': line_check_ok,
+            'qc_draft': bool(saved_answers) and not line_check_ok,
+            'lock': lock_info(dline) if dline is not None else None,
             'label_format': line.label_format,
             'label_count': line.label_count,
             'template': _template_block(line_template),
@@ -241,6 +246,11 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         or julian_trace_number(suggested_delivery_date)
     )
     names = rbac_names({session.checked_by_user_id, session.qc_tl_checked_by_user_id})
+    saved_header = (
+        (load_answers(delivery=delivery) if delivery is not None else {})
+        or session.header_checks
+        or {}
+    )
 
     return {
         'purchase_order_id': po.id,
@@ -273,7 +283,9 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             session.qc_tl_checked_at.isoformat() if session.qc_tl_checked_at else None
         ),
         'qc_tl_comment': session.qc_tl_comment,
-        'saved_header_answers': session.header_checks or {},
+        'saved_header_answers': saved_header,
+        'qc_draft': bool(saved_header) and session.checked_at is None,
+        'lock': lock_info(delivery) if delivery is not None else None,
         'header': _template_block(header_template),
         'shortfall_reasons': shortfall_reason_options(),
         'lines': line_blocks,

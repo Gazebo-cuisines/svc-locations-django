@@ -25,6 +25,7 @@ from purchasing.services.po_qty import (
     recompute_po_status,
 )
 from purchasing.serialize import _qty_str
+from product.goods_in import product_is_direct_consume
 from purchasing.services.goods_in_form import resolve_goods_in_form
 from purchasing.services.timeline import actor_json, record_history
 from purchasing.services.release import is_quarantine_location
@@ -119,6 +120,33 @@ def _wants_queued_stock(raw: dict, *, label_format: str | None) -> bool:
     if flag in (False, 'false', '0', 'no', 'False'):
         return False
     return label_format not in (None, '')
+
+
+def _truthy_flag(value) -> bool:
+    return value in (True, 'true', '1', 'yes', 'True')
+
+
+def _reject_direct_consume_labels(
+    *,
+    raw: dict,
+    index: int,
+    label_format: str | None,
+) -> None:
+    """Direct-consume lines must never enter print / queue / verify."""
+    if label_format not in (None, ''):
+        raise ReceiveError(
+            f'lines[{index}]: direct-consume products cannot use labels.',
+        )
+    if _truthy_flag(raw.get('queue_stock')):
+        raise ReceiveError(
+            f'lines[{index}]: direct-consume products cannot queue stock.',
+        )
+    if raw.get('print_unit_count') not in (None, '') or raw.get(
+        'print_quantity_per_unit',
+    ) not in (None, ''):
+        raise ReceiveError(
+            f'lines[{index}]: direct-consume products cannot print unit labels.',
+        )
 
 
 def _split_quantities(total: Decimal, parts: int) -> list[Decimal]:
@@ -277,6 +305,7 @@ def receive_purchase_order(
                 PurchaseOrderLine.objects.select_for_update(of=('self',))
                 .select_related(
                     'product',
+                    'product__category',
                     'product_supplier',
                     'product_supplier__outer_unit',
                     'product_supplier__inner_unit',
@@ -303,12 +332,22 @@ def receive_purchase_order(
             raise ReceiveError(f'lines[{index}].idempotency_key is required.')
         idempotency_key = str(idempotency_key)
 
+        direct_consume = product_is_direct_consume(line.product)
         label_format, label_count = _resolve_label_plan(line, raw, index)
+        if direct_consume:
+            _reject_direct_consume_labels(
+                raw=raw, index=index, label_format=label_format,
+            )
+            label_format, label_count = None, 1
         unit_keys = _unit_idempotency_keys(idempotency_key, label_count)
         prior_entry = StockEntry.objects.filter(
             idempotency_key=unit_keys[0],
         ).first()
-        queue_stock = _wants_queued_stock(raw, label_format=label_format)
+        queue_stock = (
+            False
+            if direct_consume
+            else _wants_queued_stock(raw, label_format=label_format)
+        )
         queued = queued_hold_for_line(line)
         open_qty = (line.qty_balance - queued).quantize(Decimal('0.000001'))
         leftover = Decimal('0')
@@ -442,10 +481,44 @@ def receive_purchase_order(
                 'lot_id': lot.id,
                 'idempotency_key': unit_key,
                 'entry': _entry_payload(entry),
+                'direct_consume': direct_consume,
             }
             if posting is not None:
                 tx['posting'] = entry_posting.posting_dict(posting)
                 tx['posting_status'] = posting.status
+            if direct_consume:
+                issue_key = f'{unit_key}:direct-consume'
+                issue_remarks = receipt_audit.get('remarks')
+                if issue_remarks:
+                    issue_note = f'direct_consume; {issue_remarks}'
+                else:
+                    issue_note = 'direct_consume'
+                try:
+                    issue_entry = stock_services.issue(
+                        idempotency_key=issue_key,
+                        lot=lot,
+                        location_id=location_id,
+                        quantity=abs(entry.quantity),
+                        unit_id=entry.unit_id,
+                        effective_at=body.get('effective_at') or timezone.now(),
+                        source_entry=entry,
+                        source_document_type='po',
+                        source_document_id=po.id,
+                        source_document_line=line.line_no,
+                        po_number=po.external_number or po.number,
+                        remarks=issue_note,
+                        actor_user_id=receipt_audit.get('actor_user_id'),
+                        lan_username=receipt_audit.get('lan_username'),
+                        source_workstation=receipt_audit.get('source_workstation'),
+                        source_workstation_ip=receipt_audit.get(
+                            'source_workstation_ip',
+                        ),
+                    )
+                except StockValidationError as exc:
+                    raise ReceiveError(str(exc)) from exc
+                tx['issue_entry_id'] = issue_entry.id
+                tx['issue_entry_code'] = entry_labels.entry_code(issue_entry.id)
+                tx['issue_entry'] = _entry_payload(issue_entry)
             if label_format is not None:
                 try:
                     label = entry_labels.create_entry_label(
@@ -465,7 +538,7 @@ def receive_purchase_order(
                     entry, label,
                 )
             # Optional unit serials only on first physical unit when requested.
-            if unit_index == 1:
+            if unit_index == 1 and not direct_consume:
                 units_payload = _print_units_for_line(
                     raw=raw,
                     index=index,
@@ -596,12 +669,17 @@ def receive_purchase_order(
             'location_id': location_id,
             'quarantine': quarantine,
             'idempotent_replay': prior_entry is not None,
+            'direct_consume': direct_consume,
             'label_format': label_format,
             'label_count': label_count,
             'transaction_count': len(transactions),
             'transactions': transactions,
             'entry': first['entry'],
         }
+        if first.get('issue_entry_id') is not None:
+            row['issue_entry_id'] = first['issue_entry_id']
+            row['issue_entry_code'] = first['issue_entry_code']
+            row['issue_entry'] = first['issue_entry']
         if first.get('units'):
             row['units'] = first['units']
         if first.get('posting') is not None:

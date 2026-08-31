@@ -22,6 +22,8 @@ from purchasing.services.goods_in_form import (
     resolve_template,
 )
 from purchasing.services.julian import julian_trace_number
+from purchasing.services.qc_answer_store import upsert_answers
+from purchasing.services.qc_lock import claim_lock
 from purchasing.services.qc_answers import (
     QcAnswerError,
     answer_fails,
@@ -87,7 +89,9 @@ def submit_header_qc(
 
     normalized = {}
     failed_codes = []
+    items_by_code = {}
     for item in template.items.all():
+        items_by_code[item.code] = item
         if item.code not in raw_answers:
             if item.required:
                 raise HeaderQcError(f'Answer required for {item.code}.')
@@ -142,6 +146,8 @@ def submit_header_qc(
     except (TypeError, ValueError) as exc:
         raise HeaderQcError('checked_by_user_id must be an integer.') from exc
 
+    claim_lock(delivery, checked_by, noun='delivery')
+
     before = {
         'delivery_id': delivery.id,
         'status': delivery.status,
@@ -179,6 +185,13 @@ def submit_header_qc(
         po.save(update_fields=['remarks', 'updated_at'])
 
     delivery.save()
+    upsert_answers(
+        answers=normalized,
+        items_by_code=items_by_code,
+        user_id=checked_by,
+        scope='header',
+        delivery=delivery,
+    )
     sync_po_from_delivery(delivery)
 
     event = (

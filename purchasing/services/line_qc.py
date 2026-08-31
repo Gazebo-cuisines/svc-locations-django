@@ -21,6 +21,8 @@ from purchasing.services.goods_in_form import (
     resolve_goods_in_form,
     resolve_template,
 )
+from purchasing.services.qc_answer_store import upsert_answers
+from purchasing.services.qc_lock import claim_lock
 from purchasing.services.qc_answers import (
     QcAnswerError,
     answer_fails,
@@ -232,6 +234,7 @@ def submit_line_qc(
 
     line_ok = len(failed_codes) == 0
     dline = get_or_create_delivery_line(delivery, line)
+    claim_lock(dline, body.get('checked_by_user_id'), noun='line')
     dline.line_checks = normalized
     dline.line_template_id = template.id
     dline.line_template_version = template.version
@@ -241,6 +244,14 @@ def submit_line_qc(
     dline.production_date = production_date
     dline.trace_number = trace_number
     dline.save()
+    upsert_answers(
+        answers=normalized,
+        items_by_code=items_by_code,
+        user_id=body.get('checked_by_user_id'),
+        scope='line',
+        delivery=delivery,
+        delivery_line=dline,
+    )
 
     line.line_checks = normalized
     line.line_template_id = template.id

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from locations.location_images import location_image_url
+from product.goods_in import product_is_direct_consume
 from purchasing.models import (
     LineShortfallReason,
     PurchaseOrder,
@@ -76,6 +77,9 @@ def line_dict(line: PurchaseOrderLine, qty_queued=None) -> dict:
         'product_id': line.product_id,
         'product_name': line.product.name if line.product_id else None,
         'product_supplier_id': line.product_supplier_id,
+        'direct_consume': (
+            product_is_direct_consume(line.product) if line.product_id else False
+        ),
         'qty_ordered': _qty_str(line.qty_ordered),
         'qty_received': _qty_str(line.qty_received),
         'qty_rejected': _qty_str(line.qty_rejected),

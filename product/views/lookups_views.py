@@ -55,6 +55,7 @@ def _category_dict(
         'remarks': row.remarks,
         'image_key': row.image_key,
         'image_url': category_image_url(row),
+        'direct_consume': row.direct_consume,
     }
     if include_children:
         data['children'] = []

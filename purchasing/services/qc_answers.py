@@ -31,21 +31,22 @@ def normalize_bool(value):
     raise QcAnswerError(f'Invalid yes/no value: {value!r}.')
 
 
-def normalize_answer(item, raw) -> dict:
+def normalize_answer(item, raw, *, draft=False) -> dict:
     if not isinstance(raw, dict):
         raw = {'value': raw}
     value = raw.get('value')
     comment = raw.get('comment')
     if comment in ('',):
         comment = None
+    require = item.required and not draft
 
     if item.input_type == GoodsInInputType.BOOL:
-        if value in (None, '') and item.required:
+        if value in (None, '') and require:
             raise QcAnswerError(f'Answer required for {item.code}.')
         if value not in (None, ''):
             value = normalize_bool(value)
     elif item.input_type == GoodsInInputType.DECIMAL:
-        if value in (None, '') and item.required:
+        if value in (None, '') and require:
             raise QcAnswerError(f'Answer required for {item.code}.')
         if value not in (None, ''):
             try:
@@ -53,12 +54,12 @@ def normalize_answer(item, raw) -> dict:
             except (InvalidOperation, TypeError, ValueError) as exc:
                 raise QcAnswerError(f'Invalid decimal for {item.code}.') from exc
     elif item.input_type == GoodsInInputType.DATE:
-        if value in (None, '') and item.required:
+        if value in (None, '') and require:
             raise QcAnswerError(f'Answer required for {item.code}.')
         if value not in (None, ''):
             value = parse_date(value, item.code).isoformat()
     else:
-        if value in (None, '') and item.required:
+        if value in (None, '') and require:
             raise QcAnswerError(f'Answer required for {item.code}.')
         if value is not None:
             value = str(value)

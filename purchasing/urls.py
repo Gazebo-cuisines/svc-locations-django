@@ -1,6 +1,7 @@
 from django.urls import path
 
 from purchasing.views import (
+    adhoc_goods_in_checklist_api,
     adhoc_goods_in_collection_api,
     adhoc_goods_in_detail_api,
     adhoc_goods_in_header_qc_api,
@@ -11,6 +12,7 @@ from purchasing.views import (
     po_attachments_api,
     po_collection_api,
     po_delivery_attachments_api,
+    po_delivery_checklist_api,
     po_delivery_collection_api,
     po_delivery_detail_api,
     po_delivery_header_qc_api,
@@ -52,6 +54,7 @@ urlpatterns = [
     # Nested deliveries (one QC session per truck)
     path('pos/<int:po_id>/deliveries/', po_delivery_collection_api, name='purchasing-po-delivery-list'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/', po_delivery_detail_api, name='purchasing-po-delivery-detail'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/checklist/', po_delivery_checklist_api, name='purchasing-po-delivery-checklist'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/qc/header/', po_delivery_header_qc_api, name='purchasing-po-delivery-header-qc'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/lines/<int:line_id>/qc/', po_delivery_line_qc_api, name='purchasing-po-delivery-line-qc'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/receive/', po_delivery_receive_api, name='purchasing-po-delivery-receive'),
@@ -84,6 +87,7 @@ urlpatterns = [
     # Without-PO goods-in QC + receive
     path('adhoc-goods-in/', adhoc_goods_in_collection_api, name='purchasing-adhoc-goods-in-start'),
     path('adhoc-goods-in/<int:session_id>/', adhoc_goods_in_detail_api, name='purchasing-adhoc-goods-in-detail'),
+    path('adhoc-goods-in/<int:session_id>/checklist/', adhoc_goods_in_checklist_api, name='purchasing-adhoc-goods-in-checklist'),
     path('adhoc-goods-in/<int:session_id>/qc/header/', adhoc_goods_in_header_qc_api, name='purchasing-adhoc-goods-in-header-qc'),
     path('adhoc-goods-in/<int:session_id>/qc/line/', adhoc_goods_in_line_qc_api, name='purchasing-adhoc-goods-in-line-qc'),
     path('adhoc-goods-in/<int:session_id>/receive/', adhoc_goods_in_receive_api, name='purchasing-adhoc-goods-in-receive'),

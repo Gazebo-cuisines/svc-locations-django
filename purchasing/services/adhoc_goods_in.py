@@ -25,6 +25,8 @@ from purchasing.services.goods_in_form import (
 )
 from purchasing.services.julian import julian_trace_number
 from purchasing.services.line_qc import _shelf_life_ok, _temp_bounds
+from purchasing.services.qc_answer_store import load_answers, upsert_answers
+from purchasing.services.qc_lock import claim_lock, lock_info
 from purchasing.services.qc_answers import (
     QcAnswerError,
     answer_fails,
@@ -123,6 +125,8 @@ def session_form_dict(session: AdhocGoodsInSession) -> dict:
         session.delivery_trace_number
         or julian_trace_number(suggested_delivery)
     )
+    saved_header = load_answers(adhoc_session=session) or session.header_checks or {}
+    saved_line = load_answers(adhoc_line=line) or line.line_checks or {}
     return {
         'session_id': session.id,
         'status': session.status,
@@ -149,14 +153,18 @@ def session_form_dict(session: AdhocGoodsInSession) -> dict:
         'item_po_ref': session.item_po_ref,
         'label_format': session.label_format,
         'label_count': session.label_count,
-        'saved_header_answers': session.header_checks or {},
+        'saved_header_answers': saved_header,
+        'qc_draft': bool(saved_header) and session.checked_at is None,
+        'lock': lock_info(session),
         'header': _template_block(header_template),
         'line': {
             'line_id': line.id,
             'product_id': product.id,
             'product_name': product.name,
-            'saved_answers': line.line_checks or {},
+            'saved_answers': saved_line,
             'line_check_ok': line.line_check_ok,
+            'qc_draft': bool(saved_line) and not line.line_check_ok,
+            'lock': lock_info(line),
             'use_by': _iso_date(line.use_by),
             'production_date': _iso_date(line.production_date),
             'trace_number': line.trace_number,
@@ -254,7 +262,9 @@ def submit_adhoc_header_qc(session_id: int, *, body: dict) -> dict:
 
     normalized = {}
     failed_codes = []
+    items_by_code = {}
     for item in template.items.all():
+        items_by_code[item.code] = item
         if item.code not in raw_answers:
             if item.required:
                 raise AdhocGoodsInError(f'Answer required for {item.code}.')
@@ -304,6 +314,8 @@ def submit_adhoc_header_qc(session_id: int, *, body: dict) -> dict:
     except (TypeError, ValueError) as exc:
         raise AdhocGoodsInError('checked_by_user_id must be an integer.') from exc
 
+    claim_lock(session, checked_by, noun='delivery')
+
     now = timezone.now()
     session.delivery_at = delivery_date
     session.delivery_trace_number = trace_number
@@ -327,6 +339,13 @@ def submit_adhoc_header_qc(session_id: int, *, body: dict) -> dict:
         session.qc_tl_comment = body.get('qc_tl_comment')
 
     session.save()
+    upsert_answers(
+        answers=normalized,
+        items_by_code=items_by_code,
+        user_id=checked_by,
+        scope=GoodsInCheckScope.HEADER,
+        adhoc_session=session,
+    )
     return session_form_dict(_load_session(session.id))
 
 
@@ -462,6 +481,7 @@ def submit_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
         )
 
     line_ok = len(failed_codes) == 0
+    claim_lock(line, body.get('checked_by_user_id'), noun='line')
     line.line_checks = normalized
     line.line_template_id = template.id
     line.line_template_version = template.version
@@ -471,6 +491,14 @@ def submit_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
     line.production_date = production_date
     line.trace_number = trace_number
     line.save()
+    upsert_answers(
+        answers=normalized,
+        items_by_code=items_by_code,
+        user_id=body.get('checked_by_user_id'),
+        scope=GoodsInCheckScope.LINE,
+        adhoc_session=session,
+        adhoc_line=line,
+    )
 
     if line_ok:
         session.status = AdhocGoodsInStatus.QC_COMPLETE
