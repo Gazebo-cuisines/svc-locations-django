@@ -98,6 +98,7 @@ from users_rbac.auth import attach_user, client_ip
 from users_rbac.permissions import (
     gate_floor_write,
     gate_production_write,
+    gate_stock_management,
     gate_warehouse_write,
     require_any_admin,
 )
@@ -3545,3 +3546,11 @@ def stock_units_reprint_api(request, unit_serial: str):
     data = stock_unit_dict(result['unit'])
     data['print_event_id'] = result['print_event_id']
     return api_success('Stock unit reprint recorded.', data, status_code=201)
+
+
+@csrf_exempt
+@require_GET
+@gate_stock_management
+def manage_ping_api(request):
+    """Health check for Stock Management Tool access (gated)."""
+    return api_success('Stock Management Tool access OK.', {'ok': True})

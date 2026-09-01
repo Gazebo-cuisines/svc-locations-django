@@ -22,6 +22,7 @@ from users_rbac.permissions import (
     require_any_warehouse,
     require_floor_write,
     require_production_area,
+    require_stock_management,
     require_warehouse,
 )
 
@@ -126,6 +127,7 @@ class PermissionHelperTests(TestCase):
         request.rbac_user = it
         self.assertIsNone(require_any_admin(request))
         self.assertIsNone(require_admin_area(request, AdminArea.FINANCE))
+        self.assertIsNone(require_stock_management(request))
         self.assertIsNone(require_production_area(request, ProductionArea.HIGH_RISK))
         self.assertIsNone(
             require_warehouse(
@@ -142,4 +144,18 @@ class PermissionHelperTests(TestCase):
         self.assertEqual(
             RbacAuditEvent.objects.get().detail_json['required'],
             {'admin': 'any'},
+        )
+
+    def test_stock_management_ok_and_denied(self):
+        AdminAccess.objects.create(user=self.user, area=AdminArea.STOCK_MANAGEMENT)
+        self.assertIsNone(require_stock_management(self._req()))
+        response = require_stock_management(self._req())
+        self.assertIsNone(response)
+
+    def test_stock_management_denied_for_floor(self):
+        response = require_stock_management(self._req())
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            RbacAuditEvent.objects.latest('id').detail_json['required'],
+            {'admin_area': 'stock_management'},
         )

@@ -101,6 +101,7 @@ urlpatterns = [
     path('balances/', views.balance_list_api, name='stock-balances'),
     path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),
     path('warehouse/remaining/', views.warehouse_remaining_api, name='stock-warehouse-remaining'),
+    path('manage/ping/', views.manage_ping_api, name='stock-manage-ping'),
     # --- parked (non-MVP) ---
     path('atp/', views.atp_api, name='stock-atp'),
     path('trace/backward/', views.trace_backward_api, name='stock-trace-backward'),
