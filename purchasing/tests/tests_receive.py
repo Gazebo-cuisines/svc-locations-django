@@ -366,6 +366,73 @@ class PoReceiveParityTests(TestCase):
         self.assertEqual(note.payload['shortfall_reason'], 'short_delivery')
         self.assertFalse(note.payload['needs_credit_note'])
 
+    def test_split_pallet_leaves_balance(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'shortfall_reason': 'split_pallet',
+                    'remarks': '1 of 4 pallets',
+                    'idempotency_key': f'po-split-{uuid4()}',
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['qty_received'], '1')
+        self.assertEqual(row['qty_rejected'], '0')
+        self.assertEqual(row['qty_balance'], '1')
+        self.assertFalse(row['needs_credit_note'])
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertFalse(self.line.line_closed)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+        self.assertEqual(self.line.shortfall_reason, 'split_pallet')
+
+    def test_credit_note_closes_remainder(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'shortfall_reason': 'credit_note',
+                    'idempotency_key': f'po-credit-{uuid4()}',
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['qty_rejected'], '1')
+        self.assertTrue(row['needs_credit_note'])
+        self.line.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertTrue(self.line.line_closed)
+        self.assertEqual(self.line.shortfall_reason, 'credit_note')
+        self.assertEqual(self.po.status, PurchaseOrderStatus.RECEIVED)
+
+    def test_other_leaves_balance(self):
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'shortfall_reason': 'other',
+                    'remarks': 'split pallet',
+                    'idempotency_key': f'po-other-{uuid4()}',
+                }],
+            },
+        )
+        row = data['receive_results'][0]
+        self.assertEqual(row['qty_rejected'], '0')
+        self.assertFalse(row['needs_credit_note'])
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+
     def test_reject_remainder_closes_for_credit(self):
         data = receive_purchase_order(
             self.po.id,
@@ -397,7 +464,15 @@ class PoReceiveParityTests(TestCase):
         self.assertTrue(event.payload['needs_credit_note'])
         reasons = {item['code'] for item in data['shortfall_reasons']}
         self.assertIn('short_delivery', reasons)
+        self.assertIn('split_pallet', reasons)
+        self.assertIn('credit_note', reasons)
         self.assertIn('damaged', reasons)
+        split = next(r for r in data['shortfall_reasons'] if r['code'] == 'split_pallet')
+        credit = next(r for r in data['shortfall_reasons'] if r['code'] == 'credit_note')
+        other = next(r for r in data['shortfall_reasons'] if r['code'] == 'other')
+        self.assertFalse(split['needs_credit_note'])
+        self.assertFalse(other['needs_credit_note'])
+        self.assertTrue(credit['needs_credit_note'])
 
     def test_over_receive_blocked(self):
         with self.assertRaises(ReceiveError):

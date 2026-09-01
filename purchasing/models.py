@@ -20,6 +20,7 @@ class PurchaseOrderSource(models.TextChoices):
 class PurchaseOrderHistoryEvent(models.TextChoices):
     CREATE = 'create', 'Create'
     UPDATE = 'update', 'Update'
+    AMEND = 'amend', 'Amend'
     ACCEPT = 'accept', 'Accept'
     REJECT = 'reject', 'Reject'
     NON_CONFORMANCE = 'non_conformance', 'Non-conformance'
@@ -28,15 +29,22 @@ class PurchaseOrderHistoryEvent(models.TextChoices):
 
 class LineShortfallReason(models.TextChoices):
     SHORT_DELIVERY = 'short_delivery', 'Rest coming later'
+    SPLIT_PALLET = 'split_pallet', 'Split pallet'
+    OTHER = 'other', 'Other'
+    CREDIT_NOTE = 'credit_note', 'Reject / credit note'
     WRONG_PRODUCT = 'wrong_product', 'Wrong product'
     SHORT_USEBY = 'short_useby', 'Use-by too short'
     TECHNICAL = 'technical_issue', 'Technical issue'
     DAMAGED = 'damaged', 'Damaged'
     QUALITY = 'quality', 'Quality fail'
-    OTHER = 'other', 'Other'
 
 
-SHORTFALL_AWAIT_REASONS = frozenset({LineShortfallReason.SHORT_DELIVERY})
+# Leftover stays open for a later delivery. Everything else writes qty_rejected.
+SHORTFALL_AWAIT_REASONS = frozenset({
+    LineShortfallReason.SHORT_DELIVERY,
+    LineShortfallReason.SPLIT_PALLET,
+    LineShortfallReason.OTHER,
+})
 
 
 class PurchaseOrder(models.Model):
@@ -89,6 +97,7 @@ class PurchaseOrder(models.Model):
     total_net = models.DecimalField(
         max_digits=16, decimal_places=6, null=True, blank=True,
     )
+    revision_no = models.PositiveIntegerField(default=0)
     created_by_user_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

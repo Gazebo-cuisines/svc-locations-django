@@ -689,6 +689,28 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(sibling['quantity'], '20')
         self.assertEqual(sibling['lot_quantity'], '35')
 
+    def test_sticker_count_adjust_keeps_barcode_updates_qty(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag = self._receipt(lot, '19')
+        sibling = self._receipt(lot, '10')
+
+        services.count_adjustment(
+            idempotency_key=f'bc-cnt-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            counted_quantity=Decimal('90'),
+            unit_id=self.unit.id,
+            source_entry=bag,
+        )
+
+        data = self._scan_out(bag)
+        self.assertEqual(data['entry_code'], f'E{bag.id}')
+        self.assertEqual(data['quantity'], '90')
+        self.assertEqual(data['sticker_initial'], '19')
+        other = self._scan_out(sibling)
+        self.assertEqual(other['entry_code'], f'E{sibling.id}')
+        self.assertEqual(other['quantity'], '10')
+
     def test_sticker_draw_rejects_over_pick_and_mismatch(self):
         lot = self._lot(use_by=self.today + timedelta(days=10))
         bag_a = self._receipt(lot, '20')

@@ -206,7 +206,26 @@
           "host": ["{{base_url}}"],
           "path": ["purchasing", "pos", "{{po_id}}", "timeline", ""]
         },
-        "description": "### PO timeline\n\n`GET /purchasing/pos/:po_id/timeline/`\n\nSame event shape as product (`GET /product/:id/timeline/`) and recipe audit: newest first. Each event has `before_json` / `after_json` / `changed_fields` plus an `actor` object recorded at write time (JWT sub, name, email, workstation, IP).\n\nComposes PO create/update, goods-in QC (`accept` / `reject` / `non_conformance` / `note`), stock receive (`goods_in`), label print/scan, and stock post.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Purchase order timeline fetched successfully.`\n\n`data` is an array of events:\n\n| Field | Meaning |\n| --- | --- |\n| `at` | ISO datetime |\n| `entity` | `purchase_order`, `delivery`, `po_line`, or `stock_entry` |\n| `action` | `create`, `update`, `accept`, `reject`, `non_conformance`, `note`, `goods_in`, `label_printed`, `label_scanned`, `stock_posted` |\n| `actor` | `{ user_id, sub, name, email, source_workstation, source_workstation_ip }` |\n| `before_json` | State before this step |\n| `after_json` | State after this step |\n| `changed_fields` | Keys that differ |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
+        "description": "### PO timeline\n\n`GET /purchasing/pos/:po_id/timeline/`\n\nSame event shape as product (`GET /product/:id/timeline/`) and recipe audit: newest first. Each event has `before_json` / `after_json` / `changed_fields` plus an `actor` object recorded at write time (JWT sub, name, email, workstation, IP).\n\nComposes PO create/update/amend, goods-in QC (`accept` / `reject` / `non_conformance` / `note`), stock receive (`goods_in`), label print/scan, and stock post.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Purchase order timeline fetched successfully.`\n\n`data` is an array of events:\n\n| Field | Meaning |\n| --- | --- |\n| `at` | ISO datetime |\n| `entity` | `purchase_order`, `delivery`, `po_line`, or `stock_entry` |\n| `action` | `create`, `update`, `amend`, `accept`, `reject`, `non_conformance`, `note`, `goods_in`, `label_printed`, `label_scanned`, `stock_posted` |\n| `actor` | `{ user_id, sub, name, email, source_workstation, source_workstation_ip }` |\n| `before_json` | State before this step |\n| `after_json` | State after this step |\n| `changed_fields` | Keys that differ |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
+      }
+    },
+    {
+      "name": "Amend PO",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"expected_at\": \"2026-09-15\",\n  \"remarks\": \"Supplier confirmed +2 bags\",\n  \"lines\": [\n    {\n      \"id\": 1,\n      \"product_id\": 10,\n      \"qty_ordered\": \"7\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/amend/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "amend", ""]
+        },
+        "description": "### Amend purchase order\n\n`POST /purchasing/pos/:po_id/amend/`\n\nChange an **ordered** or **partial** PO in place (same PO number / Sage ref). Use after the supplier changes qty or dates — not for draft edits (`PATCH /pos/:id/`). Each call bumps `revision_no` and writes an `amend` timeline event.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `expected_at` | no | New expected delivery date (`YYYY-MM-DD`) |\n| `ordered_at` | no | Ordered date |\n| `remarks` | no | Header note |\n| `ship_to_location_id` | no | Ship-to location PK |\n| `sage_po_number` / `external_number` | no | Sage PO ref (must stay unique) |\n| `lines` | no | Full replacement set of lines (match by `id` or `line_no`) |\n| `lines[].id` | no | Existing PO line PK (preferred match) |\n| `lines[].line_no` | no | Match / set line number |\n| `lines[].product_id` | yes (per line) | Product PK |\n| `lines[].qty_ordered` | yes (per line) | Must be ≥ received+rejected on that line |\n| `lines[].product_supplier_id` | no | Supplier pack mapping |\n| `lines[].unit_cost` | no | Override cost |\n| `lines[].label_format` / `label_count` | no | Label plan |\n| `status` | — | **Not allowed** |\n| `supplier_id` | — | **Not allowed** |\n\n**Response body**\n\n`message`: `Purchase order amended successfully.` Full PO detail including bumped `revision_no` and updated `lines` (`qty_received` preserved).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Amended |\n| 400 | Wrong status, open delivery, qty below received, remove line with receipts, or supplier/status change |\n| 404 | PO not found |"
       }
     }
   ]

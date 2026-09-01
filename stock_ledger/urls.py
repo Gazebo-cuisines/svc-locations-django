@@ -74,6 +74,16 @@ urlpatterns = [
         name='stock-report-closing-stock',
     ),
     path(
+        'reports/operator-activity/',
+        views.operator_activity_report_api,
+        name='stock-report-operator-activity',
+    ),
+    path(
+        'reports/operator-activity/detail/',
+        views.operator_activity_detail_api,
+        name='stock-report-operator-activity-detail',
+    ),
+    path(
         'reports/email-recipients/',
         views.report_email_recipients_api,
         name='stock-report-email-recipients',

@@ -8,11 +8,13 @@ from locations.models import Location, LocationRole
 from product.models import Product, ProductSupplier
 from purchasing.models import (
     PurchaseOrder,
+    PurchaseOrderDeliveryStatus,
     PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
     PurchaseOrderSource,
     PurchaseOrderStatus,
 )
+from purchasing.services.po_qty import recompute_po_status
 from purchasing.services.timeline import actor_json, po_snapshot, record_history
 
 
@@ -346,6 +348,179 @@ def update_purchase_order(po_id: int, *, body: dict, actor=None) -> PurchaseOrde
     record_history(
         po=po,
         event_type=PurchaseOrderHistoryEvent.UPDATE,
+        before=before,
+        after=po_snapshot(po),
+        actor=actor or actor_json(user_id=po.created_by_user_id),
+    )
+    return po
+
+
+def _apply_header_fields(po: PurchaseOrder, body: dict, *, allow_supplier: bool) -> None:
+    if 'supplier_id' in body:
+        if not allow_supplier:
+            raise PoValidationError('supplier_id cannot change on an ordered PO.')
+        po.supplier = _require_supplier(int(body['supplier_id']))
+    if 'ship_to_location_id' in body:
+        po.ship_to_location = _optional_location(
+            body.get('ship_to_location_id'), 'ship_to_location_id',
+        )
+    if 'expected_at' in body:
+        po.expected_at = _parse_optional_date(body.get('expected_at'), 'expected_at')
+    if 'ordered_at' in body:
+        po.ordered_at = _parse_optional_date(body.get('ordered_at'), 'ordered_at')
+    if 'remarks' in body:
+        po.remarks = body.get('remarks') or None
+
+    if 'sage_po_number' in body or 'external_number' in body:
+        sage = _normalize_sage_po_number(
+            body['sage_po_number']
+            if 'sage_po_number' in body
+            else body.get('external_number'),
+        )
+        if sage is None:
+            raise PoValidationError('sage_po_number is required.')
+        _ensure_unique_sage_po_number(sage, exclude_po_id=po.id)
+        po.external_number = sage
+        if po.source == PurchaseOrderSource.MANUAL:
+            po.source = PurchaseOrderSource.SAGE
+
+
+def _amend_lines(po: PurchaseOrder, lines: list) -> None:
+    """Update lines in place so delivery / receipt FKs stay valid."""
+    if not isinstance(lines, list) or not lines:
+        raise PoValidationError('lines must be a non-empty list.')
+
+    existing = list(po.lines.select_for_update().all())
+    by_id = {line.id: line for line in existing}
+    by_no = {line.line_no: line for line in existing}
+    targets: list = []
+
+    for index, raw in enumerate(lines, start=1):
+        if not isinstance(raw, dict):
+            raise PoValidationError(f'lines[{index}] must be an object.')
+
+        target = None
+        raw_id = raw.get('id')
+        if raw_id not in (None, ''):
+            try:
+                target = by_id[int(raw_id)]
+            except (KeyError, TypeError, ValueError) as exc:
+                raise PoValidationError(
+                    f'lines[{index}].id={raw_id} not found on this PO.',
+                ) from exc
+        elif raw.get('line_no') not in (None, ''):
+            try:
+                line_no = int(raw['line_no'])
+            except (TypeError, ValueError) as exc:
+                raise PoValidationError(
+                    f'lines[{index}].line_no must be an integer.',
+                ) from exc
+            target = by_no.get(line_no)
+
+        item = dict(raw)
+        if item.get('line_no') in (None, ''):
+            item['line_no'] = target.line_no if target is not None else index
+        targets.append((index, target, item))
+
+    rows = _build_line_rows(po.supplier_id, [item for _, _, item in targets])
+    kept_ids: set[int] = set()
+
+    for (index, target, _), row in zip(targets, rows):
+        if target is None:
+            PurchaseOrderLine.objects.create(purchase_order=po, **row)
+            continue
+
+        if target.qty_received > 0 and row['product_id'] != target.product_id:
+            raise PoValidationError(
+                f'lines[{index}]: cannot change product on a line with receipts.',
+            )
+        min_qty = target.qty_received + target.qty_rejected
+        if row['qty_ordered'] < min_qty:
+            raise PoValidationError(
+                f'lines[{index}].qty_ordered cannot be below received+rejected '
+                f'({min_qty}).',
+            )
+        if (
+            row['line_no'] != target.line_no
+            and row['line_no'] in by_no
+            and by_no[row['line_no']].id != target.id
+        ):
+            raise PoValidationError(
+                f'lines[{index}].line_no={row["line_no"]} already exists.',
+            )
+
+        target.line_no = row['line_no']
+        target.product_id = row['product_id']
+        target.product_supplier_id = row['product_supplier_id']
+        target.qty_ordered = row['qty_ordered']
+        target.qty_balance = (
+            target.qty_ordered - target.qty_received - target.qty_rejected
+        )
+        if target.qty_balance < 0:
+            target.qty_balance = Decimal('0')
+        if target.qty_balance > 0:
+            target.line_closed = False
+            target.stock_in_done = False
+        elif target.qty_received > 0 or target.qty_rejected > 0:
+            target.line_closed = True
+            target.stock_in_done = True
+        target.unit_id = row['unit_id']
+        target.unit_cost = row['unit_cost']
+        target.multiplier = row['multiplier']
+        target.shape_format_label = row['shape_format_label']
+        target.label_format = row['label_format']
+        target.label_count = row['label_count']
+        target.remarks = row['remarks']
+        target.save()
+        kept_ids.add(target.id)
+
+    for line in existing:
+        if line.id in kept_ids:
+            continue
+        if line.qty_received > 0 or line.qty_rejected > 0:
+            raise PoValidationError(
+                f'Cannot remove line_no={line.line_no}: it has receipts.',
+            )
+        if line.delivery_lines.exists():
+            raise PoValidationError(
+                f'Cannot remove line_no={line.line_no}: it has delivery QC.',
+            )
+        line.delete()
+
+
+@transaction.atomic
+def amend_purchase_order(po_id: int, *, body: dict, actor=None) -> PurchaseOrder:
+    try:
+        po = PurchaseOrder.objects.select_for_update().get(pk=po_id)
+    except PurchaseOrder.DoesNotExist as exc:
+        raise PoValidationError('Purchase order not found.') from exc
+
+    if po.status not in (
+        PurchaseOrderStatus.ORDERED,
+        PurchaseOrderStatus.PARTIAL,
+    ):
+        raise PoValidationError(
+            f'Purchase order status={po.status} cannot be amended.',
+        )
+    if po.deliveries.filter(status=PurchaseOrderDeliveryStatus.OPEN).exists():
+        raise PoValidationError(
+            'Finish or cancel the open delivery before amending this PO.',
+        )
+    if body.get('status') not in (None, ''):
+        raise PoValidationError('status cannot change via amend.')
+
+    before = po_snapshot(po)
+    _apply_header_fields(po, body, allow_supplier=False)
+    if 'lines' in body:
+        _amend_lines(po, body['lines'])
+
+    po.revision_no = (po.revision_no or 0) + 1
+    po.save()
+    recompute_po_status(po)
+    po = get_purchase_order(po.id)
+    record_history(
+        po=po,
+        event_type=PurchaseOrderHistoryEvent.AMEND,
         before=before,
         after=po_snapshot(po),
         actor=actor or actor_json(user_id=po.created_by_user_id),

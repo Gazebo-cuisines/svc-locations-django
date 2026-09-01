@@ -8,6 +8,7 @@ from purchasing.views import (
     adhoc_goods_in_line_qc_api,
     adhoc_goods_in_receive_api,
     legacy_csv_import_api,
+    po_amend_api,
     po_attachment_detail_api,
     po_attachments_api,
     po_collection_api,
@@ -49,6 +50,7 @@ urlpatterns = [
     # PO API
     path('pos/', po_collection_api, name='purchasing-po-list'),
     path('pos/<int:po_id>/', po_detail_api, name='purchasing-po-detail'),
+    path('pos/<int:po_id>/amend/', po_amend_api, name='purchasing-po-amend'),
     path('pos/<int:po_id>/timeline/', po_timeline_api, name='purchasing-po-timeline'),
 
     # Nested deliveries (one QC session per truck)

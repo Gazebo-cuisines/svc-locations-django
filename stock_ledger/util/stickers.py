@@ -11,6 +11,7 @@ from stock_ledger.models import (
     StockEntryLabel,
     StockEntryLabelStatus,
     StockEntryPostingStatus,
+    StockEntryType,
     StockLot,
 )
 from stock_ledger.util import entry_labels
@@ -29,11 +30,28 @@ def drawn_from_entry(entry: StockEntry) -> Decimal:
     total = (
         StockEntry.objects
         .filter(source_entry_id=entry.pk, reversed_by__isnull=True)
+        .exclude(entry_type=StockEntryType.COUNT_ADJUSTMENT)
         .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
         .aggregate(total=Sum('quantity'))
         ['total']
     )
     return abs(total) if total is not None else ZERO
+
+
+def adjustments_for_entry(entry: StockEntry) -> Decimal:
+    """Count adjustments posted against this sticker (signed, stock unit)."""
+    total = (
+        StockEntry.objects
+        .filter(
+            source_entry_id=entry.pk,
+            entry_type=StockEntryType.COUNT_ADJUSTMENT,
+            reversed_by__isnull=True,
+        )
+        .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
+        .aggregate(total=Sum('quantity'))
+        ['total']
+    )
+    return total if total is not None else ZERO
 
 
 def remaining_for_entry(
@@ -43,11 +61,13 @@ def remaining_for_entry(
 ) -> Decimal:
     """Sticker quantity minus what has been drawn from it.
 
-    Capped at ``lot_quantity`` when given, so a sticker never promises more
-    than the lot actually holds at that location — by-lot picks and count
-    adjustments name no sticker and would otherwise leave it reading full.
+    Count adjustments linked to this sticker (``source_entry``) change what
+    a rescan of the same barcode can pick. Capped at ``lot_quantity`` when
+    given, so the sticker never promises more than the lot holds.
     """
-    remaining = abs(entry.quantity) - drawn_from_entry(entry)
+    remaining = (
+        abs(entry.quantity) + adjustments_for_entry(entry) - drawn_from_entry(entry)
+    )
     if remaining < ZERO:
         remaining = ZERO
     if lot_quantity is not None:
@@ -120,6 +140,7 @@ def queued_draws_for_entry(entry: StockEntry) -> list[dict]:
             reversed_by__isnull=True,
             posting__status=StockEntryPostingStatus.QUEUED,
         )
+        .exclude(entry_type=StockEntryType.COUNT_ADJUSTMENT)
         .select_related('posting', 'counterparty_location')
         .order_by('id')
     )

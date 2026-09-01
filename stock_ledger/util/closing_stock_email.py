@@ -26,6 +26,7 @@ _CSV_FIELDS = (
     'goods_in_type',
     'lot_id',
     'trace_number',
+    'production_date',
     'use_by',
     'location_id',
     'location_name',
@@ -33,6 +34,12 @@ _CSV_FIELDS = (
     'unit_name',
     'quantity',
     'quantity_base',
+    'supplier_code',
+    'sage_product_code',
+    'shape_format_label',
+    'pack_quantity',
+    'pack_unit_name',
+    'display_kg',
 )
 
 
