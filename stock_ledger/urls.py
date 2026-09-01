@@ -107,6 +107,11 @@ urlpatterns = [
         views.manage_entry_preview_api,
         name='stock-manage-entry-preview',
     ),
+    path(
+        'manage/entries/<int:entry_id>/remove/',
+        views.manage_entry_remove_api,
+        name='stock-manage-entry-remove',
+    ),
     # --- parked (non-MVP) ---
     path('atp/', views.atp_api, name='stock-atp'),
     path('trace/backward/', views.trace_backward_api, name='stock-trace-backward'),

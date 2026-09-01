@@ -62,6 +62,7 @@ from stock_ledger.util.conversions import (
     stock_to_kg,
     stock_to_packs,
 )
+from stock_ledger.util.manage import ManageRemoveError
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
 from stock_ledger.util.product_supplier_lookup import (
     product_supplier_for_entry,
@@ -3573,3 +3574,37 @@ def manage_entry_preview_api(request, entry_id: int):
         if sibling is not None:
             data['transfer_sibling']['entry'] = entry_dict(sibling)
     return api_success('Entry remove preview ready.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_stock_management
+def manage_entry_remove_api(request, entry_id: int):
+    """Cancel a queued (unposted) entry and void its labels."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        audit = _common_write_kwargs(request, body)
+        result = manage.remove_entry(
+            entry_id=entry_id,
+            reason=body['reason'],
+            idempotency_key=body['idempotency_key'],
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+    except StockEntry.DoesNotExist:
+        return api_error('Entry not found.', status_code=404)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except ManageRemoveError as exc:
+        return api_error(str(exc), status_code=exc.status_code)
+    message = (
+        'Entry was already removed.'
+        if result.get('idempotent')
+        else 'Entry reversed. Bin the old stickers and redo goods-in/out.'
+        if result.get('reversed_entry_codes')
+        else 'Entry removed. Bin the old stickers and redo goods-in.'
+    )
+    return api_success(message, result, status_code=201)

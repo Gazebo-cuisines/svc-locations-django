@@ -1,17 +1,21 @@
-"""Stock Management Tool — preview remove (chunk 2); execute in later chunks."""
+"""Stock Management Tool — preview + remove (queued cancel in chunk 3)."""
 
 from __future__ import annotations
 
 from decimal import Decimal
 
+from django.db import transaction
+from django.utils import timezone
+
 from stock_ledger.models import (
     StockEntry,
+    StockEntryPosting,
     StockEntryPostingStatus,
     StockEntryType,
     StockUnit,
     StockUnitStatus,
 )
-from stock_ledger.util import entry_labels, entry_posting
+from stock_ledger.util import entry_labels, entry_posting, services, stock_units
 from stock_ledger.util.services import PRODUCTION_SOURCE_DOC, _entry_is_reversed
 
 _ENTRY_SELECT = (
@@ -102,7 +106,7 @@ def _is_already_removed(entry: StockEntry) -> bool:
         return True
     if _entry_is_reversed(entry):
         return True
-    posting = entry_posting.get_posting(entry)
+    posting = _get_posting(entry.id)
     return (
         posting is not None
         and posting.status == StockEntryPostingStatus.CANCELLED
@@ -197,7 +201,7 @@ def preview_remove(entry: StockEntry) -> dict:
             'units_to_void': [],
         }
 
-    posting = entry_posting.get_posting(entry)
+    posting = _get_posting(entry.id)
     if posting is not None and posting.status == StockEntryPostingStatus.QUEUED:
         legs = _transfer_legs(entry)
         return {
@@ -253,4 +257,257 @@ def build_manage_detail(entry: StockEntry) -> dict:
             else None
         ),
         'preview': preview_remove(entry),
+    }
+
+
+def _is_reverse_preview_executable(preview: dict, entry: StockEntry) -> bool:
+    if preview['action'] != 'reverse':
+        return False
+    if entry.entry_type == StockEntryType.PRODUCTION_OUTPUT:
+        return False
+    will_undo = preview.get('will_undo') or []
+    if not will_undo:
+        return False
+    return all(row.get('step') == 'reverse' for row in will_undo)
+
+
+def _execute_reverse_plan(
+    preview: dict,
+    *,
+    reason: str,
+    idempotency_key: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+    source_workstation: str | None = None,
+) -> tuple[list[str], list[int]]:
+    reversed_codes: list[str] = []
+    entry_ids: list[int] = []
+    for row in preview.get('will_undo') or []:
+        if row.get('step') != 'reverse':
+            continue
+        target_id = row['entry_id']
+        target = StockEntry.objects.get(pk=target_id)
+        if not _entry_is_reversed(target):
+            _reversal_for_leg(
+                target,
+                reason=reason,
+                idempotency_key=idempotency_key,
+                actor_user_id=actor_user_id,
+                lan_username=lan_username,
+                source_workstation=source_workstation,
+            )
+        reversed_codes.append(entry_labels.entry_code(target_id))
+        entry_ids.append(target_id)
+    return reversed_codes, entry_ids
+
+
+def _reversal_for_leg(
+    leg: StockEntry,
+    *,
+    reason: str,
+    idempotency_key: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+    source_workstation: str | None = None,
+) -> StockEntry:
+    return services.reversal(
+        idempotency_key=f'{idempotency_key}:reverse:{leg.id}',
+        entry=leg,
+        remarks=f'Manager remove: {reason[:400]}',
+        actor_user_id=actor_user_id,
+        lan_username=lan_username,
+        source_workstation=source_workstation,
+    )
+
+
+def _get_posting(entry_id: int) -> StockEntryPosting | None:
+    return StockEntryPosting.objects.filter(stock_entry_id=entry_id).first()
+
+
+class ManageRemoveError(Exception):
+    def __init__(self, message: str, *, status_code: int = 400):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _void_units_for_entries(
+    entry_ids: list[int],
+    *,
+    reason: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+    source_workstation: str | None = None,
+) -> list[str]:
+    voided: list[str] = []
+    for unit in (
+        StockUnit.objects
+        .filter(created_by_entry_id__in=entry_ids)
+        .exclude(status=StockUnitStatus.VOID)
+        .order_by('unit_serial')
+    ):
+        stock_units.void_unit(
+            unit_serial=unit.unit_serial,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
+            source_workstation=source_workstation,
+        )
+        voided.append(unit.unit_serial)
+    return voided
+
+
+def _cancel_queued_leg(
+    leg: StockEntry,
+    *,
+    reason: str,
+    idempotency_key: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+    source_workstation: str | None = None,
+) -> bool:
+    """Cancel a queued posting. Returns False if leg has no posting row."""
+    posting = _get_posting(leg.id)
+    if posting is None:
+        return False
+    if posting.status == StockEntryPostingStatus.CANCELLED:
+        return True
+    if posting.status != StockEntryPostingStatus.QUEUED:
+        raise ManageRemoveError(
+            f'{entry_labels.entry_code(leg.id)} posting is {posting.status}.',
+            status_code=409,
+        )
+    entry_posting.cancel_entry(entry_id=leg.id)
+    posting = _get_posting(leg.id)
+    if posting is None:
+        return True
+    meta = dict(posting.meta or {})
+    meta['manager_remove'] = {
+        'idempotency_key': idempotency_key,
+        'reason': reason[:500],
+        'actor_user_id': actor_user_id,
+        'lan_username': lan_username,
+        'removed_at': timezone.now().isoformat(),
+    }
+    posting.meta = meta
+    if actor_user_id is not None:
+        posting.actor_user_id = actor_user_id
+    if lan_username is not None:
+        posting.lan_username = lan_username
+    if source_workstation is not None:
+        posting.source_workstation = source_workstation
+    posting.save(
+        update_fields=[
+            'meta',
+            'actor_user_id',
+            'lan_username',
+            'source_workstation',
+        ],
+    )
+    return True
+
+
+@transaction.atomic
+def remove_entry(
+    *,
+    entry_id: int,
+    reason: str,
+    idempotency_key: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+    source_workstation: str | None = None,
+) -> dict:
+    reason = (reason or '').strip()
+    if not reason:
+        raise ManageRemoveError('reason is required.')
+    key = (idempotency_key or '').strip()
+    if not key:
+        raise ManageRemoveError('idempotency_key is required.')
+
+    entry = get_entry_for_manage(entry_id)
+    preview = preview_remove(entry)
+    action = preview['action']
+
+    if action == 'blocked':
+        raise ManageRemoveError(
+            preview['block_reason'] or 'Remove is blocked.',
+            status_code=409,
+        )
+
+    cancelled_codes: list[str] = []
+    reversed_codes: list[str] = []
+    voided_serials: list[str] = []
+
+    if action == 'reverse':
+        if not _is_reverse_preview_executable(preview, entry):
+            if entry.entry_type == StockEntryType.PRODUCTION_OUTPUT:
+                msg = 'Production void is not available yet.'
+            else:
+                msg = 'This remove is not available yet.'
+            raise ManageRemoveError(msg, status_code=409)
+        reversed_codes, void_entry_ids = _execute_reverse_plan(
+            preview,
+            reason=reason,
+            idempotency_key=key,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
+            source_workstation=source_workstation,
+        )
+        voided_serials = _void_units_for_entries(
+            void_entry_ids,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
+            source_workstation=source_workstation,
+        )
+    elif action == 'cancel':
+        legs = _transfer_legs(entry)
+        leg_ids = [leg.id for leg in legs]
+
+        for leg in legs:
+            if not _cancel_queued_leg(
+                leg,
+                reason=reason,
+                idempotency_key=key,
+                actor_user_id=actor_user_id,
+                lan_username=lan_username,
+                source_workstation=source_workstation,
+            ):
+                continue
+            posting = _get_posting(leg.id)
+            if (
+                posting is not None
+                and posting.status == StockEntryPostingStatus.CANCELLED
+            ):
+                cancelled_codes.append(entry_labels.entry_code(leg.id))
+
+        if not cancelled_codes:
+            raise ManageRemoveError(
+                'This entry has no queued posting to cancel.',
+                status_code=409,
+            )
+
+        voided_serials = _void_units_for_entries(
+            leg_ids,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
+            source_workstation=source_workstation,
+        )
+    elif action != 'already_removed':
+        raise ManageRemoveError(
+            f'Cannot remove entry (action={action}).',
+            status_code=409,
+        )
+
+    entry = get_entry_for_manage(entry_id)
+    preview = preview_remove(entry)
+    return {
+        'entry_id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
+        'idempotency_key': key,
+        'cancelled_entry_codes': cancelled_codes,
+        'reversed_entry_codes': reversed_codes,
+        'voided_unit_serials': voided_serials,
+        'preview': preview,
+        'idempotent': action == 'already_removed',
     }
