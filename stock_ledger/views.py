@@ -2030,10 +2030,17 @@ def count_adjustment_api(request):
     try:
         counted = body.get('counted_quantity')
         delta = body.get('quantity_delta')
+        source_entry = _resolve_source_entry(body)
+        lot = _resolve_lot(body) if source_entry is None else source_entry.lot
+        location_id = (
+            source_entry.location_id
+            if source_entry is not None and body.get('location_id') in (None, '')
+            else int(body['location_id'])
+        )
         entry = services.count_adjustment(
             idempotency_key=body['idempotency_key'],
-            lot=_resolve_lot(body),
-            location_id=int(body['location_id']),
+            lot=lot,
+            location_id=location_id,
             counted_quantity=(
                 _parse_decimal(counted, 'counted_quantity')
                 if counted not in (None, '')
@@ -2046,6 +2053,7 @@ def count_adjustment_api(request):
             ),
             unit_id=_optional_unit_id(body),
             effective_at=_parse_effective_at(body.get('effective_at')),
+            source_entry=source_entry,
             **_common_write_kwargs(request, body),
         )
     except KeyError as exc:

@@ -630,7 +630,7 @@ def receive_purchase_order(
                         if needs_credit
                         else (
                             f'Line {line.line_no} short {leftover}: '
-                            f'rest coming later'
+                            f'{shortfall_reason} — rest coming later'
                         )
                     ),
                     before=before_qty,

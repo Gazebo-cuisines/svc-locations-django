@@ -28,15 +28,22 @@ class PurchaseOrderHistoryEvent(models.TextChoices):
 
 class LineShortfallReason(models.TextChoices):
     SHORT_DELIVERY = 'short_delivery', 'Rest coming later'
+    SPLIT_PALLET = 'split_pallet', 'Split pallet'
+    OTHER = 'other', 'Other'
+    CREDIT_NOTE = 'credit_note', 'Reject / credit note'
     WRONG_PRODUCT = 'wrong_product', 'Wrong product'
     SHORT_USEBY = 'short_useby', 'Use-by too short'
     TECHNICAL = 'technical_issue', 'Technical issue'
     DAMAGED = 'damaged', 'Damaged'
     QUALITY = 'quality', 'Quality fail'
-    OTHER = 'other', 'Other'
 
 
-SHORTFALL_AWAIT_REASONS = frozenset({LineShortfallReason.SHORT_DELIVERY})
+# Leftover stays open for a later delivery. Everything else writes qty_rejected.
+SHORTFALL_AWAIT_REASONS = frozenset({
+    LineShortfallReason.SHORT_DELIVERY,
+    LineShortfallReason.SPLIT_PALLET,
+    LineShortfallReason.OTHER,
+})
 
 
 class PurchaseOrder(models.Model):

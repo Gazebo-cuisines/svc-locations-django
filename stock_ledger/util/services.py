@@ -27,6 +27,7 @@ from stock_ledger.models import (
     StockLotOrigin,
 )
 from stock_ledger.stream import publish_balance_delta
+from stock_ledger.util import stickers
 from stock_ledger.util.conversions import (
     StockValidationError,
     packs_to_stock,
@@ -484,17 +485,21 @@ def count_adjustment(
     counted_quantity: Decimal | None = None,
     unit_id: int | None = None,
     effective_at=None,
+    source_entry: StockEntry | None = None,
     **kwargs,
 ) -> StockEntry:
     if counted_quantity is not None:
         counted_quantity, unit_id = _to_stock_qty(lot, counted_quantity, unit_id)
-        balance = (
-            StockBalance.objects
-            .filter(lot_id=lot.id, location_id=location_id)
-            .only('quantity')
-            .first()
-        )
-        current = balance.quantity if balance is not None else Decimal('0')
+        if source_entry is not None:
+            current = stickers.remaining_for_entry(source_entry)
+        else:
+            balance = (
+                StockBalance.objects
+                .filter(lot_id=lot.id, location_id=location_id)
+                .only('quantity')
+                .first()
+            )
+            current = balance.quantity if balance is not None else Decimal('0')
         quantity_delta = counted_quantity - current
     elif quantity_delta is not None:
         quantity_delta, unit_id = _to_stock_qty(lot, quantity_delta, unit_id)
@@ -506,6 +511,15 @@ def count_adjustment(
         raise StockValidationError(
             'count_adjustment delta must be non-zero (counted matches on-hand)'
         )
+    if source_entry is not None:
+        if source_entry.lot_id != lot.id:
+            raise StockValidationError(
+                'source_entry lot must match the count adjustment lot.',
+            )
+        if source_entry.location_id != location_id:
+            raise StockValidationError(
+                'source_entry location must match the count adjustment location.',
+            )
     return _insert_entry(
         idempotency_key=idempotency_key,
         entry_type=StockEntryType.COUNT_ADJUSTMENT,
@@ -514,6 +528,7 @@ def count_adjustment(
         quantity=quantity_delta,
         unit_id=unit_id,
         effective_at=effective_at or timezone.now(),
+        source_entry=source_entry,
         **kwargs,
     )
 
