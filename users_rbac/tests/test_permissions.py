@@ -116,7 +116,7 @@ class PermissionHelperTests(TestCase):
         )
         self.assertIsNone(require_floor_write(self._req()))
 
-    def test_it_has_global_rights(self):
+    def test_it_without_grants_is_denied(self):
         it = RbacUser.objects.create(
             cognito_sub='sub-it',
             username='it01',
@@ -134,9 +134,10 @@ class PermissionHelperTests(TestCase):
                 request,
                 WarehouseUnit.UNIT_2,
                 action='goods_out',
-            )
+            ).status_code,
+            403,
         )
-        self.assertIsNone(require_floor_write(request))
+        self.assertEqual(require_floor_write(request).status_code, 403)
 
     def test_any_admin_denied_for_floor(self):
         response = require_any_admin(self._req())

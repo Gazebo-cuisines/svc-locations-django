@@ -5,10 +5,7 @@ from users_rbac.permissions import require_any_admin
 
 
 def require_recipe_approver(request):
-    """
-    Today: IT (global) or any admin-area grant.
-    Later: swap require_any_admin for require_admin_area(..., TECHNICAL).
-    """
+    """Admin-area grant required to activate recipes."""
     denied = attach_user(request)
     if denied:
         return denied

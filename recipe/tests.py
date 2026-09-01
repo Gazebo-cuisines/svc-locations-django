@@ -874,8 +874,8 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         resp = self._post(f'/recipe/versions/{version.id}/activate/')
         self.assertEqual(resp.status_code, 403)
 
-    def test_activate_as_it_succeeds(self):
-        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+    def test_activate_as_admin_succeeds(self):
+        self._recipe_auth(sub='sub-admin', username='admin.user')
         recipe = Recipe.objects.create(product=self._product('FG'), name='FG')
         version = RecipeVersion.objects.create(
             recipe=recipe, version_number=1, status=RecipeVersionStatus.APPROVED,
@@ -885,7 +885,7 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         self.assertEqual(resp.json()['data']['status'], 'active')
 
     def test_activate_fills_spice_batch_from_bom(self):
-        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+        self._recipe_auth(sub='sub-admin', username='admin.user')
         parent = self._product('Tandoori Paneer Marination - 206 - Spice')
         parent.recipe_code = 'GFF206R-S'
         parent.save(update_fields=['recipe_code'])
@@ -909,7 +909,7 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         self.assertEqual(data['sum_batch_quantity'], '251.000000')
 
     def test_activate_overwrites_spice_batch_from_bom(self):
-        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+        self._recipe_auth(sub='sub-admin', username='admin.user')
         parent = self._product('Tandoori Paneer Marination - 206 - Spice')
         parent.recipe_code = 'GFF206R-S'
         parent.save(update_fields=['recipe_code'])
@@ -957,7 +957,7 @@ class RecipeGateTests(RecipeAuthMixin, TestCase):
         self.assertEqual(version.sum_batch_quantity, Decimal('186080'))
 
     def test_activate_does_not_fill_pack_batch(self):
-        self._recipe_auth(it=True, sub='sub-it', username='it.user')
+        self._recipe_auth(sub='sub-admin', username='admin.user')
         parent = self._product('Gazebo - Butter Chicken With Pilau Rice | 400G X 4')
         parent.recipe_code = 'CCBUR-R4TCC'
         parent.save(update_fields=['recipe_code'])
