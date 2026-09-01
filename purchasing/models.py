@@ -20,6 +20,7 @@ class PurchaseOrderSource(models.TextChoices):
 class PurchaseOrderHistoryEvent(models.TextChoices):
     CREATE = 'create', 'Create'
     UPDATE = 'update', 'Update'
+    AMEND = 'amend', 'Amend'
     ACCEPT = 'accept', 'Accept'
     REJECT = 'reject', 'Reject'
     NON_CONFORMANCE = 'non_conformance', 'Non-conformance'
@@ -96,6 +97,7 @@ class PurchaseOrder(models.Model):
     total_net = models.DecimalField(
         max_digits=16, decimal_places=6, null=True, blank=True,
     )
+    revision_no = models.PositiveIntegerField(default=0)
     created_by_user_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -1,8 +1,8 @@
 from django.core.exceptions import ObjectDoesNotExist
 
-from product.audit_log import _actor_stamp, _changed_fields
+from product.audit_log import _actor_stamp
 from purchasing.models import PurchaseOrder, PurchaseOrderHistory
-from purchasing.serialize import _iso_dt, rbac_actors
+from purchasing.serialize import _iso_dt, _qty_str, rbac_actors
 from stock_ledger.models import StockEntry
 
 
@@ -77,11 +77,55 @@ def record_history(
     )
 
 
+def _line_snapshot(line) -> dict:
+    return {
+        'id': line.id,
+        'line_no': line.line_no,
+        'product_id': line.product_id,
+        'product_name': line.product.name if line.product_id else None,
+        'qty_ordered': _qty_str(line.qty_ordered),
+        'qty_received': _qty_str(line.qty_received),
+        'qty_rejected': _qty_str(line.qty_rejected),
+        'qty_balance': _qty_str(line.qty_balance),
+        'unit_id': line.unit_id,
+        'unit_name': line.unit.name if line.unit_id else None,
+        'unit_cost': _qty_str(line.unit_cost),
+        'multiplier': _qty_str(line.multiplier),
+        'shape_format_label': line.shape_format_label,
+        'product_supplier_id': line.product_supplier_id,
+        'remarks': line.remarks,
+    }
+
+
+def _flatten_line_fields(lines: list) -> dict:
+    """Scalar keys so timeline tables can show Before/After without [object Object]."""
+    flat = {}
+    for line in lines or []:
+        no = line.get('line_no')
+        prefix = f'Line {no}'
+        name = line.get('product_name') or f"product {line.get('product_id')}"
+        # qty_ordered is pack/count on the PO; unit_name is inner stock unit (e.g. Kg) — do not append it.
+        qty = line.get('qty_ordered') or '0'
+        pack = line.get('shape_format_label')
+        flat[f'{prefix} product'] = name
+        flat[f'{prefix} qty ordered'] = qty
+        if pack:
+            flat[f'{prefix} pack'] = pack
+        if line.get('remarks'):
+            flat[f'{prefix} remarks'] = line['remarks']
+    return flat
+
+
 def po_snapshot(po) -> dict:
+    lines = list(
+        po.lines.select_related('product', 'unit').order_by('line_no'),
+    )
+    line_rows = [_line_snapshot(line) for line in lines]
     return {
         'id': po.id,
         'number': po.number,
         'status': po.status,
+        'revision_no': po.revision_no,
         'sage_po_number': po.external_number,
         'supplier_id': po.supplier_id,
         'ship_to_location_id': po.ship_to_location_id,
@@ -90,7 +134,23 @@ def po_snapshot(po) -> dict:
         'remarks': po.remarks,
         'source': po.source,
         'reject_delivery': po.reject_delivery,
+        'lines': line_rows,
+        **_flatten_line_fields(line_rows),
     }
+
+
+def _timeline_changed_fields(before_data, after_data) -> list[str]:
+    """Skip nested objects (e.g. lines[]) — FE stringifies those as [object Object]."""
+    before = before_data or {}
+    after = after_data or {}
+    keys = (set(before.keys()) | set(after.keys())) - {'lines'}
+    return sorted(
+        key
+        for key in keys
+        if before.get(key) != after.get(key)
+        and not isinstance(before.get(key), (dict, list))
+        and not isinstance(after.get(key), (dict, list))
+    )
 
 
 def _event(*, at, entity, action, actor=None, before_json=None, after_json=None):
@@ -111,7 +171,7 @@ def _event(*, at, entity, action, actor=None, before_json=None, after_json=None)
         'source_workstation': actor.get('source_workstation'),
         'before_json': before,
         'after_json': after,
-        'changed_fields': _changed_fields(before, after),
+        'changed_fields': _timeline_changed_fields(before, after),
     }
 
 

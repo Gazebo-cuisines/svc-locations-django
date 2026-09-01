@@ -8,6 +8,7 @@ from users_rbac.auth import attach_user
 from users_rbac.grants import PERIOD_FLAGS, grants_dict, has_global_access
 from users_rbac.models import (
     AdminAccess,
+    AdminArea,
     ProductionAccess,
     RbacAuditAction,
     WarehouseAccess,
@@ -40,6 +41,10 @@ def require_admin_area(request, area: str):
     if AdminAccess.objects.filter(user=request.rbac_user, area=area).exists():
         return None
     return deny_access(request, {'admin_area': area})
+
+
+def require_stock_management(request):
+    return require_admin_area(request, AdminArea.STOCK_MANAGEMENT)
 
 
 def require_production_area(request, area: str):
@@ -114,6 +119,22 @@ def gate_warehouse_write(*, action: str | None = None):
 
 def gate_floor_write(view_func):
     return _gate_write(view_func, require_floor_write)
+
+
+def gate_stock_management(view_func):
+    """Stock Management Tool — auth + stock_management admin area on every method."""
+
+    @wraps(view_func)
+    def wrapped(request, *args, **kwargs):
+        denied = attach_user(request)
+        if denied:
+            return denied
+        denied = require_stock_management(request)
+        if denied:
+            return denied
+        return view_func(request, *args, **kwargs)
+
+    return wrapped
 
 
 def require_warehouse(

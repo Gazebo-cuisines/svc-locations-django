@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django.db import models
@@ -41,6 +41,7 @@ from stock_ledger.stream import iter_sse, subscribe
 from stock_ledger.util import (
     entry_labels,
     entry_posting,
+    manage,
     reservations,
     scan,
     services,
@@ -61,7 +62,12 @@ from stock_ledger.util.conversions import (
     stock_to_kg,
     stock_to_packs,
 )
+from stock_ledger.util.manage import ManageRemoveError
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
+from stock_ledger.util.product_supplier_lookup import (
+    product_supplier_for_entry,
+    product_supplier_for_lot,
+)
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     receipt_meta_by_lot_ids,
@@ -75,8 +81,11 @@ from stock_ledger.util.recall import (
 )
 from stock_ledger.util.reports import (
     closing_balances_as_of,
+    consolidate_closing_balances,
     goods_out_movements_report,
     movements_report,
+    operator_activity_detail,
+    operator_activity_report,
 )
 from stock_ledger.util.closing_stock_email import (
     recipient_id_from_unsubscribe_token,
@@ -91,6 +100,7 @@ from users_rbac.auth import attach_user, client_ip
 from users_rbac.permissions import (
     gate_floor_write,
     gate_production_write,
+    gate_stock_management,
     gate_warehouse_write,
     require_any_admin,
 )
@@ -137,6 +147,19 @@ def _parse_date(value, field_name: str):
         return date.fromisoformat(str(value))
     except ValueError as exc:
         raise ValueError(f'Invalid date for {field_name}. Use YYYY-MM-DD.') from exc
+
+
+def _parse_clock(value, field_name: str):
+    """HH:MM or HH:MM:SS → time; empty → None."""
+    if value in (None, ''):
+        return None
+    text = str(value).strip()
+    for fmt in ('%H:%M:%S', '%H:%M'):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    raise ValueError(f'Invalid time for {field_name}. Use HH:MM.')
 
 
 def _format_display_date(value) -> str | None:
@@ -218,7 +241,7 @@ def entry_dict(entry: StockEntry) -> dict:
         from_loc, to_loc = location, counterparty
     else:
         from_loc, to_loc = counterparty, location
-    mapping = _product_supplier_for_entry(entry)
+    mapping = product_supplier_for_entry(entry)
     pack_quantity = None
     pack_unit_name = None
     shape_format_label = None
@@ -334,8 +357,10 @@ def entry_dict(entry: StockEntry) -> dict:
 def audit_event_dict(entry: StockEntry) -> dict:
     lot = entry.lot
     product = lot.product
-    return {
+    posting = entry_posting.get_posting(entry)
+    row = {
         'entry_id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
         'at': entry.recorded_at.isoformat() if entry.recorded_at else None,
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'action': entry.entry_type,
@@ -370,7 +395,12 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'source_workstation_ip': entry.source_workstation_ip,
         'device_serial': entry.device_serial,
         'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
+        'posting_status': posting.status if posting is not None else None,
     }
+    label = entry_labels.get_label(entry)
+    if label is not None:
+        row['label_status'] = label.status
+    return row
 
 
 def production_run_dict(run: ProductionRun) -> dict:
@@ -756,51 +786,6 @@ def _receipt_supplier_location_id(body: dict, lot: StockLot) -> int | None:
         if raw not in (None, ''):
             return int(raw)
     return None
-
-
-def _product_supplier_for_lot(lot):
-    if lot is None:
-        return None
-    if lot.product_supplier_id:
-        return (
-            ProductSupplier.objects
-            .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
-            .filter(pk=lot.product_supplier_id)
-            .first()
-        )
-    return (
-        ProductSupplier.objects
-        .filter(product_id=lot.product_id, is_active=True)
-        .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
-        .order_by('-is_default', '-id')
-        .first()
-    )
-
-
-def _product_supplier_for_entry(entry: StockEntry):
-    """Shape mapping stamped on the lot, else best-effort for receipts."""
-    lot = entry.lot
-    hit = _product_supplier_for_lot(lot)
-    if hit is not None:
-        return hit
-    if entry.entry_type != StockEntryType.RECEIPT:
-        return None
-    if lot is None or entry.counterparty_location_id is None:
-        return None
-    qs = (
-        ProductSupplier.objects
-        .filter(
-            product_id=lot.product_id,
-            supplier_id=entry.counterparty_location_id,
-            is_active=True,
-        )
-        .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
-    )
-    if lot.shape_format_id:
-        shaped = qs.filter(purchase_shape_format_id=lot.shape_format_id).first()
-        if shaped is not None:
-            return shaped
-    return qs.filter(is_default=True).first() or qs.order_by('-id').first()
 
 
 def _decode_bearer_claims(request) -> dict:
@@ -2316,19 +2301,15 @@ def entry_queued_list_api(request):
 @csrf_exempt
 @require_GET
 def audit_timeline_api(request):
-    """Stock audit timeline: who/what/when from immutable stock_entry rows."""
+    """Stock audit timeline: all stock_entry rows, newest recorded_at first."""
     qs = (
         StockEntry.objects.select_related(
             'unit',
             'location',
             'counterparty_location',
             'lot__product',
-        )
-        .exclude(
-            posting__status__in=[
-                StockEntryPostingStatus.QUEUED,
-                StockEntryPostingStatus.CANCELLED,
-            ],
+            'posting',
+            'label',
         )
         .order_by('-recorded_at', '-id')
     )
@@ -2343,6 +2324,7 @@ def audit_timeline_api(request):
         date_from = request.GET.get('date_from')
         date_to = request.GET.get('date_to')
         limit = request.GET.get('limit')
+        offset = request.GET.get('offset')
 
         if product_id not in (None, ''):
             qs = qs.filter(lot__product_id=int(product_id))
@@ -2368,11 +2350,25 @@ def audit_timeline_api(request):
 
         row_limit = int(limit) if limit not in (None, '') else 200
         row_limit = max(1, min(row_limit, 1000))
+        row_offset = int(offset) if offset not in (None, '') else 0
+        if row_offset < 0:
+            raise ValueError('offset must be >= 0.')
     except (TypeError, ValueError) as exc:
         return api_error(str(exc), status_code=400)
 
-    rows = [audit_event_dict(entry) for entry in qs[:row_limit]]
-    return api_success('Stock audit timeline fetched.', rows)
+    count = qs.count()
+    rows = [audit_event_dict(entry) for entry in qs[row_offset : row_offset + row_limit]]
+    return api_success(
+        'Stock audit timeline fetched.',
+        {
+            'items': rows,
+            'count': count,
+            'limit': row_limit,
+            'offset': row_offset,
+            'has_more': row_offset + len(rows) < count,
+            'order': 'recorded_at_desc',
+        },
+    )
 
 
 def _report_optional_filters(request):
@@ -2485,6 +2481,9 @@ def closing_stock_report_api(request):
         include_zero = str(request.GET.get('include_zero', '')).lower() in (
             '1', 'true', 'yes',
         )
+        view = (request.GET.get('view') or 'detail').strip().lower()
+        if view not in ('detail', 'consolidated'):
+            raise ValueError('Invalid view. Use detail or consolidated.')
     except (TypeError, ValueError) as exc:
         return api_error(str(exc), status_code=400)
 
@@ -2495,14 +2494,71 @@ def closing_stock_report_api(request):
         location_id=location_id,
         include_zero=include_zero,
     )
+    if view == 'consolidated':
+        rows = consolidate_closing_balances(rows)
     return api_success(
         'Closing stock report fetched.',
         {
             'as_of': as_of.isoformat(),
+            'view': view,
+            'group_by': 'product_shape' if view == 'consolidated' else None,
             'count': len(rows),
             'results': rows,
         },
     )
+
+
+def _operator_activity_window(request):
+    day = _parse_date(request.GET.get('date'), 'date')
+    if day is None:
+        raise ValueError('date is required (YYYY-MM-DD).')
+    from_time = _parse_clock(request.GET.get('from_time'), 'from_time')
+    to_time = _parse_clock(request.GET.get('to_time'), 'to_time')
+    if from_time is not None and to_time is not None and from_time > to_time:
+        raise ValueError('from_time must be on or before to_time.')
+    return day, from_time, to_time
+
+
+@csrf_exempt
+@require_GET
+def operator_activity_report_api(request):
+    """Manager day overview: operators, entries, scans, stock-in queue."""
+    try:
+        day, from_time, to_time = _operator_activity_window(request)
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    data = operator_activity_report(
+        day=day,
+        from_time=from_time,
+        to_time=to_time,
+    )
+    return api_success('Operator activity fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+def operator_activity_detail_api(request):
+    """Drill-down: one operator's stock entries in the day window."""
+    try:
+        day, from_time, to_time = _operator_activity_window(request)
+        user_id = request.GET.get('user_id')
+        if user_id in (None, ''):
+            return api_error('user_id is required.')
+        parsed_user_id = int(user_id)
+        limit = request.GET.get('limit')
+        row_limit = int(limit) if limit not in (None, '') else 200
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    data = operator_activity_detail(
+        day=day,
+        user_id=parsed_user_id,
+        from_time=from_time,
+        to_time=to_time,
+        limit=row_limit,
+    )
+    return api_success('Operator activity detail fetched.', data)
 
 
 def _recipient_dict(row: StockReportEmailRecipient) -> dict:
@@ -3116,7 +3172,7 @@ def scan_resolve_api(request):
     }
     stock_qty = Decimal(str(total or 0))
     data['display_kg'] = _dec(stock_to_kg(stock_qty, product))
-    mapping = _product_supplier_for_lot(match.get('lot'))
+    mapping = product_supplier_for_lot(match.get('lot'))
     if mapping is not None:
         try:
             data['pack_quantity'] = _dec(
@@ -3510,3 +3566,103 @@ def stock_units_reprint_api(request, unit_serial: str):
     data = stock_unit_dict(result['unit'])
     data['print_event_id'] = result['print_event_id']
     return api_success('Stock unit reprint recorded.', data, status_code=201)
+
+
+@csrf_exempt
+@require_GET
+@gate_stock_management
+def manage_ping_api(request):
+    """Health check for Stock Management Tool access (gated)."""
+    return api_success('Stock Management Tool access OK.', {'ok': True})
+
+
+@csrf_exempt
+@require_GET
+@gate_stock_management
+def manage_entries_list_api(request):
+    """Manager grid: searchable entry list, newest first."""
+    try:
+        product_id = request.GET.get('product_id')
+        location_id = request.GET.get('location_id')
+        entry_type = request.GET.get('entry_type')
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+        code = (request.GET.get('code') or '').strip()
+        limit = int(request.GET.get('limit') or 50)
+        offset = int(request.GET.get('offset') or 0)
+        limit = max(1, min(limit, 200))
+        if offset < 0:
+            raise ValueError('offset must be >= 0.')
+
+        parsed_product_id = int(product_id) if product_id not in (None, '') else None
+        parsed_location_id = int(location_id) if location_id not in (None, '') else None
+        parsed_date_from = (
+            _parse_date(date_from, 'date_from') if date_from not in (None, '') else None
+        )
+        parsed_date_to = (
+            _parse_date(date_to, 'date_to') if date_to not in (None, '') else None
+        )
+        entry_id = entry_labels.parse_entry_code(code) if code else None
+        if entry_id is None and code.upper().startswith('E') and code[1:].isdigit():
+            entry_id = int(code[1:])
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    data = manage.list_manage_entries(
+        product_id=parsed_product_id,
+        location_id=parsed_location_id,
+        entry_type=entry_type if entry_type not in (None, '') else None,
+        date_from=parsed_date_from,
+        date_to=parsed_date_to,
+        entry_id=entry_id,
+        limit=limit,
+        offset=offset,
+    )
+    return api_success('Manage entries fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+@gate_stock_management
+def manage_entry_preview_api(request, entry_id: int):
+    """Preview what removing an entry would undo (read-only)."""
+    try:
+        entry = manage.get_entry_for_manage(entry_id)
+    except StockEntry.DoesNotExist:
+        return api_error('Entry not found.', status_code=404)
+    data = manage.build_manage_detail(entry)
+    return api_success('Entry remove preview ready.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@gate_stock_management
+def manage_entry_remove_api(request, entry_id: int):
+    """Cancel a queued (unposted) entry and void its labels."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    try:
+        audit = _common_write_kwargs(request, body)
+        result = manage.remove_entry(
+            entry_id=entry_id,
+            reason=body['reason'],
+            idempotency_key=body['idempotency_key'],
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+        )
+    except StockEntry.DoesNotExist:
+        return api_error('Entry not found.', status_code=404)
+    except KeyError as exc:
+        return api_error(f'Missing required field: {exc.args[0]}')
+    except ManageRemoveError as exc:
+        return api_error(str(exc), status_code=exc.status_code)
+    message = (
+        'Entry was already removed.'
+        if result.get('idempotent')
+        else 'Entry reversed. Bin the old stickers and redo goods-in/out.'
+        if result.get('reversed_entry_codes')
+        else 'Entry removed. Bin the old stickers and redo goods-in.'
+    )
+    return api_success(message, result, status_code=201)
