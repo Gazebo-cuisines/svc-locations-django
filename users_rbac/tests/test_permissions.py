@@ -146,11 +146,9 @@ class PermissionHelperTests(TestCase):
             {'admin': 'any'},
         )
 
-    def test_stock_management_ok_and_denied(self):
+    def test_stock_management_ok_with_grant(self):
         AdminAccess.objects.create(user=self.user, area=AdminArea.STOCK_MANAGEMENT)
         self.assertIsNone(require_stock_management(self._req()))
-        response = require_stock_management(self._req())
-        self.assertIsNone(response)
 
     def test_stock_management_denied_for_floor(self):
         response = require_stock_management(self._req())

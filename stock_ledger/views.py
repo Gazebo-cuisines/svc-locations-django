@@ -41,6 +41,7 @@ from stock_ledger.stream import iter_sse, subscribe
 from stock_ledger.util import (
     entry_labels,
     entry_posting,
+    manage,
     reservations,
     scan,
     services,
@@ -3554,3 +3555,21 @@ def stock_units_reprint_api(request, unit_serial: str):
 def manage_ping_api(request):
     """Health check for Stock Management Tool access (gated)."""
     return api_success('Stock Management Tool access OK.', {'ok': True})
+
+
+@csrf_exempt
+@require_GET
+@gate_stock_management
+def manage_entry_preview_api(request, entry_id: int):
+    """Preview what removing an entry would undo (read-only)."""
+    try:
+        entry = manage.get_entry_for_manage(entry_id)
+    except StockEntry.DoesNotExist:
+        return api_error('Entry not found.', status_code=404)
+    data = manage.build_manage_detail(entry)
+    data['entry'] = entry_dict(entry)
+    if data['transfer_sibling'] is not None and entry.transfer_group_id:
+        sibling = manage.transfer_sibling(entry)
+        if sibling is not None:
+            data['transfer_sibling']['entry'] = entry_dict(sibling)
+    return api_success('Entry remove preview ready.', data)
