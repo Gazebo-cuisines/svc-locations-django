@@ -37,9 +37,17 @@ def supplier_pack_fields(
         'pack_unit_name': None,
         'shape_format_label': None,
         'display_kg': display_kg,
+        'product_supplier_id': None,
+        'supplier_code': None,
+        'sage_product_code': None,
+        'supplier_product_name': None,
     }
     if mapping is None or product is None:
         return fields
+    fields['product_supplier_id'] = mapping.id
+    fields['supplier_code'] = mapping.supplier_code
+    fields['sage_product_code'] = mapping.sage_product_code
+    fields['supplier_product_name'] = mapping.supplier_product_name
     fields['shape_format_label'] = mapping.shape_format_label
     fields['pack_unit_name'] = (
         mapping.outer_unit.name if mapping.outer_unit_id else None

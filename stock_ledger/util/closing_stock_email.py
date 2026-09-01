@@ -33,6 +33,12 @@ _CSV_FIELDS = (
     'unit_name',
     'quantity',
     'quantity_base',
+    'supplier_code',
+    'sage_product_code',
+    'shape_format_label',
+    'pack_quantity',
+    'pack_unit_name',
+    'display_kg',
 )
 
 
