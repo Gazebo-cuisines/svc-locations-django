@@ -21,7 +21,7 @@ from purchasing.services.stock_adjustment import (
     StockAdjustmentError,
     receive_stock_adjustment,
 )
-from stock_ledger.models import StockEntry, StockPeriod, StockPeriodStatus
+from stock_ledger.models import StockEntry
 
 
 class StockAdjustmentTests(TestCase):
@@ -59,11 +59,6 @@ class StockAdjustmentTests(TestCase):
             is_default=True,
             is_active=True,
         )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
-        )
 
     def test_requires_trace_and_use_by(self):
         with self.assertRaises(StockAdjustmentError) as ctx:
@@ -96,7 +91,7 @@ class StockAdjustmentTests(TestCase):
                 'label_count': 1,
             },
         )
-        self.assertEqual(result['stock_qty'], '10.000000')
+        self.assertEqual(result['stock_qty'], '10')
         self.assertEqual(result['trace_number'], 'ADJ-TRACE-1')
         self.assertEqual(len(result['receive_results']), 1)
         entry = StockEntry.objects.get(pk=result['stock_entry_id'])
@@ -120,7 +115,41 @@ class StockAdjustmentTests(TestCase):
                 'supplier_id': self.supplier.id,
             },
         )
-        self.assertEqual(result['stock_qty'], '3.000000')
+        self.assertEqual(result['stock_qty'], '3')
         entry = StockEntry.objects.get(pk=result['stock_entry_id'])
         self.assertEqual(entry.quantity, Decimal('3'))
         self.assertEqual(entry.source_document_type, 'stock_adjustment')
+
+    def test_pallet_label_count_prints_copies_one_entry(self):
+        use_by = (date.today() + timedelta(days=60)).isoformat()
+        result = receive_stock_adjustment(
+            body={
+                'idempotency_key': f'adj-pallet-copies-{uuid4()}',
+                'product_id': self.product.id,
+                'location_id': self.wh.id,
+                'product_supplier_id': self.mapping.id,
+                'quantity': '2',
+                'trace_number': 'ADJ-PALLET-3',
+                'use_by': use_by,
+                'label_format': 'pallet',
+                'label_count': 3,
+            },
+        )
+        self.assertEqual(result['label_count'], 3)
+        self.assertEqual(len(result['receive_results']), 1)
+        tx = result['receive_results'][0]
+        self.assertEqual(tx['label']['label_format'], 'pallet')
+        self.assertEqual(tx['label']['label_count'], 3)
+        self.assertEqual(tx['goods_in_label']['copies'], 3)
+        self.assertEqual(
+            tx['goods_in_label']['barcode'],
+            tx['entry_code'],
+        )
+        self.assertEqual(result['stock_qty'], '20')
+        self.assertEqual(
+            StockEntry.objects.filter(
+                source_document_type='stock_adjustment',
+                lot__trace_number='ADJ-PALLET-3',
+            ).count(),
+            1,
+        )

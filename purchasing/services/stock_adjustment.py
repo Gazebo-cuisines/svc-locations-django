@@ -95,7 +95,9 @@ def receive_stock_adjustment(
         mapping, receipt_qty, stock_qty, shape_label, shape_other, unit_id = (
             _resolve_shape(product=product, body=body)
         )
-        qty_parts = _split_quantities(receipt_qty, label_count)
+        # box → N stock rows; pallet → 1 row, label_count = print copies.
+        split_parts = 1 if label_format == 'pallet' else label_count
+        qty_parts = _split_quantities(receipt_qty, split_parts)
     except AdhocGoodsInError as exc:
         raise _wrap(exc) from exc
     except StockValidationError as exc:
@@ -103,8 +105,8 @@ def receive_stock_adjustment(
 
     unit_keys = (
         [idempotency_key]
-        if label_count == 1
-        else [f'{idempotency_key}:u:{i}' for i in range(1, label_count + 1)]
+        if split_parts == 1
+        else [f'{idempotency_key}:u:{i}' for i in range(1, split_parts + 1)]
     )
 
     queue_flag = body.get('queue_stock')
@@ -200,7 +202,9 @@ def receive_stock_adjustment(
             label = entry_labels.create_entry_label(
                 entry=entry,
                 label_format=label_format,
-                label_count=1,
+                label_count=(
+                    label_count if label_format == 'pallet' else 1
+                ),
                 actor_user_id=receipt_audit.get('actor_user_id'),
                 lan_username=receipt_audit.get('lan_username'),
                 source_workstation=receipt_audit.get('source_workstation'),

@@ -225,10 +225,7 @@ def create_entry_label(
         )
     if count < 1:
         raise StockValidationError('label_count must be >= 1.')
-    if fmt == StockEntryLabelFormat.PALLET and count != 1:
-        raise StockValidationError(
-            'label_format=pallet requires label_count=1.',
-        )
+    # pallet label_count = print copies of the same barcode (not N stock rows).
     existing = StockEntryLabel.objects.filter(stock_entry=entry).first()
     if existing is not None:
         return existing

@@ -569,8 +569,7 @@ def _label_plan(body: dict) -> tuple[str, int]:
             raise AdhocGoodsInError('label_count must be an integer.') from exc
     if count < 1:
         raise AdhocGoodsInError('label_count is required when label_format is set.')
-    if fmt == 'pallet' and count != 1:
-        raise AdhocGoodsInError('label_format=pallet requires label_count=1.')
+    # pallet: label_count = copies of one main barcode (stock stays one row).
     return fmt, count
 
 
@@ -680,10 +679,12 @@ def receive_adhoc_goods_in(
     idempotency_key = str(idempotency_key)
 
     label_format, label_count = _label_plan(body)
+    # box → N stock rows; pallet → 1 row, label_count = print copies.
+    split_parts = 1 if label_format == 'pallet' else label_count
     unit_keys = (
         [idempotency_key]
-        if label_count == 1
-        else [f'{idempotency_key}:u:{i}' for i in range(1, label_count + 1)]
+        if split_parts == 1
+        else [f'{idempotency_key}:u:{i}' for i in range(1, split_parts + 1)]
     )
     prior = StockEntry.objects.filter(idempotency_key=unit_keys[0]).first()
     if prior is not None and session.status == AdhocGoodsInStatus.RECEIVED:
@@ -765,7 +766,7 @@ def receive_adhoc_goods_in(
     }
     receipt_audit = {k: v for k, v in receipt_audit.items() if v is not None}
 
-    qty_parts = _split_quantities(receipt_qty, label_count)
+    qty_parts = _split_quantities(receipt_qty, split_parts)
     transactions = []
     last_entry = None
     for unit_index, (unit_key, part_qty) in enumerate(
@@ -811,7 +812,9 @@ def receive_adhoc_goods_in(
             label = entry_labels.create_entry_label(
                 entry=entry,
                 label_format=label_format,
-                label_count=1,
+                label_count=(
+                    label_count if label_format == 'pallet' else 1
+                ),
                 actor_user_id=receipt_audit.get('actor_user_id'),
                 lan_username=receipt_audit.get('lan_username'),
                 source_workstation=receipt_audit.get('source_workstation'),

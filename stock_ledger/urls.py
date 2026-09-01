@@ -42,7 +42,12 @@ urlpatterns = [
 
     # goods out scan logic
     path('scan/goods-out/', views.scan_goods_out_api, name='stock-scan-goods-out'),
-    
+    path(
+        'goods-out/suggest/',
+        views.goods_out_suggest_api,
+        name='stock-goods-out-suggest',
+    ),
+
     path('scan/', views.scan_resolve_api, name='stock-scan'),
     path('recall/', views.recall_api, name='stock-recall'),
     path('products/<int:product_id>/genealogy/', views.product_genealogy_api, name='stock-product-genealogy'),

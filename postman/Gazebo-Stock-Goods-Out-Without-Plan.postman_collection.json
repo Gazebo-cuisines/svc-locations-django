@@ -1,16 +1,20 @@
 {
   "info": {
     "name": "Gazebo - Stock Goods Out Without Plan",
-    "description": "Phase 2 Tab B — Goods Out without a planning requirement.\n\n**Flow:** warehouse product list → scan bag → FIFO/trace → dest auto from `product.destination_container` → `POST /stock/transfer/` queue (omit `requirement_ids` and optionally omit `to_location_id`) → print/verify/post.\n\n**Tables:** `stock_entry` transfer pair + `stock_entry_posting` / label (same as With plan).\n\n**Vars:** `{{base_url}}`, `{{location_id}}`, `{{code}}`, `{{lot_id}}`, `{{entry_id}}`, `{{quantity}}`",
+    "description": "Phase 2 Tab B — Goods Out without a planning requirement.\n\n**Flows:**\n1. **Qty-first batch (preferred):** product list → enter required kg → `GET /stock/goods-out/suggest/` → scan each suggested GI sticker (`GET /stock/scan/goods-out/`) into a cart → `POST /stock/transfer/` with `lines[]` → print/verify/post each OUT.\n2. **Scan-one:** scan bag → FIFO/trace → queue single (or `label_count` equal-split) transfer.\n\nDest auto from `product.destination_container`. Omit `requirement_ids`.\n\n**Tables:** `stock_entry` transfer pair + `stock_entry_posting` / label.\n\n**Vars:** `{{base_url}}`, `{{location_id}}`, `{{product_id}}`, `{{code}}`, `{{lot_id}}`, `{{entry_id}}`, `{{quantity}}`, `{{label_count}}`, `{{entry_id_2}}`, `{{lot_id_2}}`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "http://127.0.0.1:8000" },
     { "key": "location_id", "value": "8" },
+    { "key": "product_id", "value": "1" },
     { "key": "code", "value": "E725" },
     { "key": "lot_id", "value": "1" },
     { "key": "entry_id", "value": "725" },
-    { "key": "quantity", "value": "10" }
+    { "key": "lot_id_2", "value": "2" },
+    { "key": "entry_id_2", "value": "726" },
+    { "key": "quantity", "value": "40" },
+    { "key": "label_count", "value": "3" }
   ],
   "item": [
     {
@@ -31,6 +35,36 @@
           ]
         },
         "description": "### Warehouse remaining (product list)\n\n`GET /stock/warehouse/remaining/?location_id=`\n\nProduct list for Goods Out without plan browse. Same remaining API as the warehouse home screen.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | One warehouse; omit for all storage units |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: [ { location_id, location_name, products: [ { product_id, product_name, remaining_qty, … } ] } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+      }
+    },
+    {
+      "name": "Suggest FIFO picks by kg",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/goods-out/suggest/?product_id={{product_id}}&location_id={{location_id}}&quantity={{quantity}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "goods-out", "suggest", ""],
+          "query": [
+            {
+              "key": "product_id",
+              "value": "{{product_id}}",
+              "description": "Product to pick"
+            },
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "description": "Source warehouse"
+            },
+            {
+              "key": "quantity",
+              "value": "{{quantity}}",
+              "description": "Required ledger qty (kg when product unit is Kg)"
+            }
+          ]
+        },
+        "description": "### Suggest FIFO picks by kg\n\n`GET /stock/goods-out/suggest/`\n\nQty-first step for busy warehouses: enter required kg (e.g. 40), get the GI stickers to scan in FIFO order. Suggests **full sticker remaining** until coverage ≥ required (may overshoot). App then scans those `E{id}` codes on the floor into a cart and queues with `lines[]`.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `product_id` | yes | Product to pick |\n| `location_id` | yes | Source warehouse |\n| `quantity` | yes | Required ledger quantity (kg) |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods Out picks suggested.`\n\n`data`:\n\n| Field | Meaning |\n| --- | --- |\n| `required_quantity` | Echo of request qty |\n| `suggested_quantity` | Sum of pick qtys |\n| `shortfall` | `required − suggested` when stock is short (else `0`) |\n| `pick_count` / `picks[]` | FIFO GI stickers: `entry_id`, `entry_code`, `lot_id`, `trace_number`, `use_by`, `quantity`, `fifo_rank`, pack display fields |\n| `to_location_id` / `dest_ok` | Auto dest from product master |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Suggestion built (check `shortfall` / `dest_ok`) |\n| 400 | Missing/invalid params |\n| 404 | Unknown product |"
       }
     },
     {
@@ -55,13 +89,31 @@
             },
             {
               "key": "expected_product_id",
-              "value": "",
-              "disabled": true,
+              "value": "{{product_id}}",
               "description": "Optional — 409 wrong_product if mismatch"
             }
           ]
         },
-        "description": "### Scan bag for Goods Out\n\n`GET /stock/scan/goods-out/`\n\nScan-first popup for Without plan. Returns bag qty, FIFO/trace check (`fifo_ok`, `recommended_trace`), and **auto destination** from `product.destination_container` (`to_location_id`, `dest_ok`).\n\nMain floor control = **trace / FIFO**. Dest is not picked by the user.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `code` | yes | `E{id}` bag / sticker code |\n| `location_id` | yes | Source warehouse |\n| `expected_product_id` | no | Lock product when browsing from list |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: { product: { product_id, name, destination_container_id, destination_container_name }, lot_id, trace_number, quantity, fifo_ok, recommended_trace?, to_location_id, to_location_name, dest_ok, dest_message? } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Scan ok (check `fifo_ok` / `dest_ok`) |\n| 400 | Bad/incomplete code |\n| 409 | No stock here / wrong product |"
+        "description": "### Scan bag for Goods Out\n\n`GET /stock/scan/goods-out/`\n\nScan each warehouse GI sticker into the cart after suggest. Returns bag qty, FIFO/trace check (`fifo_ok`, `recommended_trace`), and **auto destination** from `product.destination_container` (`to_location_id`, `dest_ok`). Includes `pack_quantity` / `pack_unit_name` / `display_kg` when the product has a supplier pack mapping.\n\nMain floor control = **trace / FIFO**. Dest is not picked by the user.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `code` | yes | `E{id}` bag / sticker code |\n| `location_id` | yes | Source warehouse |\n| `expected_product_id` | no | Lock product from suggest / list |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: { product: { product_id, name, destination_container_id, destination_container_name }, lot_id, trace_number, quantity, pack_quantity?, pack_unit_name?, display_kg?, fifo_ok, recommended_trace?, to_location_id, to_location_name, dest_ok, dest_message? } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Scan ok (check `fifo_ok` / `dest_ok`) |\n| 400 | Bad/incomplete code |\n| 409 | No stock here / wrong product |"
+      }
+    },
+    {
+      "name": "Queue transfer multi-line cart",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"idempotency_key\": \"go-cart-{{$guid}}\",\n  \"from_location_id\": {{location_id}},\n  \"queue_stock\": true,\n  \"required_quantity\": \"{{quantity}}\",\n  \"lines\": [\n    {\n      \"lot_id\": {{lot_id}},\n      \"quantity\": \"25\",\n      \"source_entry_id\": {{entry_id}}\n    },\n    {\n      \"lot_id\": {{lot_id_2}},\n      \"quantity\": \"15\",\n      \"source_entry_id\": {{entry_id_2}}\n    }\n  ]\n}\n"
+        },
+        "url": {
+          "raw": "{{base_url}}/stock/transfer/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "transfer", ""]
+        },
+        "description": "### Queue Goods Out multi-line cart\n\n`POST /stock/transfer/`\n\nAfter scanning many GI stickers on the floor, queue once with `lines[]`. Each line is one sticker draw → one queued OUT barcode. Omit top-level `lot_id` / `quantity` / `source_entry_id`. Omit `to_location_id` and `requirement_ids` (without plan).\n\nFIFO is checked across the cart in order (taking earlier lines into account). One `fifo_override_reason` covers any line that skips oldest stock.\n\nOptional `required_quantity`: rejects if sum of line qtys is less (full boxes may overshoot).\n\nCannot combine with `label_count > 1` or `unit_moves`.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `idempotency_key` | yes | Base key; lines use `{key}:l:{i}` when N>1 |\n| `from_location_id` | yes | Source warehouse |\n| `queue_stock` | yes | `true` for print→verify |\n| `lines` | yes | Array of `{ lot_id, quantity, source_entry_id }` — same product |\n| `required_quantity` | no | Min total kg; error if picked sum is less |\n| `to_location_id` | no | Omit → product dest |\n| `requirement_ids` | no | **Omit** for without plan |\n| `fifo_override_reason` | if not FIFO | One reason for the batch |\n| `label_count` | no | **Not** allowed when greater than 1 with `lines` |\n\n**Response body**\n\n`message`: `Transfer queued.`\n\n`data`: `{ out, in, posting, label, goods_out_label, label_count, transaction_count, transactions[], required_quantity? }` — one transaction per line; print `transactions[i].goods_out_label`, then verify/post each.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Cart queued |\n| 400 | FIFO override, sticker remaining, short of required, mixed products, or `lines`+`label_count` |"
       }
     },
     {
@@ -80,7 +132,26 @@
           "host": ["{{base_url}}"],
           "path": ["stock", "transfer", ""]
         },
-        "description": "### Queue Goods Out without plan\n\n`POST /stock/transfer/`\n\nSame queue/print path as With plan, but **omit** `requirement_ids` and **omit** `to_location_id` so the server uses `product.destination_container`. Sets `source_document_type=goods_out_adhoc`.\n\nIf scanned lot is not FIFO oldest, send `fifo_override_reason` (same as classic Goods Out).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `idempotency_key` | yes | Unique key |\n| `lot_id` | yes | From scan |\n| `from_location_id` | yes | App warehouse |\n| `to_location_id` | no | Omit → product dest |\n| `quantity` | yes | Default full bag from scan |\n| `queue_stock` | yes | `true` for print→verify |\n| `source_entry_id` | no | Sticker draw-down |\n| `requirement_ids` | no | **Omit** for without plan |\n| `fifo_override_reason` | if not oldest | Audit reason |\n\n**Response body**\n\n`{ status, message, data: { out, in, posting, label, goods_out_label } }` — print from `goods_out_label`, then verify/post like Tab A.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Queued |\n| 400 | Missing dest on product, FIFO override required, qty too high |"
+        "description": "### Queue Goods Out without plan\n\n`POST /stock/transfer/`\n\nSame queue/print path as With plan, but **omit** `requirement_ids` and **omit** `to_location_id` so the server uses `product.destination_container`. Sets `source_document_type=goods_out_adhoc`.\n\nIf scanned lot is not FIFO oldest, send `fifo_override_reason` (same as classic Goods Out).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `idempotency_key` | yes | Unique key |\n| `lot_id` | yes | From scan |\n| `from_location_id` | yes | App warehouse |\n| `to_location_id` | no | Omit → product dest |\n| `quantity` | yes | Ledger qty (stock unit / grams) |\n| `queue_stock` | yes | `true` for print→verify |\n| `source_entry_id` | no | Sticker draw-down |\n| `requirement_ids` | no | **Omit** for without plan |\n| `fifo_override_reason` | if not oldest | Audit reason |\n| `label_format` | no | `pallet` or `box`; forces queue unless `queue_stock` explicitly false |\n| `label_count` | with format | `pallet` ⇒ 1; `box` ⇒ ≥1. Splits into N OUT barcodes |\n\n**Response body**\n\n`message`: `Transfer queued.`\n\n`data`: `{ out, in, posting, label, goods_out_label, label_format, label_count, transaction_count, transactions[] }` — top-level `out` / `goods_out_label` are the first unit (backward compatible). Each `transactions[i]` has its own `out`, `in`, `posting`, `label`, `goods_out_label` (`E{out_id}`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Queued |\n| 400 | Missing dest on product, FIFO override required, qty too high, bad label plan |"
+      }
+    },
+    {
+      "name": "Queue transfer multi-box labels",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"idempotency_key\": \"go-multi-{{$guid}}\",\n  \"lot_id\": {{lot_id}},\n  \"from_location_id\": {{location_id}},\n  \"quantity\": \"{{quantity}}\",\n  \"queue_stock\": true,\n  \"label_format\": \"box\",\n  \"label_count\": {{label_count}},\n  \"source_entry_id\": {{entry_id}}\n}\n"
+        },
+        "url": {
+          "raw": "{{base_url}}/stock/transfer/",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "transfer", ""]
+        },
+        "description": "### Queue Goods Out with one barcode per box\n\n`POST /stock/transfer/`\n\nSame without-plan transfer, but `label_format=box` + `label_count=N` splits `quantity` into N equal parts (remainder on the last). Creates N `transfer_out`/`transfer_in` pairs, each with its own queued posting and Goods OUT sticker (`E{out_id}`). Mirrors goods-in `label_count` on `POST /stock/receipt/`.\n\nApp flow: print all N labels → scan/verify each → `post_stock` on each (or last per app policy). Balance does not move until verify/post.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `idempotency_key` | yes | Base key; units use `{key}:u:{i}` when N>1 |\n| `lot_id` | yes | From scan |\n| `from_location_id` | yes | Source warehouse |\n| `to_location_id` | no | Omit → product dest |\n| `quantity` | yes | **Total** ledger qty across all boxes |\n| `queue_stock` | yes | `true` (also implied by `label_format`) |\n| `label_format` | yes | `box` (or `pallet` with count 1) |\n| `label_count` | yes | Number of OUT barcodes (≥1; pallet must be 1) |\n| `source_entry_id` | no | Goods-in sticker for draw-down (checked against total qty) |\n| `fifo_override_reason` | if not oldest | One override row per OUT entry |\n| `unit_moves` | no | **Not** allowed when `label_count` > 1 |\n\n**Response body**\n\n`message`: `Transfer queued.`\n\n`data.transactions[]`: length = `label_count`. Each item:\n\n| Field | Meaning |\n| --- | --- |\n| `unit_index` | 1…N |\n| `out` / `in` | Entry dicts for that part |\n| `posting` | Queued posting for the OUT leg |\n| `label` | Label state (`label_count` on the row is always 1 — one barcode per entry) |\n| `goods_out_label` | Print payload; `barcode` = `E{out.id}` |\n\nTop-level `out` / `goods_out_label` = first transaction (compat).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | N transfers queued |\n| 400 | Bad split, FIFO, sticker remaining, or `unit_moves` with N>1 |"
       }
     }
   ]
