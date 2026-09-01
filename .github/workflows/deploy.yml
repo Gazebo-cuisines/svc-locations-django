@@ -25,8 +25,6 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           SES_FROM_EMAIL: ${{ secrets.SES_FROM_EMAIL }}
           PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
-          DEV_SES_FROM_EMAIL: ${{ secrets.DEV_SES_FROM_EMAIL }}
-          DEV_PUBLIC_API_BASE_URL: ${{ secrets.DEV_PUBLIC_API_BASE_URL }}
         run: |
           set -e
           echo "Validating deployment secrets for branch: $BRANCH"
