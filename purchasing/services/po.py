@@ -121,10 +121,7 @@ def _parse_line_label(raw: dict, index: int) -> tuple[str | None, int | None]:
         raise PoValidationError(
             f'lines[{index}].label_count must be >= 1.',
         )
-    if fmt == 'pallet' and count != 1:
-        raise PoValidationError(
-            f'lines[{index}]: label_format=pallet requires label_count=1.',
-        )
+    # pallet: label_count = copies of one main barcode.
     return fmt, count
 
 
