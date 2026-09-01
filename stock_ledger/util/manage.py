@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from decimal import Decimal
 
 from django.db import transaction
@@ -16,6 +17,7 @@ from stock_ledger.models import (
     StockUnitStatus,
 )
 from stock_ledger.util import entry_labels, entry_posting, services, stock_units
+from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.services import PRODUCTION_SOURCE_DOC, _entry_is_reversed
 
 _ENTRY_SELECT = (
@@ -271,6 +273,67 @@ def _is_reverse_preview_executable(preview: dict, entry: StockEntry) -> bool:
     return all(row.get('step') == 'reverse' for row in will_undo)
 
 
+def _is_production_void_executable(preview: dict, entry: StockEntry) -> bool:
+    if preview['action'] != 'reverse':
+        return False
+    if entry.entry_type != StockEntryType.PRODUCTION_OUTPUT:
+        return False
+    will_undo = preview.get('will_undo') or []
+    if not will_undo:
+        return False
+    return all(row.get('step') == 'reverse' for row in will_undo)
+
+
+def _production_void_codes(preview: dict) -> tuple[list[str], list[int]]:
+    reversed_codes: list[str] = []
+    entry_ids: list[int] = []
+    for row in preview.get('will_undo') or []:
+        if row.get('step') != 'reverse':
+            continue
+        reversed_codes.append(row['entry_code'])
+        entry_ids.append(row['entry_id'])
+    return reversed_codes, entry_ids
+
+
+def _production_void_idempotency_key(manager_key: str, entry_id: int) -> str:
+    """Hash so production_void's :consume:{id} suffixes stay within varchar(64)."""
+    return hashlib.sha256(
+        f'{manager_key}:production_void:{entry_id}'.encode(),
+    ).hexdigest()[:44]
+
+
+def _execute_production_void(
+    entry: StockEntry,
+    preview: dict,
+    *,
+    reason: str,
+    idempotency_key: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+    source_workstation: str | None = None,
+) -> tuple[list[str], list[int]]:
+    void_kwargs = {
+        'remarks': f'Manager remove: {reason[:400]}',
+        'actor_user_id': actor_user_id,
+        'lan_username': lan_username,
+        'source_workstation': source_workstation,
+    }
+    if not _entry_is_reversed(entry):
+        try:
+            services.production_void(
+                entry_id=entry.id,
+                idempotency_key=_production_void_idempotency_key(
+                    idempotency_key,
+                    entry.id,
+                ),
+                **void_kwargs,
+            )
+        except StockValidationError as exc:
+            if 'already reversed' not in str(exc).lower():
+                raise ManageRemoveError(str(exc), status_code=409) from exc
+    return _production_void_codes(preview)
+
+
 def _execute_reverse_plan(
     preview: dict,
     *,
@@ -438,20 +501,35 @@ def remove_entry(
     voided_serials: list[str] = []
 
     if action == 'reverse':
-        if not _is_reverse_preview_executable(preview, entry):
-            if entry.entry_type == StockEntryType.PRODUCTION_OUTPUT:
-                msg = 'Production void is not available yet.'
-            else:
-                msg = 'This remove is not available yet.'
-            raise ManageRemoveError(msg, status_code=409)
-        reversed_codes, void_entry_ids = _execute_reverse_plan(
-            preview,
-            reason=reason,
-            idempotency_key=key,
-            actor_user_id=actor_user_id,
-            lan_username=lan_username,
-            source_workstation=source_workstation,
-        )
+        if entry.entry_type == StockEntryType.PRODUCTION_OUTPUT:
+            if not _is_production_void_executable(preview, entry):
+                raise ManageRemoveError(
+                    'This production remove is not available yet.',
+                    status_code=409,
+                )
+            reversed_codes, void_entry_ids = _execute_production_void(
+                entry,
+                preview,
+                reason=reason,
+                idempotency_key=key,
+                actor_user_id=actor_user_id,
+                lan_username=lan_username,
+                source_workstation=source_workstation,
+            )
+        elif _is_reverse_preview_executable(preview, entry):
+            reversed_codes, void_entry_ids = _execute_reverse_plan(
+                preview,
+                reason=reason,
+                idempotency_key=key,
+                actor_user_id=actor_user_id,
+                lan_username=lan_username,
+                source_workstation=source_workstation,
+            )
+        else:
+            raise ManageRemoveError(
+                'This remove is not available yet.',
+                status_code=409,
+            )
         voided_serials = _void_units_for_entries(
             void_entry_ids,
             reason=reason,

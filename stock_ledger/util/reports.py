@@ -70,6 +70,11 @@ def _posted_entries():
     return StockEntry.objects.exclude(posting__status__in=_POSTED_EXCLUDE)
 
 
+def _operational_movement_entries():
+    """Posted rows still visible on goods-in/out (excludes manager-removed originals)."""
+    return _posted_entries().filter(reversed_by__isnull=True)
+
+
 def _apply_product_filters(qs, *, product_id=None, goods_in_type=None, location_id=None):
     if product_id is not None:
         qs = qs.filter(lot__product_id=product_id)
@@ -145,7 +150,7 @@ def movements_report(
         raise ValueError('entry_type or entry_types is required')
     row_limit = max(1, min(int(limit), _MAX_LIMIT))
     qs = (
-        _posted_entries()
+        _operational_movement_entries()
         .filter(
             entry_type__in=types,
             effective_at__date__gte=date_from,

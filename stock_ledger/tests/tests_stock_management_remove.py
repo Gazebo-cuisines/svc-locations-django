@@ -9,6 +9,7 @@ from django.test import Client, TestCase
 from django.utils import timezone
 
 from locations.models import Location
+from planning.models import Resource
 from product.models import Category, Product, ProductClass, ProductLabelMode, Range, Unit
 from stock_ledger.models import (
     StockBalance,
@@ -57,6 +58,30 @@ class StockManagementRemoveTests(TestCase):
             trace_number=f'T{uuid4().hex[:8]}',
             origin=StockLotOrigin.PURCHASE,
             use_by=date(2026, 12, 1),
+        )
+        self.resource = Resource.objects.create(
+            id=995,
+            code='RM-RES',
+            name='RM Resource',
+            location=self.wh,
+            is_active=True,
+        )
+        self.fg_product = Product.objects.create(
+            name=f'RM FG {uuid4().hex[:8]}',
+            recipe_code=f'FG{uuid4().hex[:6]}',
+            product_class_id=93,
+            category_id=93,
+            range_id=93,
+            unit=self.unit,
+            source_container=self.wh,
+            destination_container=self.wh,
+        )
+        self.fg_lot = StockLot.objects.create(
+            product=self.fg_product,
+            trace_number=f'F{uuid4().hex[:8]}',
+            origin=StockLotOrigin.PRODUCTION,
+            use_by=date(2026, 12, 15),
+            production_date=date(2026, 9, 1),
         )
         self.posted = services.receipt(
             idempotency_key=f'rm-posted-{uuid4()}',
@@ -243,6 +268,87 @@ class StockManagementRemoveTests(TestCase):
             location_id=self.dest.id,
         ).first()
         self.assertTrue(dest_bal is None or dest_bal.quantity == 0)
+
+    def test_production_output_void(self):
+        output, _run = services.production_output(
+            idempotency_key=f'rm-made-{uuid4()}',
+            lot=self.fg_lot,
+            location_id=self.wh.id,
+            quantity=Decimal('20'),
+            resource_id=self.resource.id,
+            base_date=date(2026, 9, 1),
+        )
+        cons = services.production_consume(
+            idempotency_key=f'rm-cons-{uuid4()}',
+            output_entry_id=output.id,
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+        )
+        rm_before = StockBalance.objects.get(lot=self.lot, location_id=self.wh.id)
+        self.assertEqual(rm_before.quantity, Decimal('95'))
+
+        resp = self._post_remove(output.id, user=self.manager)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        codes = resp.json()['data']['reversed_entry_codes']
+        self.assertEqual(codes, [f'E{cons.id}', f'E{output.id}'])
+
+        rm_before.refresh_from_db()
+        self.assertEqual(rm_before.quantity, Decimal('100'))
+        fg_bal = StockBalance.objects.filter(
+            lot=self.fg_lot,
+            location_id=self.wh.id,
+        ).first()
+        self.assertTrue(fg_bal is None or fg_bal.quantity == 0)
+
+    def test_production_consumption_direct_still_blocked(self):
+        output, _run = services.production_output(
+            idempotency_key=f'rm-made2-{uuid4()}',
+            lot=self.fg_lot,
+            location_id=self.wh.id,
+            quantity=Decimal('20'),
+            resource_id=self.resource.id,
+            base_date=date(2026, 9, 1),
+        )
+        cons = services.production_consume(
+            idempotency_key=f'rm-cons2-{uuid4()}',
+            output_entry_id=output.id,
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+        )
+        resp = self._post_remove(cons.id, user=self.manager)
+        self.assertEqual(resp.status_code, 409, resp.content)
+        self.assertIn('production', resp.json()['message'].lower())
+
+    def test_receipt_blocked_until_production_voided(self):
+        output, _run = services.production_output(
+            idempotency_key=f'rm-made3-{uuid4()}',
+            lot=self.fg_lot,
+            location_id=self.wh.id,
+            quantity=Decimal('20'),
+            resource_id=self.resource.id,
+            base_date=date(2026, 9, 1),
+        )
+        services.production_consume(
+            idempotency_key=f'rm-cons3-{uuid4()}',
+            output_entry_id=output.id,
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            source_entry=self.posted,
+        )
+        blocked = self._post_remove(self.posted.id, user=self.manager)
+        self.assertEqual(blocked.status_code, 409, blocked.content)
+
+        void_prod = self._post_remove(output.id, user=self.manager)
+        self.assertEqual(void_prod.status_code, 201, void_prod.content)
+
+        unblocked = self._post_remove(self.posted.id, user=self.manager)
+        self.assertEqual(unblocked.status_code, 201, unblocked.content)
 
     def test_reverse_is_idempotent(self):
         key = f'rm-rev-idem-{uuid4()}'
