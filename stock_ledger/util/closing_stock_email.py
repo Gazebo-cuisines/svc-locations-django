@@ -26,6 +26,7 @@ _CSV_FIELDS = (
     'goods_in_type',
     'lot_id',
     'trace_number',
+    'production_date',
     'use_by',
     'location_id',
     'location_name',

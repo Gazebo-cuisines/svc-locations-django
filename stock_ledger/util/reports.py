@@ -102,6 +102,11 @@ def movement_row(entry: StockEntry) -> dict:
         'goods_in_type': product.goods_in_type if product is not None else None,
         'lot_id': entry.lot_id,
         'trace_number': lot.trace_number if lot is not None else None,
+        'production_date': (
+            lot.production_date.isoformat()
+            if lot is not None and lot.production_date
+            else None
+        ),
         'use_by': lot.use_by.isoformat() if lot is not None and lot.use_by else None,
         'location_id': entry.location_id,
         'location_name': location.name if location is not None else None,
@@ -202,6 +207,7 @@ def closing_balances_as_of(
             'lot__product__unit_id',
             'lot__product__unit__name',
             'lot__trace_number',
+            'lot__production_date',
             'lot__use_by',
             'location__name',
         )
@@ -230,6 +236,7 @@ def closing_balances_as_of(
         if not include_zero and qty == 0:
             continue
         use_by = row['lot__use_by']
+        production_date = row['lot__production_date']
         lot = lots_by_id.get(row['lot_id'])
         product = lot.product if lot is not None else Product(
             id=row['lot__product_id'],
@@ -246,6 +253,9 @@ def closing_balances_as_of(
             'goods_in_type': row['lot__product__goods_in_type'],
             'lot_id': row['lot_id'],
             'trace_number': row['lot__trace_number'],
+            'production_date': (
+                production_date.isoformat() if production_date else None
+            ),
             'use_by': use_by.isoformat() if use_by else None,
             'location_id': row['location_id'],
             'location_name': row['location__name'],
@@ -261,7 +271,7 @@ def closing_balances_as_of(
 def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
     """
     Roll up lot×location detail into product × product_supplier (shape) totals.
-    earliest_use_by / latest_use_by across lots in the group (best-before window).
+    earliest/latest use_by and production_date across lots in the group.
     """
     buckets: dict[tuple, dict] = {}
     for row in detail_rows:
@@ -270,6 +280,7 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
         qty_base = row.get('quantity_base')
         base = Decimal(str(qty_base)) if qty_base not in (None, '') else None
         use_by = row.get('use_by')
+        production_date = row.get('production_date')
         loc_id = row.get('location_id')
         lot_id = row.get('lot_id')
 
@@ -295,6 +306,9 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
                 '_lot_ids': {lot_id} if lot_id is not None else set(),
                 '_loc_ids': {loc_id} if loc_id is not None else set(),
                 '_use_bys': {use_by} if use_by else set(),
+                '_production_dates': (
+                    {production_date} if production_date else set()
+                ),
                 '_product': Product(
                     id=row.get('product_id'),
                     unit_id=row.get('unit_id'),
@@ -313,6 +327,8 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
             bucket['_loc_ids'].add(loc_id)
         if use_by:
             bucket['_use_bys'].add(use_by)
+        if production_date:
+            bucket['_production_dates'].add(production_date)
 
     ps_ids = {
         b['product_supplier_id']
@@ -333,16 +349,24 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
         lot_ids = bucket.pop('_lot_ids')
         loc_ids = bucket.pop('_loc_ids')
         use_bys = bucket.pop('_use_bys')
+        production_dates = bucket.pop('_production_dates')
         product = bucket.pop('_product')
         mapping = mappings.get(bucket.get('product_supplier_id'))
         pack = supplier_pack_fields(abs(qty), product, mapping)
         use_sorted = sorted(use_bys)
+        prod_sorted = sorted(production_dates)
         out.append({
             **bucket,
             'quantity': _dec(qty),
             'quantity_base': _dec(qty_base),
             'earliest_use_by': use_sorted[0] if use_sorted else None,
             'latest_use_by': use_sorted[-1] if use_sorted else None,
+            'earliest_production_date': (
+                prod_sorted[0] if prod_sorted else None
+            ),
+            'latest_production_date': (
+                prod_sorted[-1] if prod_sorted else None
+            ),
             'lot_count': len(lot_ids),
             'location_count': len(loc_ids),
             **pack,
