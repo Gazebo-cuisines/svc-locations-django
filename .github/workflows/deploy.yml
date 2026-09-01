@@ -25,6 +25,8 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           SES_FROM_EMAIL: ${{ secrets.SES_FROM_EMAIL }}
           PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
+          DEV_SES_FROM_EMAIL: ${{ secrets.DEV_SES_FROM_EMAIL }}
+          DEV_PUBLIC_API_BASE_URL: ${{ secrets.DEV_PUBLIC_API_BASE_URL }}
         run: |
           set -e
           echo "Validating deployment secrets for branch: $BRANCH"
@@ -76,38 +78,39 @@ jobs:
             git clean -fdq || true
 
             # Upsert SES/email env into .env so gunicorn loads them
+            echo "Updating .env (AWS_DEFAULT_REGION, SES_FROM_EMAIL, PUBLIC_API_BASE_URL)"
             ENV_FILE="$APP_DIR/.env"
             touch "$ENV_FILE"
-            upsert_env() {
-              key="$1"
-              val="$2"
-              if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
-                sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
-              else
-                printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
-              fi
-            }
-            upsert_env "AWS_DEFAULT_REGION" "${AWS_DEFAULT_REGION:-eu-west-2}"
-            upsert_env "SES_FROM_EMAIL" "${SES_FROM_EMAIL}"
-            upsert_env "PUBLIC_API_BASE_URL" "${PUBLIC_API_BASE_URL}"
+            TMP_ENV="$(mktemp)"
+            grep -vE '^(AWS_DEFAULT_REGION|SES_FROM_EMAIL|PUBLIC_API_BASE_URL)=' "$ENV_FILE" > "$TMP_ENV" || true
+            printf '%s=%s\n' "AWS_DEFAULT_REGION" "${AWS_DEFAULT_REGION:-eu-west-2}" >> "$TMP_ENV"
+            printf '%s=%s\n' "SES_FROM_EMAIL" "${SES_FROM_EMAIL}" >> "$TMP_ENV"
+            printf '%s=%s\n' "PUBLIC_API_BASE_URL" "${PUBLIC_API_BASE_URL}" >> "$TMP_ENV"
+            mv "$TMP_ENV" "$ENV_FILE"
+            echo "Updated .env keys"
 
             # Install deps then migrate before restarting the app
             if [ -f "venv/bin/activate" ]; then
               # shellcheck disable=SC1091
               . venv/bin/activate
             fi
+            echo "Installing requirements"
             pip install -r requirements.txt
+            echo "Running migrations"
             python manage.py migrate --noinput
 
             if systemctl list-unit-files | grep -q "gunicorn-locations.service"; then
+              echo "Restarting gunicorn-locations"
               sudo systemctl restart gunicorn-locations.service
               sleep 2
               sudo systemctl is-active --quiet gunicorn-locations.service || (sudo systemctl status gunicorn-locations.service --no-pager && exit 1)
             fi
 
             if systemctl list-unit-files | grep -q "nginx.service"; then
+              echo "Restarting nginx"
               sudo nginx -t
               sudo systemctl restart nginx
               sleep 1
               sudo systemctl is-active --quiet nginx || (sudo systemctl status nginx --no-pager && exit 1)
             fi
+            echo "Deploy finished"
