@@ -27,7 +27,8 @@ WAREHOUSE_UNIT_LOCATION_IDS = {
 
 
 def has_global_access(user: RbacUser) -> bool:
-    return UserDepartment.objects.filter(user=user, department=Department.IT).exists()
+    """Deprecated bypass — access is grant-based only."""
+    return False
 
 
 def is_admin_user(user: RbacUser) -> bool:

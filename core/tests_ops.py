@@ -7,7 +7,7 @@ from core.http_audit import _redact
 from core.middleware import OpsErrorMiddleware
 from core.models import ErrorTicket, ErrorTicketStatus
 from core.ops import record_error
-from users_rbac.models import Department, RbacUser, UserDepartment
+from users_rbac.models import AdminAccess, AdminArea, Department, RbacUser, UserDepartment
 
 
 class ErrorTicketTests(TestCase):
@@ -22,7 +22,8 @@ class ErrorTicketTests(TestCase):
             username='admin01',
             display_name='Admin',
         )
-        UserDepartment.objects.create(user=self.admin, department=Department.IT)
+        UserDepartment.objects.create(user=self.admin, department=Department.ADMIN)
+        AdminAccess.objects.create(user=self.admin, area=AdminArea.TECHNICAL)
         self.audit = patch('core.http_audit._start_audit')
         self.mock_audit = self.audit.start()
         self.addCleanup(self.audit.stop)
