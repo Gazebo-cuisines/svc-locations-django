@@ -55,6 +55,7 @@ from purchasing.services.receive import ReceiveError, receive_purchase_order
 from purchasing.services.release import ReleaseError, release_from_quarantine
 from purchasing.services.po import (
     PoValidationError,
+    amend_purchase_order,
     create_purchase_order,
     get_purchase_order,
     list_purchase_orders,
@@ -173,6 +174,21 @@ def po_detail_api(request, po_id: int):
         return api_error(msg, status_code=status)
 
     return api_success('Purchase order updated successfully.', po_detail_dict(po))
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_amend_api(request, po_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        po = amend_purchase_order(po_id, body=body, actor=actor_json(request))
+    except PoValidationError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Purchase order amended successfully.', po_detail_dict(po))
 
 
 @csrf_exempt

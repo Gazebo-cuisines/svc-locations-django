@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django.db import models
@@ -62,6 +62,10 @@ from stock_ledger.util.conversions import (
     stock_to_packs,
 )
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
+from stock_ledger.util.product_supplier_lookup import (
+    product_supplier_for_entry,
+    product_supplier_for_lot,
+)
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
     receipt_meta_by_lot_ids,
@@ -75,8 +79,11 @@ from stock_ledger.util.recall import (
 )
 from stock_ledger.util.reports import (
     closing_balances_as_of,
+    consolidate_closing_balances,
     goods_out_movements_report,
     movements_report,
+    operator_activity_detail,
+    operator_activity_report,
 )
 from stock_ledger.util.closing_stock_email import (
     recipient_id_from_unsubscribe_token,
@@ -137,6 +144,19 @@ def _parse_date(value, field_name: str):
         return date.fromisoformat(str(value))
     except ValueError as exc:
         raise ValueError(f'Invalid date for {field_name}. Use YYYY-MM-DD.') from exc
+
+
+def _parse_clock(value, field_name: str):
+    """HH:MM or HH:MM:SS → time; empty → None."""
+    if value in (None, ''):
+        return None
+    text = str(value).strip()
+    for fmt in ('%H:%M:%S', '%H:%M'):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    raise ValueError(f'Invalid time for {field_name}. Use HH:MM.')
 
 
 def _format_display_date(value) -> str | None:
@@ -218,7 +238,7 @@ def entry_dict(entry: StockEntry) -> dict:
         from_loc, to_loc = location, counterparty
     else:
         from_loc, to_loc = counterparty, location
-    mapping = _product_supplier_for_entry(entry)
+    mapping = product_supplier_for_entry(entry)
     pack_quantity = None
     pack_unit_name = None
     shape_format_label = None
@@ -756,51 +776,6 @@ def _receipt_supplier_location_id(body: dict, lot: StockLot) -> int | None:
         if raw not in (None, ''):
             return int(raw)
     return None
-
-
-def _product_supplier_for_lot(lot):
-    if lot is None:
-        return None
-    if lot.product_supplier_id:
-        return (
-            ProductSupplier.objects
-            .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
-            .filter(pk=lot.product_supplier_id)
-            .first()
-        )
-    return (
-        ProductSupplier.objects
-        .filter(product_id=lot.product_id, is_active=True)
-        .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
-        .order_by('-is_default', '-id')
-        .first()
-    )
-
-
-def _product_supplier_for_entry(entry: StockEntry):
-    """Shape mapping stamped on the lot, else best-effort for receipts."""
-    lot = entry.lot
-    hit = _product_supplier_for_lot(lot)
-    if hit is not None:
-        return hit
-    if entry.entry_type != StockEntryType.RECEIPT:
-        return None
-    if lot is None or entry.counterparty_location_id is None:
-        return None
-    qs = (
-        ProductSupplier.objects
-        .filter(
-            product_id=lot.product_id,
-            supplier_id=entry.counterparty_location_id,
-            is_active=True,
-        )
-        .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')
-    )
-    if lot.shape_format_id:
-        shaped = qs.filter(purchase_shape_format_id=lot.shape_format_id).first()
-        if shaped is not None:
-            return shaped
-    return qs.filter(is_default=True).first() or qs.order_by('-id').first()
 
 
 def _decode_bearer_claims(request) -> dict:
@@ -2485,6 +2460,9 @@ def closing_stock_report_api(request):
         include_zero = str(request.GET.get('include_zero', '')).lower() in (
             '1', 'true', 'yes',
         )
+        view = (request.GET.get('view') or 'detail').strip().lower()
+        if view not in ('detail', 'consolidated'):
+            raise ValueError('Invalid view. Use detail or consolidated.')
     except (TypeError, ValueError) as exc:
         return api_error(str(exc), status_code=400)
 
@@ -2495,14 +2473,71 @@ def closing_stock_report_api(request):
         location_id=location_id,
         include_zero=include_zero,
     )
+    if view == 'consolidated':
+        rows = consolidate_closing_balances(rows)
     return api_success(
         'Closing stock report fetched.',
         {
             'as_of': as_of.isoformat(),
+            'view': view,
+            'group_by': 'product_shape' if view == 'consolidated' else None,
             'count': len(rows),
             'results': rows,
         },
     )
+
+
+def _operator_activity_window(request):
+    day = _parse_date(request.GET.get('date'), 'date')
+    if day is None:
+        raise ValueError('date is required (YYYY-MM-DD).')
+    from_time = _parse_clock(request.GET.get('from_time'), 'from_time')
+    to_time = _parse_clock(request.GET.get('to_time'), 'to_time')
+    if from_time is not None and to_time is not None and from_time > to_time:
+        raise ValueError('from_time must be on or before to_time.')
+    return day, from_time, to_time
+
+
+@csrf_exempt
+@require_GET
+def operator_activity_report_api(request):
+    """Manager day overview: operators, entries, scans, stock-in queue."""
+    try:
+        day, from_time, to_time = _operator_activity_window(request)
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    data = operator_activity_report(
+        day=day,
+        from_time=from_time,
+        to_time=to_time,
+    )
+    return api_success('Operator activity fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+def operator_activity_detail_api(request):
+    """Drill-down: one operator's stock entries in the day window."""
+    try:
+        day, from_time, to_time = _operator_activity_window(request)
+        user_id = request.GET.get('user_id')
+        if user_id in (None, ''):
+            return api_error('user_id is required.')
+        parsed_user_id = int(user_id)
+        limit = request.GET.get('limit')
+        row_limit = int(limit) if limit not in (None, '') else 200
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    data = operator_activity_detail(
+        day=day,
+        user_id=parsed_user_id,
+        from_time=from_time,
+        to_time=to_time,
+        limit=row_limit,
+    )
+    return api_success('Operator activity detail fetched.', data)
 
 
 def _recipient_dict(row: StockReportEmailRecipient) -> dict:
@@ -3116,7 +3151,7 @@ def scan_resolve_api(request):
     }
     stock_qty = Decimal(str(total or 0))
     data['display_kg'] = _dec(stock_to_kg(stock_qty, product))
-    mapping = _product_supplier_for_lot(match.get('lot'))
+    mapping = product_supplier_for_lot(match.get('lot'))
     if mapping is not None:
         try:
             data['pack_quantity'] = _dec(
