@@ -102,6 +102,7 @@ urlpatterns = [
     path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),
     path('warehouse/remaining/', views.warehouse_remaining_api, name='stock-warehouse-remaining'),
     path('manage/ping/', views.manage_ping_api, name='stock-manage-ping'),
+    path('manage/entries/', views.manage_entries_list_api, name='stock-manage-entries-list'),
     path(
         'manage/entries/<int:entry_id>/',
         views.manage_entry_preview_api,

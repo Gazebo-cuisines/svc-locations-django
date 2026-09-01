@@ -47,6 +47,13 @@ class StockManagementHideOpsTests(TestCase):
             use_by=date(2026, 12, 1),
         )
         self.today = timezone.localdate()
+        self.client = Client()
+        self.floor = RbacUser.objects.create(
+            cognito_sub='sub-floor-hide',
+            username='floorhide',
+            display_name='Floor Hide',
+        )
+        UserDepartment.objects.create(user=self.floor, department=Department.WAREHOUSE)
         self.posted = services.receipt(
             idempotency_key=f'hide-posted-{uuid4()}',
             lot=self.lot,
@@ -54,8 +61,9 @@ class StockManagementHideOpsTests(TestCase):
             quantity=Decimal('100'),
             unit_id=self.unit.id,
             effective_at=timezone.now(),
+            actor_user_id=self.floor.id,
+            lan_username='floorhide',
         )
-        self.client = Client()
         self.manager = RbacUser.objects.create(
             cognito_sub='sub-mgr-hide',
             username='mgrhide',
@@ -174,5 +182,57 @@ class StockManagementHideOpsTests(TestCase):
             f'/stock/audit/timeline/?product_id={self.product.id}',
         )
         self.assertEqual(timeline.status_code, 200, timeline.content)
-        entry_ids = {row['entry_id'] for row in timeline.json()['data']}
+        entry_ids = {row['entry_id'] for row in timeline.json()['data']['items']}
         self.assertIn(self.posted.id, entry_ids)
+
+    def _me_activity(self, user):
+        with patch('users_rbac.auth.attach_user') as mock_attach:
+            def _set_user(request, **kwargs):
+                request.rbac_user = user
+                return None
+
+            mock_attach.side_effect = _set_user
+            return self.client.get('/auth/me/activity/')
+
+    def test_me_activity_flags_manager_removed_posted_receipt(self):
+        resp = self._post_remove(self.posted.id)
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+        activity = self._me_activity(self.floor)
+        self.assertEqual(activity.status_code, 200, activity.content)
+        row = next(
+            item for item in activity.json()['data']['items']
+            if item['entry_id'] == self.posted.id
+        )
+        self.assertFalse(row['is_live'])
+        self.assertTrue(row['is_removed'])
+        self.assertTrue(row['manager_removed'])
+        self.assertEqual(row['remove_reason'], 'Wrong label')
+        self.assertEqual(row['entry_code'], f'E{self.posted.id}')
+        self.assertEqual(row['ui_status'], 'removed')
+        self.assertFalse(row['can_reprint_label'])
+
+    def test_me_activity_flags_manager_cancelled_queued_receipt(self):
+        entry = services.receipt(
+            idempotency_key=f'hide-q-act-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('40'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            defer_balance=True,
+            actor_user_id=self.floor.id,
+            lan_username='floorhide',
+        )
+        entry_posting.queue_entry(entry=entry)
+        resp = self._post_remove(entry.id)
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+        activity = self._me_activity(self.floor)
+        row = next(
+            item for item in activity.json()['data']['items']
+            if item['entry_id'] == entry.id
+        )
+        self.assertFalse(row['is_live'])
+        self.assertTrue(row['manager_removed'])
+        self.assertEqual(row['remove_reason'], 'Wrong label')

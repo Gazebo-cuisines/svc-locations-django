@@ -17,7 +17,7 @@ from stock_ledger.util import entry_labels, stock_units
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.services import _entry_is_reversed
 
-_VOID_LABEL_MSG = 'This sticker is void. Do not use.'
+_VOID_LABEL_MSG = 'This barcode is void. Do not use.'
 
 # Bracketed GS1 AI form, e.g. (01)05012345678901(10)26218(21)ABC. Only needed so
 # legacy per-unit serial labels keep scanning; product labels carry P<id> alone.

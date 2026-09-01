@@ -10,6 +10,9 @@ def product_supplier_for_lot(lot):
     if lot is None:
         return None
     if lot.product_supplier_id:
+        cached = getattr(lot, 'product_supplier', None)
+        if cached is not None:
+            return cached
         return (
             ProductSupplier.objects
             .select_related('outer_unit', 'inner_unit', 'purchase_shape_format')

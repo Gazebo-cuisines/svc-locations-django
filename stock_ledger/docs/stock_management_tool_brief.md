@@ -49,6 +49,24 @@ This tool gives managers one clear flow: **remove the bad transaction, then redo
 
 ---
 
+## Can you bring back a removed transaction?
+
+**No.** There is no "undo remove" API.
+
+Remove cancels or reverses the row and **voids the stickers**. That cannot be rolled back in one click.
+
+| After remove | Can you undo? |
+|--------------|---------------|
+| Cancelled (unposted) | No — posting stays cancelled |
+| Reversed (posted) | No — each row reverses only once |
+| Void stickers (`E{id}`) | No — old labels must be binned |
+
+**If remove was a mistake:** redo the correct transaction on normal **goods-in** or **goods-out**. You get a **new entry and new sticker**. Do not reuse the old one.
+
+The full history (original, reversal, reason, who, when) stays on the **audit timeline** for investigation — but ops screens treat removed rows as gone.
+
+---
+
 ## Manager message after Remove
 
 > Redo this on goods-in or goods-out. Bin the old stickers.

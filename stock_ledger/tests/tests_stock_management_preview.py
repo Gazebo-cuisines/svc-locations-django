@@ -199,3 +199,36 @@ class StockManagementPreviewTests(TestCase):
     def test_missing_entry_404(self):
         resp = self._get_preview(999999999, user=self.manager)
         self.assertEqual(resp.status_code, 404, resp.content)
+
+    def test_manage_entries_list_newest_first(self):
+        older = services.receipt(
+            idempotency_key=f'mg-old-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('1'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        newer = services.receipt(
+            idempotency_key=f'mg-new-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('2'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        with patch('users_rbac.permissions.attach_user') as mock_attach:
+            def _set_user(request, **kwargs):
+                request.rbac_user = self.manager
+                return None
+
+            mock_attach.side_effect = _set_user
+            resp = self.client.get(
+                f'/stock/manage/entries/?product_id={self.product.id}&limit=10',
+            )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        items = resp.json()['data']['items']
+        ids = [row['entry_id'] for row in items]
+        self.assertEqual(ids[0], newer.id)
+        self.assertLess(ids.index(newer.id), ids.index(older.id))
+        self.assertEqual(resp.json()['data']['order'], 'recorded_at_desc')

@@ -6,6 +6,7 @@ import hashlib
 from decimal import Decimal
 
 from django.db import transaction
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 
 from stock_ledger.models import (
@@ -16,18 +17,28 @@ from stock_ledger.models import (
     StockUnit,
     StockUnitStatus,
 )
-from stock_ledger.util import entry_labels, entry_posting, services, stock_units
+from stock_ledger.util import entry_labels, entry_posting, services, stickers, stock_units
 from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util.serialize import actor_names_for, manage_entry_detail
 from stock_ledger.util.services import PRODUCTION_SOURCE_DOC, _entry_is_reversed
 
 _ENTRY_SELECT = (
-    'lot__product',
+    'lot__product__unit',
     'lot__shape_format',
+    'lot__product_supplier__outer_unit',
+    'lot__product_supplier__inner_unit',
+    'lot__product_supplier__purchase_shape_format',
     'unit',
     'location',
     'counterparty_location',
     'label',
     'posting',
+    'source_entry__lot__product',
+    'source_entry__unit',
+    'source_entry__location',
+    'reversed_by',
+    'fifo_override__scanned_lot',
+    'fifo_override__recommended_lot',
 )
 
 
@@ -50,14 +61,8 @@ def _undo_row(entry: StockEntry, step: str) -> dict:
     }
 
 
-def _draw_row(entry: StockEntry) -> dict:
-    return {
-        'entry_id': entry.id,
-        'entry_code': entry_labels.entry_code(entry.id),
-        'entry_type': entry.entry_type,
-        'quantity': _dec(entry.quantity),
-        'location_id': entry.location_id,
-    }
+def _draw_row(entry: StockEntry, *, actor_names: dict[int, str]) -> dict:
+    return manage_entry_detail(entry, actor_names=actor_names)
 
 
 def get_entry_for_manage(entry_id: int) -> StockEntry:
@@ -73,7 +78,7 @@ def live_draws(entry: StockEntry) -> list[StockEntry]:
         StockEntry.objects
         .filter(source_entry_id=entry.pk, reversed_by__isnull=True)
         .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
-        .select_related('lot__product', 'unit', 'location')
+        .select_related(*_ENTRY_SELECT)
         .order_by('id')
     )
 
@@ -98,7 +103,7 @@ def production_consumptions_for_output(output: StockEntry) -> list[StockEntry]:
             source_document_type=PRODUCTION_SOURCE_DOC,
             source_document_id=output.id,
         )
-        .select_related('lot__product', 'unit', 'location')
+        .select_related(*_ENTRY_SELECT)
         .order_by('id')
     )
 
@@ -227,6 +232,71 @@ def preview_remove(entry: StockEntry) -> dict:
     }
 
 
+def _stock_unit_rows(entry_id: int) -> list[dict]:
+    return [
+        {
+            'unit_serial': row.unit_serial,
+            'status': row.status,
+            'quantity_initial': _dec(row.quantity_initial),
+            'quantity_remaining': _dec(row.quantity_remaining),
+            'void_reason': row.void_reason,
+            'voided_at': row.voided_at.isoformat() if row.voided_at else None,
+        }
+        for row in (
+            StockUnit.objects
+            .filter(created_by_entry_id=entry_id)
+            .order_by('unit_serial')
+        )
+    ]
+
+
+def _fifo_override_dict(entry: StockEntry) -> dict | None:
+    try:
+        row = entry.fifo_override
+    except ObjectDoesNotExist:
+        return None
+    return {
+        'reason': row.reason,
+        'scanned_lot_id': row.scanned_lot_id,
+        'scanned_trace_number': row.scanned_lot.trace_number,
+        'recommended_lot_id': row.recommended_lot_id,
+        'recommended_trace_number': row.recommended_lot.trace_number,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+        'actor_user_id': row.actor_user_id,
+        'lan_username': row.lan_username,
+    }
+
+
+def _collect_actor_ids(
+    entry: StockEntry,
+    *,
+    sibling: StockEntry | None,
+    draws: list[StockEntry],
+    source_entry: StockEntry | None,
+) -> set[int]:
+    ids: set[int] = set()
+    for row in (entry, sibling, source_entry, *draws):
+        if row is None:
+            continue
+        if row.actor_user_id is not None:
+            ids.add(row.actor_user_id)
+        if row.authorised_by_user_id is not None:
+            ids.add(row.authorised_by_user_id)
+        posting = entry_posting.get_posting(row)
+        if posting is not None and posting.actor_user_id is not None:
+            ids.add(posting.actor_user_id)
+        label = entry_labels.get_label(row)
+        if label is not None and label.actor_user_id is not None:
+            ids.add(label.actor_user_id)
+    try:
+        reversal = entry.reversed_by
+    except ObjectDoesNotExist:
+        reversal = None
+    if reversal is not None and reversal.actor_user_id is not None:
+        ids.add(reversal.actor_user_id)
+    return ids
+
+
 def build_manage_detail(entry: StockEntry) -> dict:
     sibling = transfer_sibling(entry)
     legs = _transfer_legs(entry)
@@ -238,22 +308,73 @@ def build_manage_detail(entry: StockEntry) -> dict:
                 seen_draw_ids.add(draw.id)
                 all_draws.append(draw)
 
+    source_entry = entry.source_entry if entry.source_entry_id else None
+    actor_ids = _collect_actor_ids(
+        entry,
+        sibling=sibling,
+        draws=all_draws,
+        source_entry=source_entry,
+    )
+    names = actor_names_for(actor_ids)
+
     label = entry_labels.get_label(entry)
     posting = entry_posting.get_posting(entry)
+    entry_detail = manage_entry_detail(entry, actor_names=names)
+
+    reversal = None
+    try:
+        reversal = entry.reversed_by
+    except ObjectDoesNotExist:
+        reversal = None
+
+    production = None
+    if entry.entry_type == StockEntryType.PRODUCTION_OUTPUT:
+        consumptions = production_consumptions_for_output(entry)
+        production = {
+            'consumptions': [
+                manage_entry_detail(cons, actor_names=names)
+                for cons in consumptions
+            ],
+        }
+
+    sticker_remaining = None
+    if entry.entry_type == StockEntryType.RECEIPT:
+        sticker_remaining = _dec(stickers.remaining_for_entry(entry))
 
     return {
         'entry_id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),
         'entry_type': entry.entry_type,
         'is_reversed': _entry_is_reversed(entry),
+        'entry': entry_detail,
         'posting': entry_posting.posting_dict(posting) if posting else None,
         'label': entry_labels.label_state_dict(label) if label else None,
-        'live_draws': [_draw_row(d) for d in all_draws],
+        'stock_units': _stock_unit_rows(entry.id),
+        'sticker_remaining': sticker_remaining,
+        'queued_draws': (
+            stickers.queued_draws_for_entry(entry)
+            if entry.entry_type == StockEntryType.RECEIPT
+            else []
+        ),
+        'source_entry': (
+            manage_entry_detail(source_entry, actor_names=names)
+            if source_entry is not None
+            else None
+        ),
+        'fifo_override': _fifo_override_dict(entry),
+        'reversal': (
+            manage_entry_detail(reversal, actor_names=names)
+            if reversal is not None
+            else None
+        ),
+        'live_draws': [_draw_row(d, actor_names=names) for d in all_draws],
+        'production': production,
         'transfer_sibling': (
             {
                 'entry_id': sibling.id,
                 'entry_code': entry_labels.entry_code(sibling.id),
                 'entry_type': sibling.entry_type,
+                'entry': manage_entry_detail(sibling, actor_names=names),
             }
             if sibling is not None
             else None
@@ -588,4 +709,90 @@ def remove_entry(
         'voided_unit_serials': voided_serials,
         'preview': preview,
         'idempotent': action == 'already_removed',
+    }
+
+
+def _list_manage_row(entry: StockEntry, *, actor_names: dict[int, str]) -> dict:
+    from stock_ledger.util.activity import entry_activity_meta, entry_activity_quantity
+    from stock_ledger.util.reports import movement_row
+
+    base = movement_row(entry)
+    qty = entry_activity_quantity(entry)
+    meta = entry_activity_meta(entry)
+    actor_name = None
+    if entry.actor_user_id is not None:
+        actor_name = actor_names.get(entry.actor_user_id)
+    actor_name = actor_name or entry.lan_username
+    return {
+        'entry_id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
+        'entry_type': base['entry_type'],
+        'recorded_at': base['recorded_at'],
+        'effective_at': base['effective_at'],
+        'product_id': base['product_id'],
+        'product_name': base['product_name'],
+        'recipe_code': base.get('recipe_code'),
+        'trace_number': base.get('trace_number'),
+        'use_by': qty.get('use_by') or base.get('use_by'),
+        'location_id': base['location_id'],
+        'location_name': base['location_name'],
+        'quantity': base['quantity'],
+        'quantity_display': qty.get('quantity_display'),
+        'display_kg': qty.get('display_kg'),
+        'pack_quantity': qty.get('pack_quantity'),
+        'pack_unit_name': qty.get('pack_unit_name'),
+        'shape_format_label': qty.get('shape_format_label'),
+        'actor_user_id': entry.actor_user_id,
+        'actor_name': actor_name,
+        'lan_username': entry.lan_username,
+        **meta,
+    }
+
+
+def list_manage_entries(
+    *,
+    product_id: int | None = None,
+    location_id: int | None = None,
+    entry_type: str | None = None,
+    date_from=None,
+    date_to=None,
+    entry_id: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Manager grid: all entries, newest recorded_at first (includes queued)."""
+    from django.db.models import Q
+
+    qs = (
+        StockEntry.objects
+        .select_related(*_ENTRY_SELECT)
+        .order_by('-recorded_at', '-id')
+    )
+    if product_id is not None:
+        qs = qs.filter(lot__product_id=product_id)
+    if location_id is not None:
+        qs = qs.filter(
+            Q(location_id=location_id) | Q(counterparty_location_id=location_id),
+        )
+    if entry_type not in (None, ''):
+        qs = qs.filter(entry_type=entry_type)
+    if date_from is not None:
+        qs = qs.filter(recorded_at__date__gte=date_from)
+    if date_to is not None:
+        qs = qs.filter(recorded_at__date__lte=date_to)
+    if entry_id is not None:
+        qs = qs.filter(pk=entry_id)
+
+    count = qs.count()
+    page = list(qs[offset : offset + limit])
+    actor_ids = {e.actor_user_id for e in page if e.actor_user_id is not None}
+    names = actor_names_for(actor_ids)
+    items = [_list_manage_row(entry, actor_names=names) for entry in page]
+    return {
+        'items': items,
+        'count': count,
+        'limit': limit,
+        'offset': offset,
+        'has_more': offset + len(items) < count,
+        'order': 'recorded_at_desc',
     }

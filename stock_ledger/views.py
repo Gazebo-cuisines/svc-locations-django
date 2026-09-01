@@ -357,8 +357,10 @@ def entry_dict(entry: StockEntry) -> dict:
 def audit_event_dict(entry: StockEntry) -> dict:
     lot = entry.lot
     product = lot.product
-    return {
+    posting = entry_posting.get_posting(entry)
+    row = {
         'entry_id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
         'at': entry.recorded_at.isoformat() if entry.recorded_at else None,
         'effective_at': entry.effective_at.isoformat() if entry.effective_at else None,
         'action': entry.entry_type,
@@ -393,7 +395,12 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'source_workstation_ip': entry.source_workstation_ip,
         'device_serial': entry.device_serial,
         'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
+        'posting_status': posting.status if posting is not None else None,
     }
+    label = entry_labels.get_label(entry)
+    if label is not None:
+        row['label_status'] = label.status
+    return row
 
 
 def production_run_dict(run: ProductionRun) -> dict:
@@ -2294,19 +2301,15 @@ def entry_queued_list_api(request):
 @csrf_exempt
 @require_GET
 def audit_timeline_api(request):
-    """Stock audit timeline: who/what/when from immutable stock_entry rows."""
+    """Stock audit timeline: all stock_entry rows, newest recorded_at first."""
     qs = (
         StockEntry.objects.select_related(
             'unit',
             'location',
             'counterparty_location',
             'lot__product',
-        )
-        .exclude(
-            posting__status__in=[
-                StockEntryPostingStatus.QUEUED,
-                StockEntryPostingStatus.CANCELLED,
-            ],
+            'posting',
+            'label',
         )
         .order_by('-recorded_at', '-id')
     )
@@ -2321,6 +2324,7 @@ def audit_timeline_api(request):
         date_from = request.GET.get('date_from')
         date_to = request.GET.get('date_to')
         limit = request.GET.get('limit')
+        offset = request.GET.get('offset')
 
         if product_id not in (None, ''):
             qs = qs.filter(lot__product_id=int(product_id))
@@ -2346,11 +2350,25 @@ def audit_timeline_api(request):
 
         row_limit = int(limit) if limit not in (None, '') else 200
         row_limit = max(1, min(row_limit, 1000))
+        row_offset = int(offset) if offset not in (None, '') else 0
+        if row_offset < 0:
+            raise ValueError('offset must be >= 0.')
     except (TypeError, ValueError) as exc:
         return api_error(str(exc), status_code=400)
 
-    rows = [audit_event_dict(entry) for entry in qs[:row_limit]]
-    return api_success('Stock audit timeline fetched.', rows)
+    count = qs.count()
+    rows = [audit_event_dict(entry) for entry in qs[row_offset : row_offset + row_limit]]
+    return api_success(
+        'Stock audit timeline fetched.',
+        {
+            'items': rows,
+            'count': count,
+            'limit': row_limit,
+            'offset': row_offset,
+            'has_more': row_offset + len(rows) < count,
+            'order': 'recorded_at_desc',
+        },
+    )
 
 
 def _report_optional_filters(request):
@@ -3561,6 +3579,51 @@ def manage_ping_api(request):
 @csrf_exempt
 @require_GET
 @gate_stock_management
+def manage_entries_list_api(request):
+    """Manager grid: searchable entry list, newest first."""
+    try:
+        product_id = request.GET.get('product_id')
+        location_id = request.GET.get('location_id')
+        entry_type = request.GET.get('entry_type')
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+        code = (request.GET.get('code') or '').strip()
+        limit = int(request.GET.get('limit') or 50)
+        offset = int(request.GET.get('offset') or 0)
+        limit = max(1, min(limit, 200))
+        if offset < 0:
+            raise ValueError('offset must be >= 0.')
+
+        parsed_product_id = int(product_id) if product_id not in (None, '') else None
+        parsed_location_id = int(location_id) if location_id not in (None, '') else None
+        parsed_date_from = (
+            _parse_date(date_from, 'date_from') if date_from not in (None, '') else None
+        )
+        parsed_date_to = (
+            _parse_date(date_to, 'date_to') if date_to not in (None, '') else None
+        )
+        entry_id = entry_labels.parse_entry_code(code) if code else None
+        if entry_id is None and code.upper().startswith('E') and code[1:].isdigit():
+            entry_id = int(code[1:])
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    data = manage.list_manage_entries(
+        product_id=parsed_product_id,
+        location_id=parsed_location_id,
+        entry_type=entry_type if entry_type not in (None, '') else None,
+        date_from=parsed_date_from,
+        date_to=parsed_date_to,
+        entry_id=entry_id,
+        limit=limit,
+        offset=offset,
+    )
+    return api_success('Manage entries fetched.', data)
+
+
+@csrf_exempt
+@require_GET
+@gate_stock_management
 def manage_entry_preview_api(request, entry_id: int):
     """Preview what removing an entry would undo (read-only)."""
     try:
@@ -3568,11 +3631,6 @@ def manage_entry_preview_api(request, entry_id: int):
     except StockEntry.DoesNotExist:
         return api_error('Entry not found.', status_code=404)
     data = manage.build_manage_detail(entry)
-    data['entry'] = entry_dict(entry)
-    if data['transfer_sibling'] is not None and entry.transfer_group_id:
-        sibling = manage.transfer_sibling(entry)
-        if sibling is not None:
-            data['transfer_sibling']['entry'] = entry_dict(sibling)
     return api_success('Entry remove preview ready.', data)
 
 
