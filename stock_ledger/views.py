@@ -59,6 +59,7 @@ from stock_ledger.util.allocation_status import (
 )
 from stock_ledger.util.conversions import (
     StockValidationError,
+    preload_kg_factors,
     stock_to_kg,
     stock_to_packs,
 )
@@ -70,6 +71,7 @@ from stock_ledger.util.product_supplier_lookup import (
 )
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
+    pack_breakdown_row,
     receipt_meta_by_lot_ids,
     serialize_balance_row,
     supplier_pack_fields,
@@ -2752,6 +2754,7 @@ def warehouse_remaining_api(request):
     Optional ?location_id= to filter one unit (e.g. Unit 2 / Unit 11).
     Aggregates lots → remaining_qty per product per location.
     """
+    preload_kg_factors()
     qs = (
         StockBalance.objects
         .filter(
@@ -2806,6 +2809,32 @@ def warehouse_remaining_api(request):
     ):
         mappings.setdefault(mapping.product_id, mapping)
 
+    breakdowns: dict[tuple[int, int], list] = {}
+    loose_kg_by_key: dict[tuple[int, int], Decimal] = {}
+    for bal in (
+        qs.select_related(
+            'lot__product__unit',
+            'lot__product_supplier__outer_unit',
+            'lot__product_supplier__inner_unit',
+        )
+        .order_by('location_id', 'lot__product_id', *FIFO_ORDER)
+    ):
+        key = (bal.location_id, bal.lot.product_id)
+        product = bal.lot.product
+        row = pack_breakdown_row(
+            bal.quantity,
+            product,
+            getattr(bal.lot, 'product_supplier', None),
+            lot_id=bal.lot_id,
+            trace_number=bal.lot.trace_number,
+        )
+        if row is not None:
+            breakdowns.setdefault(key, []).append(row)
+            continue
+        kg = stock_to_kg(bal.quantity, product) if product is not None else None
+        if kg is not None:
+            loose_kg_by_key[key] = loose_kg_by_key.get(key, Decimal('0')) + kg
+
     by_location: dict[int, dict] = {}
     for row in rows:
         loc_id = row['location_id']
@@ -2819,9 +2848,11 @@ def warehouse_remaining_api(request):
             by_location[loc_id] = bucket
         qty = row['remaining_qty']
         pid = row['lot__product_id']
+        key = (loc_id, pid)
         pack = supplier_pack_fields(
             qty, products.get(pid), mappings.get(pid),
         )
+        loose = loose_kg_by_key.get(key)
         bucket['products'].append({
             'product_id': pid,
             'product_name': row['lot__product__name'],
@@ -2830,6 +2861,8 @@ def warehouse_remaining_api(request):
             'remaining_qty': _dec(qty),
             'lot_count': row['lot_count'],
             **pack,
+            'pack_breakdown': breakdowns.get(key, []),
+            'loose_kg': _dec(loose) if loose else None,
         })
 
     data = list(by_location.values())

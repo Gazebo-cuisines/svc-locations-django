@@ -146,6 +146,77 @@ class UomConversionTests(TestCase):
         self.assertEqual(product['pack_unit_name'], 'Box')
         self.assertEqual(Decimal(product['display_kg']), Decimal('20'))
         self.assertTrue(product['shape_format_label'])
+        self.assertEqual(len(product['pack_breakdown']), 1)
+        bd = product['pack_breakdown'][0]
+        self.assertEqual(bd['lot_id'], lot.id)
+        self.assertEqual(bd['trace_number'], 'T-PEAS-PACK')
+        self.assertEqual(Decimal(bd['pack_quantity']), Decimal('2'))
+        self.assertEqual(bd['pack_unit_name'], 'Box')
+        self.assertEqual(bd['label'], f'2 Box ({bd["shape_format_label"]})')
+        self.assertIsNone(product['loose_kg'])
+
+    def test_remaining_breakdown_separates_shapes_and_loose(self):
+        bag = Unit.objects.create(id=204, name='Bag')
+        other = ProductSupplier.objects.create(
+            product=self.product,
+            supplier=self.supplier,
+            supplier_code='GAZ-PEAS-20',
+            supplier_product_name='PEAS 20KG',
+            outer_qty=Decimal('1'),
+            outer_unit=bag,
+            inner_qty=Decimal('20'),
+            inner_unit=self.kg,
+            is_default=False,
+            is_active=True,
+        )
+        lot_a = self._lot('SHAPE-A')
+        lot_b = self._lot('SHAPE-B')
+        lot_loose = self._lot('LOOSE')
+        services.receipt(
+            idempotency_key=f'uom-bd-a-{uuid4()}',
+            lot=lot_a,
+            location_id=self.wh.id,
+            quantity=Decimal('2'),
+            product_supplier=self.mapping,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        services.receipt(
+            idempotency_key=f'uom-bd-b-{uuid4()}',
+            lot=lot_b,
+            location_id=self.wh.id,
+            quantity=Decimal('1'),
+            product_supplier=other,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        services.receipt(
+            idempotency_key=f'uom-bd-loose-{uuid4()}',
+            lot=lot_loose,
+            location_id=self.wh.id,
+            quantity=Decimal('5000'),
+            unit_id=self.grams.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        client = Client()
+        remaining = client.get(
+            f'/stock/warehouse/remaining/?location_id={self.wh.id}',
+        )
+        self.assertEqual(remaining.status_code, 200, remaining.content)
+        product = remaining.json()['data'][0]['products'][0]
+        self.assertEqual(product['lot_count'], 3)
+        self.assertEqual(len(product['pack_breakdown']), 2)
+        labels = {row['label'] for row in product['pack_breakdown']}
+        self.assertIn(
+            f'2 Box ({self.mapping.shape_format_label})', labels,
+        )
+        self.assertIn(
+            f'1 Bag ({other.shape_format_label})', labels,
+        )
+        self.assertEqual(Decimal(product['loose_kg']), Decimal('5'))
+        lot_ids = [row['lot_id'] for row in product['pack_breakdown']]
+        self.assertEqual(set(lot_ids), {lot_a.id, lot_b.id})
 
     def _lot(self, suffix: str) -> StockLot:
         return StockLot.objects.create(

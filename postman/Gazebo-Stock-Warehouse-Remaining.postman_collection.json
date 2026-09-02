@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Gazebo - Stock Warehouse Remaining",
-    "description": "Production warehouse remaining stock, unit-wise (storage locations).\n\n**Endpoint:** `GET /stock/warehouse/remaining/`\n\nAggregates `stock_balance` (qty > 0, active products) for locations with role `storage`.\n\n**Vars:** `{{base_url}}` (e.g. `http://127.0.0.1:8000`), `{{location_id}}` (e.g. `8` = Unit 2, `2` = Unit 11)",
+    "description": "Production warehouse remaining stock, unit-wise (storage locations).\n\n**Endpoint:** `GET /stock/warehouse/remaining/`\n\nAggregates `stock_balance` (qty > 0, active products) for locations with role `storage`. Each product includes lot-level `pack_breakdown` (display-ready labels) and optional `loose_kg`.\n\n**Vars:** `{{base_url}}` (e.g. `http://127.0.0.1:8000`), `{{location_id}}` (e.g. `8` = Unit 2, `2` = Unit 11)",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -25,7 +25,7 @@
           "host": ["{{base_url}}"],
           "path": ["stock", "warehouse", "remaining", ""]
         },
-        "description": "### Warehouse remaining (all units)\n\n`GET /stock/warehouse/remaining/`\n\nReturns remaining stock for **all storage** locations (e.g. Unit 2, Unit 11), products aggregated per location.\n\n**Query parameters**\n\nNone.\n\n**Response body**\n\n```json\n{\n  \"status\": \"success\",\n  \"message\": \"Warehouse remaining stock fetched.\",\n  \"data\": [\n    {\n      \"location_id\": 8,\n      \"location_name\": \"Unit 2\",\n      \"products\": [\n        {\n          \"product_id\": 910122,\n          \"product_name\": \"SALT\",\n          \"unit_id\": 2,\n          \"unit_name\": \"grams\",\n          \"remaining_qty\": \"75000.000000\",\n          \"lot_count\": 3\n        }\n      ]\n    }\n  ]\n}\n```\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+        "description": "### Warehouse remaining (all units)\n\n`GET /stock/warehouse/remaining/`\n\nReturns remaining stock for **all storage** locations (e.g. Unit 2, Unit 11), products aggregated per location.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n```json\n{\n  \"status\": \"success\",\n  \"message\": \"Warehouse remaining stock fetched.\",\n  \"data\": [\n    {\n      \"location_id\": 8,\n      \"location_name\": \"Unit 2\",\n      \"products\": [\n        {\n          \"product_id\": 123,\n          \"product_name\": \"GRAM FLOUR\",\n          \"unit_id\": 2,\n          \"unit_name\": \"grams\",\n          \"remaining_qty\": \"1520000\",\n          \"lot_count\": 2,\n          \"pack_quantity\": \"95\",\n          \"pack_unit_name\": \"Bag\",\n          \"shape_format_label\": \"8BAG x 2KG = 16KG\",\n          \"display_kg\": \"1520\",\n          \"pack_breakdown\": [\n            {\n              \"label\": \"60 Bag (8BAG x 2KG = 16KG)\",\n              \"pack_quantity\": \"60\",\n              \"pack_unit_name\": \"Bag\",\n              \"shape_format_label\": \"8BAG x 2KG = 16KG\",\n              \"display_kg\": \"960\",\n              \"lot_id\": 26148,\n              \"trace_number\": \"26148\"\n            }\n          ],\n          \"loose_kg\": null\n        }\n      ]\n    }\n  ]\n}\n```\n\nFlat pack fields stay for backward compatibility (may be wrong for multi-shape). Prefer `pack_breakdown` when non-empty. Unshaped lot qty → `loose_kg`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
       }
     },
     {
@@ -45,7 +45,7 @@
             }
           ]
         },
-        "description": "### Warehouse remaining (one unit)\n\n`GET /stock/warehouse/remaining/?location_id={{location_id}}`\n\nFilter to one storage warehouse.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes (for this request) | Storage location PK |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | `location_id` not an integer |\n| 404 | Location not found or not role=storage |"
+        "description": "### Warehouse remaining (one unit)\n\n`GET /stock/warehouse/remaining/?location_id={{location_id}}`\n\nFilter to one storage warehouse. Same product payload as all-units, including ordered `pack_breakdown` (FIFO) and `loose_kg`.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes (for this request) | Storage location PK |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: [ { location_id, location_name, products: [ { product_id, product_name, remaining_qty, display_kg, pack_breakdown, loose_kg, … } ] } ] }`\n\nEach `pack_breakdown` row: `label` (display-ready), `pack_quantity`, `pack_unit_name`, `shape_format_label`, `display_kg`, `lot_id`, `trace_number`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | `location_id` not an integer |\n| 404 | Location not found or not role=storage |"
       }
     },
     {
@@ -65,7 +65,7 @@
             }
           ]
         },
-        "description": "Same as one-unit filter with `location_id=2` (Unit 11)."
+        "description": "### Warehouse remaining (Unit 11)\n\n`GET /stock/warehouse/remaining/?location_id=2`\n\nSame as one-unit filter with `location_id=2` (Unit 11).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes | `2` = Unit 11 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\nSame shape as one-unit remaining (products with `pack_breakdown` / `loose_kg`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | `location_id` not an integer |\n| 404 | Location not found or not role=storage |"
       }
     },
     {
@@ -84,7 +84,7 @@
             }
           ]
         },
-        "description": "Lot-level balances for the same unit (not aggregated). Useful to compare with warehouse remaining totals."
+        "description": "### Balances (lot-level compare)\n\n`GET /stock/balances/?location_id={{location_id}}`\n\nLot-level balances for the same unit (not product-aggregated). Useful to compare with warehouse remaining totals and pack breakdown lots.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | Storage location PK |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: [ { lot_id, product_id, quantity, pack_quantity, shape_format_label, display_kg, … } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
       }
     }
   ]
