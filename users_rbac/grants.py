@@ -4,6 +4,8 @@ from django.db import transaction
 
 from users_rbac.audit import record_event
 from users_rbac.models import (
+    GOODS_IN_ACTIONS,
+    WAREHOUSE_ACTION_FIELDS,
     AdminAccess,
     AdminArea,
     Department,
@@ -99,26 +101,26 @@ def validate_grants(payload: dict) -> dict:
         periods = row.get('goods_in_periods') or []
         if not isinstance(actions, list) or not isinstance(periods, list):
             raise ValueError('Warehouse actions and periods must be lists.')
-        unknown_actions = [a for a in actions if a not in ('goods_in', 'goods_out')]
+        allowed_actions = set(WAREHOUSE_ACTION_FIELDS)
+        unknown_actions = [a for a in actions if a not in allowed_actions]
         if unknown_actions:
             raise ValueError(f'Unknown warehouse action: {unknown_actions[0]}.')
         unknown_periods = [p for p in periods if p not in PERIOD_FLAGS]
         if unknown_periods:
             raise ValueError(f'Unknown goods in period: {unknown_periods[0]}.')
-        can_in = 'goods_in' in actions
-        can_out = 'goods_out' in actions
-        if periods and not can_in:
-            raise ValueError('Goods in periods need the goods_in action.')
-        warehouse.append(
-            {
-                'unit': unit,
-                'can_goods_in': can_in,
-                'can_goods_out': can_out,
-                'goods_in_previous': can_in and 'previous' in periods,
-                'goods_in_today': can_in and 'today' in periods,
-                'goods_in_future': can_in and 'future' in periods,
-            }
-        )
+        action_set = set(actions)
+        has_goods_in = bool(action_set & GOODS_IN_ACTIONS)
+        if periods and not has_goods_in:
+            raise ValueError('Goods in periods need a goods_in action.')
+        grant = {
+            field: action in action_set
+            for action, field in WAREHOUSE_ACTION_FIELDS.items()
+        }
+        grant['unit'] = unit
+        grant['goods_in_previous'] = has_goods_in and 'previous' in periods
+        grant['goods_in_today'] = has_goods_in and 'today' in periods
+        grant['goods_in_future'] = has_goods_in and 'future' in periods
+        warehouse.append(grant)
     return {
         'departments': departments,
         'production_areas': production_areas,
@@ -130,11 +132,11 @@ def validate_grants(payload: dict) -> dict:
 def grants_dict(user: RbacUser) -> dict:
     warehouse = []
     for row in WarehouseAccess.objects.filter(user=user):
-        actions = []
-        if row.can_goods_in:
-            actions.append('goods_in')
-        if row.can_goods_out:
-            actions.append('goods_out')
+        actions = [
+            action
+            for action, field in WAREHOUSE_ACTION_FIELDS.items()
+            if getattr(row, field)
+        ]
         periods = [
             name
             for name, field in PERIOD_FLAGS.items()

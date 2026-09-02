@@ -92,6 +92,8 @@ class UserApiTests(TestCase):
             user=self.floor,
             unit=WarehouseUnit.UNIT_2,
             can_goods_in=True,
+            can_goods_in_without_po=True,
+            can_goods_in_stock_adjustment=True,
             goods_in_previous=True,
             goods_in_today=True,
         )
@@ -102,12 +104,55 @@ class UserApiTests(TestCase):
             [
                 {
                     'unit': 'unit_2',
-                    'actions': ['goods_in'],
+                    'actions': [
+                        'goods_in',
+                        'goods_in_without_po',
+                        'goods_in_stock_adjustment',
+                    ],
                     'goods_in_periods': ['previous', 'today'],
                     'location_id': 8,
                 }
             ],
         )
+
+    def test_put_warehouse_mode_actions(self):
+        response = self.client.put(
+            f'/auth/users/{self.floor.id}/grants/',
+            data=json.dumps(
+                {
+                    'departments': ['warehouse'],
+                    'production_areas': [],
+                    'admin_areas': [],
+                    'warehouse': [
+                        {
+                            'unit': 'unit_1',
+                            'actions': [
+                                'goods_in',
+                                'goods_in_without_po',
+                                'goods_out_without_plan',
+                            ],
+                            'goods_in_periods': ['today'],
+                        }
+                    ],
+                }
+            ),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.admin_auth,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        warehouse = response.json()['data']['warehouse']
+        self.assertEqual(len(warehouse), 1)
+        self.assertEqual(
+            warehouse[0]['actions'],
+            ['goods_in', 'goods_in_without_po', 'goods_out_without_plan'],
+        )
+        self.assertEqual(warehouse[0]['goods_in_periods'], ['today'])
+        row = WarehouseAccess.objects.get(user=self.floor, unit='unit_1')
+        self.assertTrue(row.can_goods_in)
+        self.assertTrue(row.can_goods_in_without_po)
+        self.assertFalse(row.can_goods_in_stock_adjustment)
+        self.assertFalse(row.can_goods_out)
+        self.assertTrue(row.can_goods_out_without_plan)
 
     def test_floor_cannot_create_user(self):
         response = self.client.post(

@@ -74,13 +74,29 @@ class PermissionHelperTests(TestCase):
             )
         )
 
-    def test_warehouse_goods_out_denied(self):
-        response = require_warehouse(
-            self._req(),
-            WarehouseUnit.UNIT_1,
-            action='goods_out',
+    def test_warehouse_mode_action_ok_and_denied(self):
+        WarehouseAccess.objects.filter(user=self.user).update(
+            can_goods_in_without_po=True,
+            can_goods_out_without_plan=False,
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertIsNone(
+            require_warehouse(
+                self._req(),
+                WarehouseUnit.UNIT_1,
+                action='goods_in_without_po',
+            )
+        )
+        self.assertEqual(
+            require_warehouse(
+                self._req(),
+                WarehouseUnit.UNIT_1,
+                action='goods_out_without_plan',
+            ).status_code,
+            403,
+        )
+        self.assertIsNone(
+            require_any_warehouse(self._req(), action='goods_in_without_po'),
+        )
 
     def test_warehouse_future_denied(self):
         response = require_warehouse(
