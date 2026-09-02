@@ -26,6 +26,7 @@ class AdminArea(models.TextChoices):
     OPERATIONAL = 'operational', 'Operational'
     NPD = 'npd', 'NPD'
     FINANCE = 'finance', 'Finance'
+    STOCK_MANAGEMENT = 'stock_management', 'Stock management'
 
 
 class RbacAuditAction(models.TextChoices):

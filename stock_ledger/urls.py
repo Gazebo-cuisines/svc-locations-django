@@ -91,6 +91,18 @@ urlpatterns = [
     path('balances/', views.balance_list_api, name='stock-balances'),
     path('balances/stream/', views.balance_stream_api, name='stock-balances-stream'),
     path('warehouse/remaining/', views.warehouse_remaining_api, name='stock-warehouse-remaining'),
+    # Stock Management (admin cancel / reverse)
+    path('manage/ping/', views.manage_ping_api, name='stock-manage-ping'),
+    path(
+        'manage/entries/<int:entry_id>/',
+        views.manage_entry_preview_api,
+        name='stock-manage-entry-preview',
+    ),
+    path(
+        'manage/entries/<int:entry_id>/remove/',
+        views.manage_entry_remove_api,
+        name='stock-manage-entry-remove',
+    ),
     # --- parked (non-MVP) ---
     path('atp/', views.atp_api, name='stock-atp'),
     path('trace/backward/', views.trace_backward_api, name='stock-trace-backward'),

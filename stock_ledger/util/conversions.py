@@ -16,6 +16,28 @@ GLOBAL_UNIT_TO_KG = {
 
 PRODUCT_SPECIFIC_UNIT_NAMES = frozenset({'unit', 'Box', 'Liter'})
 
+# (unit_id, product_id|None) → to_kg. product-specific wins over global in resolve_to_kg.
+_KG_FACTORS: dict[tuple[int, int | None], Decimal] = {}
+_KG_PRELOADED = False
+
+
+def clear_kg_factor_cache() -> None:
+    global _KG_PRELOADED
+    _KG_FACTORS.clear()
+    _KG_PRELOADED = False
+
+
+def preload_kg_factors() -> int:
+    """One query; fills cache so remaining/balances skip per-row conversion lookups."""
+    global _KG_PRELOADED
+    _KG_FACTORS.clear()
+    for unit_id, product_id, to_kg in StockUnitConversion.objects.values_list(
+        'unit_id', 'product_id', 'to_kg',
+    ):
+        _KG_FACTORS[(unit_id, product_id)] = to_kg
+    _KG_PRELOADED = True
+    return len(_KG_FACTORS)
+
 
 def resolve_to_kg(*, unit_id: int, product_id: int | None = None) -> Decimal:
     """
@@ -23,23 +45,34 @@ def resolve_to_kg(*, unit_id: int, product_id: int | None = None) -> Decimal:
     Raises StockValidationError if no factor — never defaults to 1.
     """
     if product_id is not None:
+        hit = _KG_FACTORS.get((unit_id, product_id))
+        if hit is not None:
+            return hit
+        if not _KG_PRELOADED:
+            row = (
+                StockUnitConversion.objects
+                .filter(unit_id=unit_id, product_id=product_id)
+                .only('to_kg')
+                .first()
+            )
+            if row is not None:
+                _KG_FACTORS[(unit_id, product_id)] = row.to_kg
+                return row.to_kg
+
+    hit = _KG_FACTORS.get((unit_id, None))
+    if hit is not None:
+        return hit
+
+    if not _KG_PRELOADED:
         row = (
             StockUnitConversion.objects
-            .filter(unit_id=unit_id, product_id=product_id)
+            .filter(unit_id=unit_id, product__isnull=True)
             .only('to_kg')
             .first()
         )
         if row is not None:
+            _KG_FACTORS[(unit_id, None)] = row.to_kg
             return row.to_kg
-
-    row = (
-        StockUnitConversion.objects
-        .filter(unit_id=unit_id, product__isnull=True)
-        .only('to_kg')
-        .first()
-    )
-    if row is not None:
-        return row.to_kg
 
     raise StockValidationError(
         f'No stock_unit_conversion for unit_id={unit_id}'
@@ -61,6 +94,7 @@ def seed_global_unit_conversions() -> int:
             defaults={'to_kg': to_kg, 'source': 'global'},
         )
         written += 1
+    clear_kg_factor_cache()
     return written
 
 
@@ -89,6 +123,8 @@ def sync_product_unit_conversion_for_product(product_id: int) -> int:
             defaults={'to_kg': weight, 'source': 'product_packaging'},
         )
         written += 1
+    if written:
+        clear_kg_factor_cache()
     return written
 
 

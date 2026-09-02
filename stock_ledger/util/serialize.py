@@ -23,6 +23,13 @@ def _dec(value):
     return str(value) if value is not None else None
 
 
+def _pretty_qty(value: Decimal) -> str:
+    text = format(Decimal(value).normalize(), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text or '0'
+
+
 def supplier_pack_fields(
     stock_qty: Decimal,
     product: Product | None,
@@ -52,6 +59,32 @@ def supplier_pack_fields(
         fields['pack_quantity'] = None
     return fields
 
+
+def pack_breakdown_row(
+    stock_qty: Decimal,
+    product: Product | None,
+    mapping: ProductSupplier | None,
+    *,
+    lot_id: int,
+    trace_number: str,
+) -> dict | None:
+    """One lot pack line for remaining; None → treat qty as loose_kg."""
+    pack = supplier_pack_fields(stock_qty, product, mapping)
+    if pack['pack_quantity'] is None or not pack['pack_unit_name']:
+        return None
+    pretty = _pretty_qty(Decimal(pack['pack_quantity']))
+    unit = pack['pack_unit_name']
+    shape = pack['shape_format_label']
+    label = f'{pretty} {unit} ({shape})' if shape else f'{pretty} {unit}'
+    return {
+        'label': label,
+        'pack_quantity': pack['pack_quantity'],
+        'pack_unit_name': pack['pack_unit_name'],
+        'shape_format_label': pack['shape_format_label'],
+        'display_kg': pack['display_kg'],
+        'lot_id': lot_id,
+        'trace_number': trace_number,
+    }
 
 def receipt_meta_by_lot_ids(lot_ids: set[int]) -> dict[int, dict]:
     """lot_id → supplier + po from purchase receipt (prefer one that has them)."""

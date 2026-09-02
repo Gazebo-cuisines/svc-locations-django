@@ -41,6 +41,7 @@ from stock_ledger.stream import iter_sse, subscribe
 from stock_ledger.util import (
     entry_labels,
     entry_posting,
+    manage,
     reservations,
     scan,
     services,
@@ -58,12 +59,14 @@ from stock_ledger.util.allocation_status import (
 )
 from stock_ledger.util.conversions import (
     StockValidationError,
+    preload_kg_factors,
     stock_to_kg,
     stock_to_packs,
 )
 from stock_ledger.util.fifo import FIFO_ORDER, fifo_balances
 from stock_ledger.util.serialize import (
     BALANCE_SELECT_RELATED,
+    pack_breakdown_row,
     receipt_meta_by_lot_ids,
     serialize_balance_row,
     supplier_pack_fields,
@@ -87,7 +90,7 @@ from stock_ledger.util.trace import (
     trace_forward,
 )
 from hardware.services import codes_for_serials, serial_from_request, touch_from_request
-from users_rbac.auth import attach_user, client_ip
+from users_rbac.auth import attach_user, client_ip, require_admin
 from users_rbac.permissions import (
     gate_floor_write,
     gate_production_write,
@@ -2696,6 +2699,7 @@ def warehouse_remaining_api(request):
     Optional ?location_id= to filter one unit (e.g. Unit 2 / Unit 11).
     Aggregates lots → remaining_qty per product per location.
     """
+    preload_kg_factors()
     qs = (
         StockBalance.objects
         .filter(
@@ -2750,6 +2754,32 @@ def warehouse_remaining_api(request):
     ):
         mappings.setdefault(mapping.product_id, mapping)
 
+    breakdowns: dict[tuple[int, int], list] = {}
+    loose_kg_by_key: dict[tuple[int, int], Decimal] = {}
+    for bal in (
+        qs.select_related(
+            'lot__product__unit',
+            'lot__product_supplier__outer_unit',
+            'lot__product_supplier__inner_unit',
+        )
+        .order_by('location_id', 'lot__product_id', *FIFO_ORDER)
+    ):
+        key = (bal.location_id, bal.lot.product_id)
+        product = bal.lot.product
+        row = pack_breakdown_row(
+            bal.quantity,
+            product,
+            getattr(bal.lot, 'product_supplier', None),
+            lot_id=bal.lot_id,
+            trace_number=bal.lot.trace_number,
+        )
+        if row is not None:
+            breakdowns.setdefault(key, []).append(row)
+            continue
+        kg = stock_to_kg(bal.quantity, product) if product is not None else None
+        if kg is not None:
+            loose_kg_by_key[key] = loose_kg_by_key.get(key, Decimal('0')) + kg
+
     by_location: dict[int, dict] = {}
     for row in rows:
         loc_id = row['location_id']
@@ -2763,9 +2793,11 @@ def warehouse_remaining_api(request):
             by_location[loc_id] = bucket
         qty = row['remaining_qty']
         pid = row['lot__product_id']
+        key = (loc_id, pid)
         pack = supplier_pack_fields(
             qty, products.get(pid), mappings.get(pid),
         )
+        loose = loose_kg_by_key.get(key)
         bucket['products'].append({
             'product_id': pid,
             'product_name': row['lot__product__name'],
@@ -2774,6 +2806,8 @@ def warehouse_remaining_api(request):
             'remaining_qty': _dec(qty),
             'lot_count': row['lot_count'],
             **pack,
+            'pack_breakdown': breakdowns.get(key, []),
+            'loose_kg': _dec(loose) if loose else None,
         })
 
     data = list(by_location.values())
@@ -3510,3 +3544,57 @@ def stock_units_reprint_api(request, unit_serial: str):
     data = stock_unit_dict(result['unit'])
     data['print_event_id'] = result['print_event_id']
     return api_success('Stock unit reprint recorded.', data, status_code=201)
+
+
+@csrf_exempt
+@require_GET
+@require_admin
+def manage_ping_api(request):
+    """Stock Management gate probe — admin only."""
+    return api_success('Stock management ok.', {'ok': True})
+
+
+@csrf_exempt
+@require_GET
+@require_admin
+def manage_entry_preview_api(request, entry_id: int):
+    """Preview cancel/reverse impact for one ledger entry."""
+    try:
+        data = manage.build_entry_preview(entry_id, entry_dict)
+    except StockValidationError as exc:
+        msg = str(exc)
+        return api_error(msg, status_code=404 if 'not found' in msg else 400)
+    return api_success('Stock management preview fetched.', data)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_admin
+def manage_entry_remove_api(request, entry_id: int):
+    """Cancel queued or reverse posted entry (and linked legs/draws)."""
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.')
+    reason = (body.get('reason') or '').strip()
+    idempotency_key = (body.get('idempotency_key') or '').strip()
+    if not reason:
+        return api_error('reason is required.')
+    if not idempotency_key:
+        return api_error('idempotency_key is required.')
+    try:
+        audit = _common_write_kwargs(request, body)
+        data = manage.remove_entry(
+            entry_id=entry_id,
+            reason=reason,
+            idempotency_key=idempotency_key,
+            entry_dict_fn=entry_dict,
+            actor_user_id=audit.get('actor_user_id'),
+            lan_username=audit.get('lan_username'),
+            source_workstation=audit.get('source_workstation'),
+            source_workstation_ip=audit.get('source_workstation_ip'),
+        )
+    except StockValidationError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg else 400
+        return api_error(msg, status_code=status)
+    return api_success('Transaction removed.', data)
