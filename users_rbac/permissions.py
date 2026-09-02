@@ -7,6 +7,7 @@ from users_rbac.audit import record_event
 from users_rbac.auth import attach_user
 from users_rbac.grants import PERIOD_FLAGS, grants_dict, has_global_access
 from users_rbac.models import (
+    WAREHOUSE_ACTION_FIELDS,
     AdminAccess,
     AdminArea,
     ProductionAccess,
@@ -67,10 +68,9 @@ def require_any_warehouse(request, *, action: str | None = None):
     if has_global_access(request.rbac_user):
         return None
     qs = WarehouseAccess.objects.filter(user=request.rbac_user)
-    if action == 'goods_in':
-        qs = qs.filter(can_goods_in=True)
-    elif action == 'goods_out':
-        qs = qs.filter(can_goods_out=True)
+    field = WAREHOUSE_ACTION_FIELDS.get(action) if action else None
+    if field:
+        qs = qs.filter(**{field: True})
     if qs.exists():
         return None
     return deny_access(request, {'warehouse': 'any', 'action': action})
@@ -150,12 +150,19 @@ def require_warehouse(
     required = {'warehouse_unit': unit, 'action': action, 'period': period}
     if not row:
         return deny_access(request, required)
-    if action == 'goods_in' and not row.can_goods_in:
-        return deny_access(request, required)
-    if action == 'goods_out' and not row.can_goods_out:
+    field = WAREHOUSE_ACTION_FIELDS.get(action) if action else None
+    if field and not getattr(row, field):
         return deny_access(request, required)
     if period:
-        field = PERIOD_FLAGS.get(period)
-        if not field or not row.can_goods_in or not getattr(row, field):
+        period_field = PERIOD_FLAGS.get(period)
+        has_goods_in = any(
+            getattr(row, f)
+            for f in (
+                'can_goods_in',
+                'can_goods_in_without_po',
+                'can_goods_in_stock_adjustment',
+            )
+        )
+        if not period_field or not has_goods_in or not getattr(row, period_field):
             return deny_access(request, required)
     return None
