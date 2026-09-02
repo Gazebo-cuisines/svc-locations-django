@@ -118,6 +118,41 @@ class EntryLabelTests(TestCase):
         self.assertEqual(act['scans'][0]['result'], 'ok')
         self.assertEqual(act['scans'][1]['result'], 'mismatch')
 
+    def test_reprint_verified_label_keeps_status_and_counts(self):
+        entry_labels.create_entry_label(entry=self.entry, label_format='pallet')
+        first = self.client.post(
+            f'/stock/entries/{self.entry.id}/labels/print/',
+            data='{}',
+            content_type='application/json',
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()['data']['label']['printed_count'], 1)
+
+        verify = self.client.post(
+            f'/stock/entries/{self.entry.id}/labels/verify/',
+            data=f'{{"code":"E{self.entry.id}"}}',
+            content_type='application/json',
+        )
+        self.assertEqual(verify.status_code, 200)
+        self.assertEqual(
+            verify.json()['data']['label']['status'],
+            StockEntryLabelStatus.VERIFIED,
+        )
+
+        reprint = self.client.post(
+            f'/stock/entries/{self.entry.id}/labels/print/',
+            data='{}',
+            content_type='application/json',
+        )
+        self.assertEqual(reprint.status_code, 200)
+        data = reprint.json()['data']['label']
+        self.assertEqual(data['status'], StockEntryLabelStatus.VERIFIED)
+        self.assertEqual(data['printed_count'], 2)
+        self.assertEqual(
+            reprint.json()['data']['goods_in_label']['barcode'],
+            f'E{self.entry.id}',
+        )
+
     def test_verify_accepts_truncated_last_char(self):
         entry_labels.create_entry_label(entry=self.entry, label_format='pallet')
         code = f'E{self.entry.id}'

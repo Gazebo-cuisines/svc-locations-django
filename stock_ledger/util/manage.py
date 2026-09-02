@@ -18,9 +18,28 @@ from stock_ledger.models import (
     StockUnitStatus,
 )
 from stock_ledger.util import entry_labels, entry_posting, services, stickers, stock_units
+from stock_ledger.util.activity import entry_activity_quantity
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.serialize import actor_names_for, manage_entry_detail
 from stock_ledger.util.services import PRODUCTION_SOURCE_DOC, _entry_is_reversed
+
+_TRACEABILITY_NOTE = (
+    'Full history stays on the audit timeline. '
+    'Old barcodes are void — do not reuse them.'
+)
+
+_ENTRY_TYPE_LABELS = {
+    StockEntryType.RECEIPT: 'goods-in',
+    StockEntryType.ISSUE: 'goods-out',
+    StockEntryType.TRANSFER_OUT: 'transfer out',
+    StockEntryType.TRANSFER_IN: 'transfer in',
+    StockEntryType.PRODUCTION_OUTPUT: 'production output',
+    StockEntryType.PRODUCTION_CONSUMPTION: 'production consume',
+    StockEntryType.COUNT_ADJUSTMENT: 'count adjustment',
+    StockEntryType.DISPOSAL: 'disposal',
+    StockEntryType.REVERSAL: 'reversal',
+    StockEntryType.DOWNTIME: 'downtime',
+}
 
 _ENTRY_SELECT = (
     'lot__product__unit',
@@ -52,13 +71,247 @@ def _dec(value) -> str | None:
 
 
 def _undo_row(entry: StockEntry, step: str) -> dict:
+    qty = entry_activity_quantity(entry)
+    product = entry.lot.product if entry.lot_id else None
     return {
         'entry_id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),
         'entry_type': entry.entry_type,
         'quantity': _dec(entry.quantity),
+        'quantity_abs': qty.get('quantity_abs') or _dec(abs(entry.quantity)),
+        'quantity_display': qty.get('quantity_display'),
+        'product_id': product.id if product is not None else None,
+        'product_name': product.name if product is not None else None,
+        'source_entry_id': entry.source_entry_id,
+        'source_entry_code': (
+            entry_labels.entry_code(entry.source_entry_id)
+            if entry.source_entry_id
+            else None
+        ),
         'step': step,
     }
+
+
+def _qty_label(row: dict) -> str:
+    return row.get('quantity_display') or row.get('quantity_abs') or row.get('quantity') or '?'
+
+
+def _type_label(entry_type: str) -> str:
+    return _ENTRY_TYPE_LABELS.get(entry_type, entry_type.replace('_', ' '))
+
+
+def _build_confirmation_lines(
+    *,
+    action: str,
+    will_undo: list[dict],
+    units_to_void: list[dict],
+    target: StockEntry,
+) -> list[str]:
+    if action in ('blocked', 'already_removed') or not will_undo:
+        return []
+    verb = 'Cancel' if action == 'cancel' else 'Reverse'
+    lines: list[str] = []
+    for i, row in enumerate(will_undo, start=1):
+        label = _type_label(row['entry_type'])
+        qty = _qty_label(row)
+        code = row['entry_code']
+        extra = ''
+        if (
+            row.get('source_entry_id') == target.id
+            and row['entry_type'] != target.entry_type
+        ):
+            extra = ' (from this sticker)'
+        lines.append(f'{i}. {verb} {label} {code} — {qty}{extra}')
+    void_bits: list[str] = [entry_labels.entry_code(target.id)]
+    serials = [u['unit_serial'] for u in units_to_void]
+    if serials:
+        shown = ', '.join(serials[:5])
+        if len(serials) > 5:
+            shown = f'{shown} (+{len(serials) - 5} more)'
+        void_bits.append(f'unit labels {shown}')
+    lines.append(
+        f'{len(lines) + 1}. Void sticker {" and ".join(void_bits)}',
+    )
+    return lines
+
+
+def _redo_todo_for_row(row: dict) -> dict | None:
+    entry_type = row['entry_type']
+    code = row['entry_code']
+    qty = _qty_label(row)
+    base = {
+        'status': 'pending',
+        'from_entry_code': code,
+        'from_entry_type': entry_type,
+        'quantity': row.get('quantity_abs') or row.get('quantity'),
+        'quantity_display': row.get('quantity_display'),
+        'product_id': row.get('product_id'),
+        'product_name': row.get('product_name'),
+    }
+    if entry_type == StockEntryType.RECEIPT:
+        return {
+            **base,
+            'id': f'redo_receipt_{code}',
+            'kind': 'redo_goods_in',
+            'title': 'Receive the correct quantity',
+            'detail': (
+                f'Goods-in (PO or adhoc): receive again with the correct qty '
+                f'(was {qty}). New sticker will print.'
+            ),
+            'screen_hint': 'goods_in',
+        }
+    if entry_type == StockEntryType.ISSUE:
+        return {
+            **base,
+            'id': f'redo_issue_{code}',
+            'kind': 'redo_goods_out',
+            'title': 'Re-issue the pick',
+            'detail': (
+                f'Goods-out (plan or adhoc): issue {qty} again from the '
+                f'new goods-in sticker (if that pick was real).'
+            ),
+            'screen_hint': 'goods_out',
+        }
+    if entry_type == StockEntryType.TRANSFER_OUT:
+        return {
+            **base,
+            'id': f'redo_transfer_{code}',
+            'kind': 'redo_transfer',
+            'title': 'Redo the transfer',
+            'detail': (
+                f'Goods-out transfer: move {qty} again between the same '
+                f'locations. New stickers will print.'
+            ),
+            'screen_hint': 'goods_out',
+        }
+    if entry_type == StockEntryType.TRANSFER_IN:
+        return None  # covered by transfer_out todo
+    if entry_type == StockEntryType.PRODUCTION_OUTPUT:
+        return {
+            **base,
+            'id': f'redo_production_{code}',
+            'kind': 'redo_production',
+            'title': 'Redo production if still needed',
+            'detail': (
+                f'Production: post MADE again for {qty} if that run was real.'
+            ),
+            'screen_hint': 'production',
+        }
+    if entry_type == StockEntryType.DISPOSAL:
+        return {
+            **base,
+            'id': f'redo_disposal_{code}',
+            'kind': 'redo_goods_out',
+            'title': 'Redo the disposal',
+            'detail': f'Disposal: record {qty} again if it was real.',
+            'screen_hint': 'goods_out',
+        }
+    return None
+
+
+def _build_redo_todos(
+    *,
+    action: str,
+    will_undo: list[dict],
+    units_to_void: list[dict],
+    target: StockEntry,
+) -> list[dict]:
+    if action in ('blocked', 'already_removed'):
+        return []
+    todos: list[dict] = []
+    # Outbound first (picks), then inbound — matches will_undo order for receipt+issue
+    for row in will_undo:
+        if row['entry_type'] in (
+            StockEntryType.ISSUE,
+            StockEntryType.TRANSFER_OUT,
+            StockEntryType.DISPOSAL,
+        ):
+            todo = _redo_todo_for_row(row)
+            if todo is not None:
+                todos.append(todo)
+    for row in will_undo:
+        if row['entry_type'] in (
+            StockEntryType.RECEIPT,
+            StockEntryType.PRODUCTION_OUTPUT,
+        ):
+            todo = _redo_todo_for_row(row)
+            if todo is not None:
+                todos.append(todo)
+    # Transfer_in alone (no out in list) — rare
+    for row in will_undo:
+        if row['entry_type'] == StockEntryType.TRANSFER_IN:
+            if any(t['kind'] == 'redo_transfer' for t in todos):
+                continue
+            todos.append({
+                'id': f'redo_transfer_in_{row["entry_code"]}',
+                'kind': 'redo_transfer',
+                'status': 'pending',
+                'title': 'Redo the transfer',
+                'detail': (
+                    f'Transfer: move {_qty_label(row)} again. '
+                    f'New stickers will print.'
+                ),
+                'from_entry_code': row['entry_code'],
+                'from_entry_type': row['entry_type'],
+                'quantity': row.get('quantity_abs') or row.get('quantity'),
+                'quantity_display': row.get('quantity_display'),
+                'product_id': row.get('product_id'),
+                'product_name': row.get('product_name'),
+                'screen_hint': 'goods_out',
+            })
+
+    sticker_code = entry_labels.entry_code(target.id)
+    serials = [u['unit_serial'] for u in units_to_void]
+    serial_bit = ''
+    if serials:
+        serial_bit = f' and unit labels {", ".join(serials[:5])}'
+        if len(serials) > 5:
+            serial_bit += f' (+{len(serials) - 5} more)'
+    todos.append({
+        'id': f'bin_stickers_{sticker_code}',
+        'kind': 'bin_stickers',
+        'status': 'pending',
+        'title': 'Bin the old stickers',
+        'detail': f'Bin void sticker {sticker_code}{serial_bit}. Do not reuse.',
+        'from_entry_code': sticker_code,
+        'from_entry_type': target.entry_type,
+        'quantity': None,
+        'quantity_display': None,
+        'product_id': target.lot.product_id if target.lot_id else None,
+        'product_name': (
+            target.lot.product.name if target.lot_id else None
+        ),
+        'screen_hint': None,
+    })
+    return todos
+
+
+def _enrich_operator_copy(
+    preview: dict,
+    *,
+    target: StockEntry,
+) -> dict:
+    will_undo = preview.get('will_undo') or []
+    units_to_void = preview.get('units_to_void') or []
+    action = preview.get('action')
+    preview['confirmation_lines'] = _build_confirmation_lines(
+        action=action,
+        will_undo=will_undo,
+        units_to_void=units_to_void,
+        target=target,
+    )
+    preview['traceability_note'] = (
+        _TRACEABILITY_NOTE
+        if action not in ('blocked',)
+        else None
+    )
+    preview['redo_todos'] = _build_redo_todos(
+        action=action,
+        will_undo=will_undo,
+        units_to_void=units_to_void,
+        target=target,
+    )
+    return preview
 
 
 def _draw_row(entry: StockEntry, *, actor_names: dict[int, str]) -> dict:
@@ -201,22 +454,26 @@ def _plan_reverse(entry: StockEntry) -> tuple[str, list[dict], str | None]:
 
 def preview_remove(entry: StockEntry) -> dict:
     if _is_already_removed(entry):
-        return {
-            'action': 'already_removed',
-            'block_reason': None,
-            'will_undo': [],
-            'units_to_void': [],
-        }
+        return _enrich_operator_copy(
+            {
+                'action': 'already_removed',
+                'block_reason': None,
+                'will_undo': [],
+                'units_to_void': [],
+            },
+            target=entry,
+        )
 
     posting = _get_posting(entry.id)
     if posting is not None and posting.status == StockEntryPostingStatus.QUEUED:
         legs = _transfer_legs(entry)
-        return {
+        preview = {
             'action': 'cancel',
             'block_reason': None,
             'will_undo': [_undo_row(leg, 'cancel') for leg in legs],
             'units_to_void': _units_to_void([leg.id for leg in legs]),
         }
+        return _enrich_operator_copy(preview, target=entry)
 
     action, will_undo, block_reason = _plan_reverse(entry)
     entry_ids = {row['entry_id'] for row in will_undo}
@@ -224,12 +481,13 @@ def preview_remove(entry: StockEntry) -> dict:
     sibling = transfer_sibling(entry)
     if sibling is not None:
         entry_ids.add(sibling.id)
-    return {
+    preview = {
         'action': action,
         'block_reason': block_reason,
         'will_undo': will_undo,
         'units_to_void': _units_to_void(list(entry_ids)),
     }
+    return _enrich_operator_copy(preview, target=entry)
 
 
 def _stock_unit_rows(entry_id: int) -> list[dict]:
@@ -610,6 +868,10 @@ def remove_entry(
     entry = get_entry_for_manage(entry_id)
     preview = preview_remove(entry)
     action = preview['action']
+    # Snapshot checklist before undo empties will_undo.
+    confirmation_lines = list(preview.get('confirmation_lines') or [])
+    redo_todos = list(preview.get('redo_todos') or [])
+    traceability_note = preview.get('traceability_note')
 
     if action == 'blocked':
         raise ManageRemoveError(
@@ -699,7 +961,7 @@ def remove_entry(
         )
 
     entry = get_entry_for_manage(entry_id)
-    preview = preview_remove(entry)
+    after_preview = preview_remove(entry)
     return {
         'entry_id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),
@@ -707,8 +969,11 @@ def remove_entry(
         'cancelled_entry_codes': cancelled_codes,
         'reversed_entry_codes': reversed_codes,
         'voided_unit_serials': voided_serials,
-        'preview': preview,
+        'preview': after_preview,
         'idempotent': action == 'already_removed',
+        'confirmation_lines': confirmation_lines,
+        'redo_todos': redo_todos,
+        'traceability_note': traceability_note,
     }
 
 

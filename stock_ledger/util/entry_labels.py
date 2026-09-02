@@ -148,6 +148,7 @@ def label_state_dict(label: StockEntryLabel) -> dict:
         'label_count': label.label_count,
         'status': label.status,
         'verified_count': label.verified_count,
+        'printed_count': label.printed_count,
         'scan_count': label.scans.count(),
         'ok_scan_count': ok_scans,
         'printed_at': label.printed_at.isoformat() if label.printed_at else None,
@@ -247,6 +248,7 @@ def mark_printed(
     lan_username=None,
     source_workstation=None,
 ) -> StockEntryLabel:
+    """Mark printed (or reprint damaged sticker). Status stays verified if already verified."""
     label = (
         StockEntryLabel.objects
         .select_related('stock_entry__lot__product', 'stock_entry__unit')
@@ -258,24 +260,22 @@ def mark_printed(
             f'No label record for entry_id={entry_id}. '
             f'Pass label_format on receive first.',
         )
+    update_fields = ['printed_count', 'printed_at']
     if label.status == StockEntryLabelStatus.PENDING:
         label.status = StockEntryLabelStatus.PRINTED
-        label.printed_at = timezone.now()
-        if actor_user_id is not None:
-            label.actor_user_id = actor_user_id
-        if lan_username is not None:
-            label.lan_username = lan_username
-        if source_workstation is not None:
-            label.source_workstation = source_workstation
-        label.save(
-            update_fields=[
-                'status',
-                'printed_at',
-                'actor_user_id',
-                'lan_username',
-                'source_workstation',
-            ],
-        )
+        update_fields.append('status')
+    label.printed_count = label.printed_count + 1
+    label.printed_at = timezone.now()
+    if actor_user_id is not None:
+        label.actor_user_id = actor_user_id
+        update_fields.append('actor_user_id')
+    if lan_username is not None:
+        label.lan_username = lan_username
+        update_fields.append('lan_username')
+    if source_workstation is not None:
+        label.source_workstation = source_workstation
+        update_fields.append('source_workstation')
+    label.save(update_fields=update_fields)
     return label
 
 

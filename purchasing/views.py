@@ -34,6 +34,8 @@ from purchasing.services.delivery import (
     delivery_list_dict,
     get_delivery,
     list_deliveries,
+    list_rejected_deliveries,
+    unblock_rejected_delivery,
 )
 from purchasing.services.checklist import adhoc_checklist, delivery_checklist
 from purchasing.services.goods_in_form import (
@@ -384,6 +386,37 @@ def _attachment_post(request, po_id, *, delivery_id=None):
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
     return api_success('Attachment uploaded successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def rejected_deliveries_api(request):
+    rows = list_rejected_deliveries()
+    return api_success(
+        'Rejected header QC deliveries fetched successfully.',
+        {'count': len(rows), 'results': rows},
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_delivery_header_qc_unblock_api(request, po_id: int, delivery_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = unblock_rejected_delivery(
+            po_id,
+            delivery_id,
+            reason=body.get('reason') or '',
+            checked_by_user_id=body.get('checked_by_user_id'),
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
+    except DeliveryError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Header QC unblocked successfully.', data)
 
 
 @csrf_exempt

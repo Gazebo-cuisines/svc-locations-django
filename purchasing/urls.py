@@ -17,6 +17,7 @@ from purchasing.views import (
     po_delivery_collection_api,
     po_delivery_detail_api,
     po_delivery_header_qc_api,
+    po_delivery_header_qc_unblock_api,
     po_delivery_line_qc_api,
     po_delivery_print_api,
     po_delivery_receive_api,
@@ -28,6 +29,7 @@ from purchasing.views import (
     po_receive_api,
     po_release_api,
     po_timeline_api,
+    rejected_deliveries_api,
     stock_adjustment_api,
 )
 from purchasing.views_check_templates import (
@@ -54,10 +56,16 @@ urlpatterns = [
     path('pos/<int:po_id>/timeline/', po_timeline_api, name='purchasing-po-timeline'),
 
     # Nested deliveries (one QC session per truck)
+    path('deliveries/rejected/', rejected_deliveries_api, name='purchasing-rejected-deliveries'),
     path('pos/<int:po_id>/deliveries/', po_delivery_collection_api, name='purchasing-po-delivery-list'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/', po_delivery_detail_api, name='purchasing-po-delivery-detail'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/checklist/', po_delivery_checklist_api, name='purchasing-po-delivery-checklist'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/qc/header/', po_delivery_header_qc_api, name='purchasing-po-delivery-header-qc'),
+    path(
+        'pos/<int:po_id>/deliveries/<int:delivery_id>/qc/header/unblock/',
+        po_delivery_header_qc_unblock_api,
+        name='purchasing-po-delivery-header-qc-unblock',
+    ),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/lines/<int:line_id>/qc/', po_delivery_line_qc_api, name='purchasing-po-delivery-line-qc'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/receive/', po_delivery_receive_api, name='purchasing-po-delivery-receive'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/attachments/', po_delivery_attachments_api, name='purchasing-po-delivery-attachments'),
