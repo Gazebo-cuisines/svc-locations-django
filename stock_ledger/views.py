@@ -98,7 +98,7 @@ from stock_ledger.util.trace import (
     trace_forward,
 )
 from hardware.services import codes_for_serials, serial_from_request, touch_from_request
-from users_rbac.auth import attach_user, client_ip, require_admin
+from users_rbac.auth import attach_user, client_ip
 from users_rbac.permissions import (
     gate_floor_write,
     gate_production_write,
