@@ -143,6 +143,15 @@ class StockManagementPreviewTests(TestCase):
         self.assertEqual(preview['action'], 'reverse')
         ids = [row['entry_id'] for row in preview['will_undo']]
         self.assertEqual(ids, [issue.id, self.posted.id])
+        lines = preview['confirmation_lines']
+        self.assertTrue(any('goods-out' in line and f'E{issue.id}' in line for line in lines))
+        self.assertTrue(any('goods-in' in line and f'E{self.posted.id}' in line for line in lines))
+        self.assertTrue(any(line.startswith(f'{len(lines)}. Void') for line in lines))
+        kinds = [t['kind'] for t in preview['redo_todos']]
+        self.assertEqual(kinds[0], 'redo_goods_out')
+        self.assertEqual(kinds[1], 'redo_goods_in')
+        self.assertEqual(kinds[-1], 'bin_stickers')
+        self.assertIn('audit timeline', preview['traceability_note'].lower())
 
     def test_transfer_preview_includes_both_legs(self):
         out_entry, in_entry = services.transfer(
@@ -159,6 +168,39 @@ class StockManagementPreviewTests(TestCase):
         ids = [row['entry_id'] for row in preview['will_undo']]
         self.assertIn(out_entry.id, ids)
         self.assertIn(in_entry.id, ids)
+        self.assertTrue(
+            any('transfer' in line.lower() for line in preview['confirmation_lines']),
+        )
+        kinds = [t['kind'] for t in preview['redo_todos']]
+        self.assertIn('redo_transfer', kinds)
+        self.assertEqual(kinds[-1], 'bin_stickers')
+        self.assertEqual(
+            sum(1 for k in kinds if k == 'redo_transfer'),
+            1,
+        )
+
+    def test_blocked_preview_has_no_redo_todos(self):
+        output, _run = services.production_output(
+            idempotency_key=f'mg-made-block-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('20'),
+            resource_id=self.resource.id,
+            base_date=date(2026, 9, 1),
+        )
+        cons = services.production_consume(
+            idempotency_key=f'mg-cons-block-{uuid4()}',
+            output_entry_id=output.id,
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+        )
+        resp = self._get_preview(cons.id, user=self.manager)
+        preview = resp.json()['data']['preview']
+        self.assertEqual(preview['action'], 'blocked')
+        self.assertEqual(preview['confirmation_lines'], [])
+        self.assertEqual(preview['redo_todos'], [])
 
     def test_already_reversed_preview(self):
         services.reversal(

@@ -229,8 +229,15 @@ class StockManagementRemoveTests(TestCase):
         )
         resp = self._post_remove(self.posted.id, user=self.manager)
         self.assertEqual(resp.status_code, 201, resp.content)
-        codes = resp.json()['data']['reversed_entry_codes']
+        data = resp.json()['data']
+        codes = data['reversed_entry_codes']
         self.assertEqual(codes, [f'E{issue.id}', f'E{self.posted.id}'])
+        self.assertTrue(data['confirmation_lines'])
+        kinds = [t['kind'] for t in data['redo_todos']]
+        self.assertEqual(kinds[0], 'redo_goods_out')
+        self.assertEqual(kinds[1], 'redo_goods_in')
+        self.assertEqual(kinds[-1], 'bin_stickers')
+        self.assertIn('checklist', resp.json()['message'].lower())
 
         bal = StockBalance.objects.filter(
             lot=self.lot,

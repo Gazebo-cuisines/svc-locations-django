@@ -12,14 +12,16 @@ Stock is **append-only**. You cannot edit or delete a ledger row. Today, fixing 
 
 This tool gives managers one clear flow: **remove the bad transaction, then redo it correctly.**
 
+Connected picks (goods-out from a sticker) are undone **in the same Remove** — you do not reverse each row by hand.
+
 ---
 
 ## How to use it (4 steps)
 
 1. **Find** — Scan the sticker (`E123`) or search for the transaction.
-2. **Preview** — The system shows what will be undone (stock moves, linked picks, transfer other leg).
+2. **Preview** — Read **confirmation lines** (what will be undone, in order) and the **redo checklist**.
 3. **Remove** — Enter a **reason** and confirm. One click does the full undo.
-4. **Redo** — Go to the normal **goods-in** or **goods-out** screen and enter the correct transaction. New stickers print there.
+4. **Complete the checklist** — Redo each step on normal goods-in / goods-out. New stickers print there.
 
 **Bin the old stickers.** They are void and must not be used.
 
@@ -41,10 +43,29 @@ This tool gives managers one clear flow: **remove the bad transaction, then redo
 
 ---
 
+## Worked example — received 19 boxes, meant 90; already issued 5
+
+Do **not** reverse the 5-box out and the 19-box in separately.
+
+1. Open Stock Management on the **goods-in** sticker (`E…` for the 19).
+2. Preview shows (example):
+   - Reverse goods-out `E456` — 5 Box (from this sticker)
+   - Reverse goods-in `E123` — 19 Box
+   - Void sticker `E123` …
+3. Confirm Remove with a reason.
+4. Checklist after remove:
+   - Re-issue **5** from the **new** sticker (if that pick was real)
+   - Receive the **correct** qty (**90**) on goods-in — new sticker prints
+   - Bin old stickers
+5. Traceability: audit still shows the mistake + removals; new `E{id}` is the live barcode.
+
+---
+
 ## What it does not do
 
 - **No hard delete** — rows stay for traceability and the hash chain.
 - **No reprint** — new labels come from a normal receive/issue.
+- **No auto-recreate** — you redo on goods-in/out using the checklist.
 - **No fix inside production** — if stock was already used on the shop floor (MADE), remove is blocked. Void production first, then retry.
 
 ---
@@ -69,6 +90,8 @@ The full history (original, reversal, reason, who, when) stays on the **audit ti
 
 ## Manager message after Remove
 
-> Redo this on goods-in or goods-out. Bin the old stickers.
+> Removed. Complete the checklist, then bin old stickers.
+
+Show `redo_todos` from the API as an unchecked list until the manager finishes each step.
 
 That is the whole workflow.

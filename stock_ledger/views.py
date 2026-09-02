@@ -2128,9 +2128,9 @@ def entry_label_api(request, entry_id: int):
 
 @csrf_exempt
 @require_http_methods(['POST'])
-@gate_warehouse_write(action='goods_in')
+@gate_warehouse_write()
 def entry_label_print_api(request, entry_id: int):
-    """Mark Goods IN labels printed; returns print payload."""
+    """Print or reprint entry label (same E{id}); bumps printed_count."""
     body = _parse_json_body(request)
     if body is None:
         body = {}
@@ -3661,8 +3661,6 @@ def manage_entry_remove_api(request, entry_id: int):
     message = (
         'Entry was already removed.'
         if result.get('idempotent')
-        else 'Entry reversed. Bin the old stickers and redo goods-in/out.'
-        if result.get('reversed_entry_codes')
-        else 'Entry removed. Bin the old stickers and redo goods-in.'
+        else 'Removed. Complete the checklist, then bin old stickers.'
     )
     return api_success(message, result, status_code=201)

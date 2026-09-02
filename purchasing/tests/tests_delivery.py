@@ -27,11 +27,15 @@ from purchasing.models import (
     PurchaseOrderLine,
     PurchaseOrderStatus,
 )
-from purchasing.services.delivery import DeliveryError, create_delivery
+from purchasing.services.delivery import (
+    DeliveryError,
+    create_delivery,
+    list_rejected_deliveries,
+    unblock_rejected_delivery,
+)
 from purchasing.services.header_qc import submit_header_qc
 from purchasing.services.line_qc import submit_line_qc
 from purchasing.services.receive import receive_purchase_order
-from stock_ledger.models import StockPeriod, StockPeriodStatus
 
 
 class NestedDeliveryTests(TestCase):
@@ -69,11 +73,6 @@ class NestedDeliveryTests(TestCase):
             inner_unit=self.kg,
             is_default=True,
             is_active=True,
-        )
-        StockPeriod.objects.get_or_create(
-            period_start=date(2026, 1, 1),
-            period_end=date(2026, 12, 31),
-            defaults={'status': StockPeriodStatus.OPEN},
         )
         self.po = PurchaseOrder.objects.create(
             number=f'DEL-{uuid4().hex[:6]}',
@@ -191,6 +190,44 @@ class NestedDeliveryTests(TestCase):
 
         resp = client.post(f'/purchasing/pos/{self.po.id}/deliveries/')
         self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_list_rejected_and_unblock(self):
+        d1 = create_delivery(self.po.id)
+        self._header(d1.id, reject=True)
+        listed = list_rejected_deliveries()
+        self.assertTrue(any(row['id'] == d1.id for row in listed))
+
+        client = Client()
+        resp = client.get('/purchasing/deliveries/rejected/')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        ids = {row['id'] for row in resp.json()['data']['results']}
+        self.assertIn(d1.id, ids)
+
+        unblocked = unblock_rejected_delivery(
+            self.po.id,
+            d1.id,
+            reason='QC override — packaging OK',
+            checked_by_user_id=99,
+        )
+        self.assertEqual(unblocked['status'], PurchaseOrderDeliveryStatus.OPEN)
+        self.assertFalse(unblocked['reject_delivery'])
+        d1.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(d1.status, PurchaseOrderDeliveryStatus.OPEN)
+        self.assertFalse(d1.reject_delivery)
+        self.assertFalse(self.po.reject_delivery)
+
+        self._line_qc(d1.id)
+        self._receive(d1.id, 5)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, PurchaseOrderStatus.RECEIVED)
+
+        bad = client.post(
+            f'/purchasing/pos/{self.po.id}/deliveries/{d1.id}/qc/header/unblock/',
+            data='{"reason":"too late"}',
+            content_type='application/json',
+        )
+        self.assertEqual(bad.status_code, 400, bad.content)
 
     def test_alias_receive_auto_creates_first_delivery(self):
         self.po.checked_at = timezone.now()
