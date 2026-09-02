@@ -34,6 +34,8 @@ from purchasing.services.delivery import (
     delivery_list_dict,
     get_delivery,
     list_deliveries,
+    list_rejected_deliveries,
+    unblock_rejected_delivery,
 )
 from purchasing.services.checklist import adhoc_checklist, delivery_checklist
 from purchasing.services.goods_in_form import (
@@ -55,6 +57,7 @@ from purchasing.services.receive import ReceiveError, receive_purchase_order
 from purchasing.services.release import ReleaseError, release_from_quarantine
 from purchasing.services.po import (
     PoValidationError,
+    amend_purchase_order,
     create_purchase_order,
     get_purchase_order,
     list_purchase_orders,
@@ -173,6 +176,21 @@ def po_detail_api(request, po_id: int):
         return api_error(msg, status_code=status)
 
     return api_success('Purchase order updated successfully.', po_detail_dict(po))
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_amend_api(request, po_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        po = amend_purchase_order(po_id, body=body, actor=actor_json(request))
+    except PoValidationError as exc:
+        msg = str(exc)
+        status = 404 if msg == 'Purchase order not found.' else 400
+        return api_error(msg, status_code=status)
+    return api_success('Purchase order amended successfully.', po_detail_dict(po))
 
 
 @csrf_exempt
@@ -368,6 +386,37 @@ def _attachment_post(request, po_id, *, delivery_id=None):
         status = 404 if 'not found' in msg.lower() else 400
         return api_error(msg, status_code=status)
     return api_success('Attachment uploaded successfully.', data, status_code=201)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+def rejected_deliveries_api(request):
+    rows = list_rejected_deliveries()
+    return api_success(
+        'Rejected header QC deliveries fetched successfully.',
+        {'count': len(rows), 'results': rows},
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def po_delivery_header_qc_unblock_api(request, po_id: int, delivery_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = unblock_rejected_delivery(
+            po_id,
+            delivery_id,
+            reason=body.get('reason') or '',
+            checked_by_user_id=body.get('checked_by_user_id'),
+            actor=actor_json(request, user_id=body.get('checked_by_user_id')),
+        )
+    except DeliveryError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Header QC unblocked successfully.', data)
 
 
 @csrf_exempt

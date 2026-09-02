@@ -5,9 +5,19 @@ from __future__ import annotations
 import re
 
 from product.models import Product
-from stock_ledger.models import StockEntry, StockLot, StockUnit
+from stock_ledger.models import (
+    StockEntry,
+    StockEntryPosting,
+    StockEntryPostingStatus,
+    StockLot,
+    StockUnit,
+    StockUnitStatus,
+)
 from stock_ledger.util import entry_labels, stock_units
 from stock_ledger.util.conversions import StockValidationError
+from stock_ledger.util.services import _entry_is_reversed
+
+_VOID_LABEL_MSG = 'This barcode is void. Do not use.'
 
 # Bracketed GS1 AI form, e.g. (01)05012345678901(10)26218(21)ABC. Only needed so
 # legacy per-unit serial labels keep scanning; product labels carry P<id> alone.
@@ -40,6 +50,25 @@ def _product_by_code(text: str) -> Product | None:
     if match is None:
         return None
     return _product_by_id(int(match.group(1)))
+
+
+def _entry_sticker_is_void(entry: StockEntry) -> bool:
+    if _entry_is_reversed(entry):
+        return True
+    posting = (
+        StockEntryPosting.objects
+        .filter(stock_entry_id=entry.pk)
+        .first()
+    )
+    return (
+        posting is not None
+        and posting.status == StockEntryPostingStatus.CANCELLED
+    )
+
+
+def _reject_void_unit(unit: StockUnit) -> None:
+    if unit.status == StockUnitStatus.VOID:
+        raise StockValidationError(_VOID_LABEL_MSG)
 
 
 def _entry_by_id(entry_id: int) -> StockEntry | None:
@@ -83,6 +112,8 @@ def resolve_scan(code: str) -> dict:
             entry = _entry_by_id(completed) if completed is not None else None
         if entry is None:
             raise StockValidationError(f'code={text} not found')
+        if _entry_sticker_is_void(entry):
+            raise StockValidationError(_VOID_LABEL_MSG)
         return {
             'match_type': 'entry',
             'product': entry.lot.product,
@@ -94,6 +125,7 @@ def resolve_scan(code: str) -> dict:
     serial = parse_gs1(text).get('21')
     if serial:
         unit = stock_units.get_unit_by_serial(serial)
+        _reject_void_unit(unit)
         return {
             'match_type': 'unit_serial',
             'product': unit.lot.product,
@@ -137,6 +169,7 @@ def resolve_scan(code: str) -> dict:
         .first()
     )
     if unit is not None:
+        _reject_void_unit(unit)
         return {
             'match_type': 'unit_serial',
             'product': unit.lot.product,

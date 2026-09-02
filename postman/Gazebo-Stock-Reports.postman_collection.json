@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Gazebo - Stock Reports",
-    "description": "Sage-style stock criteria reports backed by `stock_entry`, plus daily closing-stock email recipients (AWS SES).\n\n**Domain:** goods in (receipts), goods out (issues), closing stock as-of date, report email recipients.\n\n**Tables:** `stock_entry` (posted only — excludes queued/cancelled); `stock_report_email_recipient`.\n\n**Vars:** `{{base_url}}`, `{{date_from}}`, `{{date_to}}`, `{{as_of}}`, `{{product_id}}`, `{{location_id}}`, `{{recipient_id}}`",
+    "description": "Sage-style stock criteria reports backed by `stock_entry`, plus daily closing-stock email recipients (AWS SES).\n\n**Domain:** goods in (receipts), goods out (issues), closing stock as-of date, operator activity (manager day overview), report email recipients.\n\n**Tables:** `stock_entry`, `stock_entry_posting`, `stock_entry_label_scan`, `rbac_user`; `stock_report_email_recipient`.\n\n**Vars:** `{{base_url}}`, `{{date_from}}`, `{{date_to}}`, `{{as_of}}`, `{{date}}`, `{{from_time}}`, `{{user_id}}`, `{{product_id}}`, `{{location_id}}`, `{{recipient_id}}`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -20,6 +20,18 @@
     {
       "key": "as_of",
       "value": "2026-08-20"
+    },
+    {
+      "key": "date",
+      "value": "2026-08-31"
+    },
+    {
+      "key": "from_time",
+      "value": "14:14"
+    },
+    {
+      "key": "user_id",
+      "value": "6"
     },
     {
       "key": "product_id",
@@ -42,8 +54,15 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/stock/reports/goods-in/?date_from={{date_from}}&date_to={{date_to}}&goods_in_type=raw_material",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "goods-in", ""],
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "goods-in",
+            ""
+          ],
           "query": [
             {
               "key": "date_from",
@@ -76,11 +95,11 @@
               "key": "limit",
               "value": "200",
               "disabled": true,
-              "description": "Optional row cap 1–1000 (default 200)"
+              "description": "Optional row cap 1\u20131000 (default 200)"
             }
           ]
         },
-        "description": "### Goods in report\n\n`GET /stock/reports/goods-in/`\n\nLists posted **receipt** stock movements whose business date (`effective_at`) falls between `date_from` and `date_to` (inclusive). Use from a criteria popup like Sage Day Books: pick a date range, optionally filter raw materials (`goods_in_type=raw_material`), then OK.\n\nExample: `date_from=2026-08-01` & `date_to=2026-08-20` returns every live goods-in line in that window.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date_from` | yes | Start date `YYYY-MM-DD` (inclusive) |\n| `date_to` | yes | End date `YYYY-MM-DD` (inclusive) |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one warehouse/location |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods in report fetched.\", data: { date_from, date_to, count, results: [ { entry_id, entry_type, effective_at, product_id, product_name, recipe_code, gff_code, goods_in_type, lot_id, trace_number, location_id, location_name, quantity, unit_id, unit_name, source_document_type, source_document_id, po_number, remarks } ] } }`\n\nQuantities are signed ledger amounts (receipts positive).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including empty `results`) |\n| 400 | Missing/invalid dates, inverted range, bad `goods_in_type` / ids |"
+        "description": "### Goods in report\n\n`GET /stock/reports/goods-in/`\n\nLists posted **receipt** stock movements whose business date (`effective_at`) falls between `date_from` and `date_to` (inclusive). Use from a criteria popup like Sage Day Books: pick a date range, optionally filter raw materials (`goods_in_type=raw_material`), then OK.\n\nExample: `date_from=2026-08-01` & `date_to=2026-08-20` returns every live goods-in line in that window.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date_from` | yes | Start date `YYYY-MM-DD` (inclusive) |\n| `date_to` | yes | End date `YYYY-MM-DD` (inclusive) |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one warehouse/location |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods in report fetched.\", data: { date_from, date_to, count, results: [ { entry_id, entry_type, effective_at, recorded_at, product_id, product_name, recipe_code, gff_code, goods_in_type, lot_id, trace_number, use_by, location_id, location_name, counterparty_location_id, counterparty_location_name, quantity, quantity_base, unit_id, unit_name, source_document_type, source_document_id, po_number, remarks, product_supplier_id, supplier_code, sage_product_code, supplier_product_name, shape_format_label, pack_quantity, pack_unit_name, display_kg } ] } }`\n\nEach movement/closing row also includes supplier pack fields when a `product_supplier` mapping is known: `product_supplier_id`, `supplier_code`, `sage_product_code`, `supplier_product_name`, `shape_format_label`, `pack_quantity`, `pack_unit_name`, `display_kg`. Mass uses existing `quantity_base` / `display_kg` (no separate grams field).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including empty `results`) |\n| 400 | Missing/invalid dates, inverted range, bad `goods_in_type` / ids |"
       }
     },
     {
@@ -90,8 +109,15 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/stock/reports/goods-out/?date_from={{date_from}}&date_to={{date_to}}",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "goods-out", ""],
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "goods-out",
+            ""
+          ],
           "query": [
             {
               "key": "date_from",
@@ -125,11 +151,11 @@
               "key": "limit",
               "value": "200",
               "disabled": true,
-              "description": "Optional row cap 1–1000 (default 200)"
+              "description": "Optional row cap 1\u20131000 (default 200)"
             }
           ]
         },
-        "description": "### Goods out report\n\n`GET /stock/reports/goods-out/`\n\nLists posted **issue** stock movements in the `effective_at` date range (inclusive). Same criteria shape as goods in. Does **not** include disposal, transfer, or production consumption — issues only.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date_from` | yes | Start date `YYYY-MM-DD` (inclusive) |\n| `date_to` | yes | End date `YYYY-MM-DD` (inclusive) |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one location |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods out report fetched.\", data: { date_from, date_to, count, results: [ …same movement row shape as goods in… ] } }`\n\nIssue quantities are negative in the ledger.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing/invalid dates, inverted range, bad filters |"
+        "description": "### Goods out report\n\n`GET /stock/reports/goods-out/`\n\nLists posted **issue** stock movements in the `effective_at` date range (inclusive). Same criteria shape as goods in. Does **not** include disposal, transfer, or production consumption \u2014 issues only.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date_from` | yes | Start date `YYYY-MM-DD` (inclusive) |\n| `date_to` | yes | End date `YYYY-MM-DD` (inclusive) |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one location |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods out report fetched.\", data: { date_from, date_to, count, results: [ \u2026same movement row shape as goods in\u2026 ] } }`\n\nIssue / transfer_out quantities are negative in the ledger; `pack_quantity` / `display_kg` use absolute mass for warehouse display.\n\nEach movement/closing row also includes supplier pack fields when a `product_supplier` mapping is known: `product_supplier_id`, `supplier_code`, `sage_product_code`, `supplier_product_name`, `shape_format_label`, `pack_quantity`, `pack_unit_name`, `display_kg`. Mass uses existing `quantity_base` / `display_kg` (no separate grams field).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing/invalid dates, inverted range, bad filters |"
       }
     },
     {
@@ -139,8 +165,15 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/stock/reports/closing-stock/?as_of={{as_of}}",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "closing-stock", ""],
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "closing-stock",
+            ""
+          ],
           "query": [
             {
               "key": "as_of",
@@ -170,10 +203,103 @@
               "value": "0",
               "disabled": true,
               "description": "1/true to keep zero qty rows (default omit zeros)"
+            },
+            {
+              "key": "view",
+              "value": "detail",
+              "disabled": true,
+              "description": "detail (default, per trace\u00d7location) | consolidated (product\u00d7shape rollup)"
             }
           ]
         },
-        "description": "### Closing stock report\n\n`GET /stock/reports/closing-stock/`\n\nReturns lot×location closing balances **as of end of** `as_of` (23:59:59 local). Sums posted `stock_entry.quantity` where `effective_at` ≤ that cutoff. Use a single date picker in the criteria popup (Sage-style “as of” / day close).\n\nZero balances are omitted unless `include_zero=1`. Queued/cancelled receipts and downtime rows are excluded.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `as_of` | yes | Closing date `YYYY-MM-DD` |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one location |\n| `include_zero` | no | Include zero qty rows when `1` / `true` / `yes` |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Closing stock report fetched.\", data: { as_of, count, results: [ { as_of, product_id, product_name, recipe_code, gff_code, goods_in_type, lot_id, trace_number, use_by, location_id, location_name, unit_id, unit_name, quantity, quantity_base } ] } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing/invalid `as_of` or bad filters |"
+        "description": "### Closing stock report\n\n`GET /stock/reports/closing-stock/`\n\nReturns lot\u00d7location closing balances **as of end of** `as_of` (23:59:59 local). Sums posted `stock_entry.quantity` where `effective_at` \u2264 that cutoff. Use a single date picker in the criteria popup (Sage-style \u201cas of\u201d / day close).\n\nZero balances are omitted unless `include_zero=1`. Queued/cancelled receipts and downtime rows are excluded.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `as_of` | yes | Closing date `YYYY-MM-DD` |\n| `goods_in_type` | no | `raw_material`, `packaging`, or `other`. Alias: `product_type` |\n| `product_id` | no | Filter one product |\n| `location_id` | no | Filter one location |\n| `include_zero` | no | Include zero qty rows when `1` / `true` / `yes` |\n| `view` | no | `detail` (default) = one row per lot\u00d7location with `use_by` / `trace_number`. `consolidated` = rollup by product \u00d7 shape with `earliest_use_by` / `latest_use_by`, `lot_count`, `location_count` |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Closing stock report fetched.\", data: { as_of, view, group_by, count, results: [ \u2026 ] } }`\n\n**`view=detail` (default)** \u2014 one row per lot\u00d7location:\n\n`{ as_of, product_id, product_name, recipe_code, gff_code, goods_in_type, lot_id, trace_number, use_by, location_id, location_name, unit_id, unit_name, quantity, quantity_base, product_supplier_id, supplier_code, sage_product_code, supplier_product_name, shape_format_label, pack_quantity, pack_unit_name, display_kg }`\n\n`use_by` is that lot\u2019s best-before / use-by date.\n\n**`view=consolidated`** \u2014 one row per product \u00d7 `product_supplier` shape (no lot/trace/location):\n\n`{ as_of, product_id, product_name, recipe_code, gff_code, goods_in_type, unit_id, unit_name, product_supplier_id, supplier_code, sage_product_code, supplier_product_name, shape_format_label, pack_quantity, pack_unit_name, quantity, quantity_base, display_kg, earliest_use_by, latest_use_by, lot_count, location_count }`\n\n`earliest_use_by` / `latest_use_by` = soonest and latest best-before across lots in the group. Nightly email CSV stays on detail grain.\n\nEach row includes supplier pack fields when a `product_supplier` mapping is known. Mass uses `quantity_base` / `display_kg` (no separate grams field).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing/invalid `as_of` or bad filters |"
+      }
+    },
+    {
+      "name": "Operator activity report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/operator-activity/?date={{date}}&from_time={{from_time}}&to_time=23:59",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "operator-activity",
+            ""
+          ],
+          "query": [
+            {
+              "key": "date",
+              "value": "{{date}}",
+              "description": "Calendar day YYYY-MM-DD (local TZ, on recorded_at / queued_at / scanned_at)"
+            },
+            {
+              "key": "from_time",
+              "value": "{{from_time}}",
+              "description": "Optional HH:MM start (default 00:00)"
+            },
+            {
+              "key": "to_time",
+              "value": "23:59",
+              "description": "Optional HH:MM end inclusive (default 23:59)"
+            }
+          ]
+        },
+        "description": "### Operator activity report\n\n`GET /stock/reports/operator-activity/`\n\nManager day overview of who worked stock: entry counts by type, label scans, stock-in postings (posted vs queued in the window), and per-operator breakdown with display names from `rbac_user`. Use when reviewing a live stock-take shift (e.g. opening stock from 14:14 UK).\n\nTimes apply in the server timezone (Europe/London in prod). Counts use `stock_entry.recorded_at`, `stock_entry_posting.queued_at`, and `stock_entry_label_scan.scanned_at`.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date` | yes | Day `YYYY-MM-DD` |\n| `from_time` | no | Start `HH:MM` (default `00:00`) |\n| `to_time` | no | End `HH:MM` inclusive (default `23:59`) |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Operator activity fetched.\", data: { date, from_time, to_time, timezone, summary: { users, entries, receipts, products, locations, transfers_in, transfers_out, scans_ok, scans_mismatch, postings_posted, postings_queued, still_queued_now }, operators: [ { user_id, display_name, entries, receipts, transfers, scans, queued } ] } }`\n\n`operators[].queued` is that person's **current** still-queued stock-in count (not limited to the window). `summary.still_queued_now` is the global still-queued total.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including empty operators) |\n| 400 | Missing/invalid `date` or times, or `from_time` after `to_time` |"
+      }
+    },
+    {
+      "name": "Operator activity detail",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/reports/operator-activity/detail/?date={{date}}&user_id={{user_id}}&from_time={{from_time}}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "operator-activity",
+            "detail",
+            ""
+          ],
+          "query": [
+            {
+              "key": "date",
+              "value": "{{date}}",
+              "description": "Calendar day YYYY-MM-DD"
+            },
+            {
+              "key": "user_id",
+              "value": "{{user_id}}",
+              "description": "rbac_user id (from operators[].user_id)"
+            },
+            {
+              "key": "from_time",
+              "value": "{{from_time}}",
+              "description": "Optional HH:MM start"
+            },
+            {
+              "key": "to_time",
+              "value": "23:59",
+              "disabled": true,
+              "description": "Optional HH:MM end"
+            },
+            {
+              "key": "limit",
+              "value": "200",
+              "disabled": true,
+              "description": "Max entry rows 1\u20131000 (default 200)"
+            }
+          ]
+        },
+        "description": "### Operator activity detail\n\n`GET /stock/reports/operator-activity/detail/`\n\nDrill-down for one operator: their `stock_entry` lines in the same day/time window as the summary report (newest first). Same movement row shape as goods-in/out reports. Tap a person on the manager screen, then load this.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `date` | yes | Day `YYYY-MM-DD` |\n| `user_id` | yes | Operator `rbac_user` id |\n| `from_time` | no | Start `HH:MM` (default `00:00`) |\n| `to_time` | no | End `HH:MM` inclusive (default `23:59`) |\n| `limit` | no | Max rows, default 200, max 1000 |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Operator activity detail fetched.\", data: { date, from_time, to_time, user_id, display_name, count, results: [ { entry_id, entry_type, effective_at, recorded_at, product_id, product_name, \u2026 } ] } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 400 | Missing `date` / `user_id`, or invalid times |"
       }
     },
     {
@@ -189,8 +315,15 @@
         ],
         "url": {
           "raw": "{{base_url}}/stock/reports/email-recipients/",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "email-recipients", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "email-recipients",
+            ""
+          ]
         },
         "description": "### List report email recipients\n\n`GET /stock/reports/email-recipients/`\n\nReturns every address that can receive the nightly closing-stock CSV (AWS SES). Used by the frontend settings screen that configures who gets the daily report.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipients fetched.\", data: [ { id, email, is_active, created_at, updated_at } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |"
       }
@@ -216,8 +349,15 @@
         },
         "url": {
           "raw": "{{base_url}}/stock/reports/email-recipients/",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "email-recipients", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "email-recipients",
+            ""
+          ]
         },
         "description": "### Add report email recipient\n\n`POST /stock/reports/email-recipients/`\n\nAdds an email to the daily closing-stock distribution list. Stored lowercased; must be unique. New rows start `is_active=true` and are included the next time `manage.py email_closing_stock_report` runs.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `email` | yes | Valid email address |\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipient added.\", data: { id, email, is_active, created_at, updated_at } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Created |\n| 400 | Missing/invalid email |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |\n| 409 | Email already on the list |"
       }
@@ -243,8 +383,16 @@
         },
         "url": {
           "raw": "{{base_url}}/stock/reports/email-recipients/{{recipient_id}}/",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "email-recipients", "{{recipient_id}}", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "email-recipients",
+            "{{recipient_id}}",
+            ""
+          ]
         },
         "description": "### Update report email recipient\n\n`PATCH /stock/reports/email-recipients/:id/`\n\nToggle whether a recipient gets the nightly closing-stock email, or change the address. Inactive addresses stay in the list but are skipped by the SES command.\n\n**Path parameters**\n\n| Param | Description |\n| --- | --- |\n| `id` | Recipient PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `is_active` | yes | `true` / `false` |\n| `email` | no | New address if changing |\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipient updated.\", data: { id, email, is_active, created_at, updated_at } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Updated |\n| 400 | Missing `is_active` or invalid email |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |\n| 404 | Unknown id |\n| 409 | Email already on the list |"
       }
@@ -262,8 +410,16 @@
         ],
         "url": {
           "raw": "{{base_url}}/stock/reports/email-recipients/{{recipient_id}}/",
-          "host": ["{{base_url}}"],
-          "path": ["stock", "reports", "email-recipients", "{{recipient_id}}", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "reports",
+            "email-recipients",
+            "{{recipient_id}}",
+            ""
+          ]
         },
         "description": "### Delete report email recipient\n\n`DELETE /stock/reports/email-recipients/:id/`\n\nRemoves an address from the daily closing-stock distribution list permanently.\n\n**Path parameters**\n\n| Param | Description |\n| --- | --- |\n| `id` | Recipient PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Report email recipient removed.\", data: { ref: <id> } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Removed |\n| 401 | Missing/invalid token |\n| 403 | Not an admin |\n| 404 | Unknown id |"
       }

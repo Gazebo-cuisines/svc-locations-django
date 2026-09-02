@@ -13,11 +13,14 @@ from product.models import (
     Product,
     ProductClass,
     ProductGoodsInType,
+    ProductSupplier,
     Range,
     Unit,
 )
 from stock_ledger.models import StockEntryPosting, StockEntryPostingStatus, StockLot, StockLotOrigin
 from stock_ledger.util import services
+from stock_ledger.util.conversions import seed_global_unit_conversions
+from users_rbac.models import RbacUser
 
 
 class StockReportApiTests(TestCase):
@@ -256,3 +259,218 @@ class StockReportApiTests(TestCase):
             {'date_from': '2026-08-20', 'date_to': '2026-08-01'},
         )
         self.assertEqual(bad.status_code, 400)
+
+    def test_operator_activity_summary_and_detail(self):
+        user = RbacUser.objects.create(
+            cognito_sub=f'sub-{uuid4().hex[:12]}',
+            username=f'op-{uuid4().hex[:8]}',
+            email=f'op-{uuid4().hex[:8]}@example.com',
+            display_name='Ops Tester',
+        )
+        self.receipt.actor_user_id = user.id
+        self.receipt.recorded_at = self.d1
+        self.receipt.save(update_fields=['actor_user_id', 'recorded_at'])
+
+        resp = self.client.get(
+            '/stock/reports/operator-activity/',
+            {'date': '2026-08-01', 'from_time': '09:00', 'to_time': '18:00'},
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['summary']['entries'] >= 1, True)
+        self.assertEqual(data['summary']['users'], 1)
+        op = next(r for r in data['operators'] if r['user_id'] == user.id)
+        self.assertEqual(op['display_name'], 'Ops Tester')
+        self.assertGreaterEqual(op['entries'], 1)
+
+        detail = self.client.get(
+            '/stock/reports/operator-activity/detail/',
+            {'date': '2026-08-01', 'user_id': user.id},
+        )
+        self.assertEqual(detail.status_code, 200, detail.content)
+        body = detail.json()['data']
+        self.assertEqual(body['user_id'], user.id)
+        self.assertGreaterEqual(body['count'], 1)
+        self.assertEqual(body['results'][0]['entry_id'], self.receipt.id)
+
+    def test_operator_activity_requires_date(self):
+        self.assertEqual(
+            self.client.get('/stock/reports/operator-activity/').status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                '/stock/reports/operator-activity/detail/',
+                {'date': '2026-08-01'},
+            ).status_code,
+            400,
+        )
+
+    def test_reports_include_supplier_pack_fields(self):
+        seed_global_unit_conversions()
+        box = Unit.objects.create(id=82, name='Box')
+        supplier = Location.objects.create(id=83, name='Rpt Sup', visible=True)
+        mapping = ProductSupplier.objects.create(
+            product=self.product,
+            supplier=supplier,
+            supplier_code='CST-FLOUR-25',
+            sage_product_code='SAGE-FLOUR-25',
+            supplier_product_name='Flour 25kg',
+            outer_qty=Decimal('1'),
+            outer_unit=box,
+            inner_qty=Decimal('25'),
+            inner_unit=self.unit,
+            is_default=True,
+            is_active=True,
+        )
+        pack_lot = StockLot.objects.create(
+            product=self.product,
+            trace_number=f'T{uuid4().hex[:8]}',
+            origin=StockLotOrigin.PURCHASE,
+            production_date=date(2026, 8, 1),
+            use_by=date(2026, 9, 1),
+        )
+        receipt = services.receipt(
+            idempotency_key=f'rpt-pack-shape-{uuid4()}',
+            lot=pack_lot,
+            location_id=self.wh.id,
+            quantity=Decimal('2'),
+            product_supplier=mapping,
+            effective_at=self.d1,
+            counterparty_location_id=supplier.id,
+        )
+        services.issue(
+            idempotency_key=f'rpt-pack-out-{uuid4()}',
+            lot=pack_lot,
+            location_id=self.wh.id,
+            quantity=Decimal('25'),
+            unit_id=self.unit.id,
+            effective_at=self.d15,
+        )
+
+        goods_in = self.client.get(
+            '/stock/reports/goods-in/',
+            {
+                'date_from': '2026-08-01',
+                'date_to': '2026-08-20',
+                'product_id': self.product.id,
+            },
+        )
+        self.assertEqual(goods_in.status_code, 200, goods_in.content)
+        in_row = next(
+            r for r in goods_in.json()['data']['results']
+            if r['entry_id'] == receipt.id
+        )
+        self.assertEqual(in_row['sage_product_code'], 'SAGE-FLOUR-25')
+        self.assertEqual(in_row['supplier_code'], 'CST-FLOUR-25')
+        self.assertEqual(Decimal(in_row['pack_quantity']), Decimal('2'))
+        self.assertEqual(in_row['pack_unit_name'], 'Box')
+        self.assertEqual(Decimal(in_row['display_kg']), Decimal('50'))
+        self.assertTrue(in_row['shape_format_label'])
+
+        goods_out = self.client.get(
+            '/stock/reports/goods-out/',
+            {
+                'date_from': '2026-08-01',
+                'date_to': '2026-08-20',
+                'product_id': self.product.id,
+            },
+        )
+        out_row = next(
+            r for r in goods_out.json()['data']['results']
+            if r['lot_id'] == pack_lot.id
+        )
+        self.assertEqual(out_row['sage_product_code'], 'SAGE-FLOUR-25')
+        self.assertEqual(Decimal(out_row['pack_quantity']), Decimal('1'))
+        self.assertEqual(Decimal(out_row['display_kg']), Decimal('25'))
+
+        close = self.client.get(
+            '/stock/reports/closing-stock/',
+            {'as_of': '2026-08-20', 'product_id': self.product.id},
+        )
+        close_data = close.json()['data']
+        self.assertEqual(close_data['view'], 'detail')
+        close_row = next(
+            r for r in close_data['results']
+            if r['lot_id'] == pack_lot.id
+        )
+        self.assertEqual(close_row['quantity'], '25')
+        self.assertEqual(close_row['use_by'], '2026-09-01')
+        self.assertEqual(close_row['production_date'], '2026-08-01')
+        self.assertEqual(close_row['sage_product_code'], 'SAGE-FLOUR-25')
+        self.assertEqual(Decimal(close_row['pack_quantity']), Decimal('1'))
+        self.assertEqual(close_row['pack_unit_name'], 'Box')
+        self.assertEqual(Decimal(close_row['display_kg']), Decimal('25'))
+        self.assertTrue(close_row['shape_format_label'])
+
+        # Lot without stamped mapping still picks default product_supplier.
+        default_close = next(
+            r for r in close_data['results']
+            if r['lot_id'] == self.lot.id
+        )
+        self.assertEqual(default_close['sage_product_code'], 'SAGE-FLOUR-25')
+        self.assertEqual(default_close['supplier_code'], 'CST-FLOUR-25')
+        self.assertIsNotNone(default_close['pack_quantity'])
+
+        # Second lot, earlier use-by — consolidated rolls both into one shape row.
+        early_lot = StockLot.objects.create(
+            product=self.product,
+            trace_number=f'T{uuid4().hex[:8]}',
+            origin=StockLotOrigin.PURCHASE,
+            production_date=date(2026, 8, 1),
+            use_by=date(2026, 8, 20),
+        )
+        services.receipt(
+            idempotency_key=f'rpt-pack-early-{uuid4()}',
+            lot=early_lot,
+            location_id=self.wh.id,
+            quantity=Decimal('1'),
+            product_supplier=mapping,
+            effective_at=self.d1,
+            counterparty_location_id=supplier.id,
+        )
+        consol = self.client.get(
+            '/stock/reports/closing-stock/',
+            {
+                'as_of': '2026-08-20',
+                'product_id': self.product.id,
+                'view': 'consolidated',
+            },
+        )
+        self.assertEqual(consol.status_code, 200, consol.content)
+        body = consol.json()['data']
+        self.assertEqual(body['view'], 'consolidated')
+        self.assertEqual(body['group_by'], 'product_shape')
+        consol_row = next(
+            r for r in body['results']
+            if r['product_supplier_id'] == mapping.id
+        )
+        detail = self.client.get(
+            '/stock/reports/closing-stock/',
+            {'as_of': '2026-08-20', 'product_id': self.product.id},
+        ).json()['data']['results']
+        expected_qty = sum(
+            Decimal(r['quantity'])
+            for r in detail
+            if r.get('product_supplier_id') == mapping.id
+        )
+        self.assertEqual(Decimal(consol_row['quantity']), expected_qty)
+        self.assertEqual(
+            Decimal(consol_row['pack_quantity']),
+            expected_qty / Decimal('25'),
+        )
+        self.assertEqual(consol_row['earliest_use_by'], '2026-08-20')
+        self.assertEqual(consol_row['latest_use_by'], '2026-09-01')
+        self.assertEqual(consol_row['earliest_production_date'], '2026-08-01')
+        self.assertEqual(consol_row['latest_production_date'], '2026-08-01')
+        self.assertGreaterEqual(consol_row['lot_count'], 2)
+        self.assertEqual(consol_row['sage_product_code'], 'SAGE-FLOUR-25')
+        self.assertNotIn('lot_id', consol_row)
+        self.assertNotIn('trace_number', consol_row)
+        self.assertNotIn('use_by', consol_row)
+
+        bad_view = self.client.get(
+            '/stock/reports/closing-stock/',
+            {'as_of': '2026-08-20', 'view': 'nope'},
+        )
+        self.assertEqual(bad_view.status_code, 400)

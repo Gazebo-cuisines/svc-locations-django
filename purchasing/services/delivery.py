@@ -1,15 +1,18 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
 from purchasing.models import (
     PurchaseOrder,
     PurchaseOrderDelivery,
     PurchaseOrderDeliveryLine,
     PurchaseOrderDeliveryStatus,
+    PurchaseOrderHistoryEvent,
     PurchaseOrderStatus,
 )
 from purchasing.serialize import _iso_date, _iso_dt, _qty_str, rbac_names
+from purchasing.services.timeline import actor_json, record_history
 
 
 class DeliveryError(ValueError):
@@ -221,3 +224,100 @@ def list_deliveries(po_id: int) -> list[PurchaseOrderDelivery]:
     return list(
         PurchaseOrderDelivery.objects.filter(purchase_order_id=po_id).order_by('id'),
     )
+
+
+def list_rejected_deliveries() -> list[dict]:
+    rows = (
+        PurchaseOrderDelivery.objects
+        .filter(status=PurchaseOrderDeliveryStatus.REJECTED)
+        .select_related('purchase_order')
+        .order_by('-id')
+    )
+    out = []
+    for delivery in rows:
+        item = delivery_list_dict(delivery)
+        po = delivery.purchase_order
+        item['purchase_order_number'] = po.number
+        item['purchase_order_status'] = po.status
+        out.append(item)
+    return out
+
+
+@transaction.atomic
+def unblock_rejected_delivery(
+    po_id: int,
+    delivery_id: int,
+    *,
+    reason: str,
+    checked_by_user_id=None,
+    actor=None,
+) -> dict:
+    reason = (reason or '').strip()
+    if not reason:
+        raise DeliveryError('reason is required.')
+
+    try:
+        po = PurchaseOrder.objects.select_for_update().get(pk=po_id)
+    except PurchaseOrder.DoesNotExist as exc:
+        raise DeliveryError('Purchase order not found.') from exc
+
+    if po.status not in (
+        PurchaseOrderStatus.ORDERED,
+        PurchaseOrderStatus.PARTIAL,
+    ):
+        raise DeliveryError(
+            f'Unblock only allowed when PO status is ordered or partial '
+            f'(current={po.status}).',
+        )
+
+    delivery = get_delivery(po_id, delivery_id)
+    if delivery.status != PurchaseOrderDeliveryStatus.REJECTED:
+        raise DeliveryError(
+            f'Delivery is not rejected (status={delivery.status}).',
+        )
+    if open_delivery_for(po_id) is not None:
+        raise DeliveryError(
+            'An open delivery already exists; finish or reject it first.',
+        )
+
+    before = {
+        'delivery_id': delivery.id,
+        'status': delivery.status,
+        'reject_delivery': delivery.reject_delivery,
+    }
+
+    checks = dict(delivery.header_checks or {})
+    if 'reject_delivery' in checks and isinstance(checks['reject_delivery'], dict):
+        checks['reject_delivery'] = {
+            **checks['reject_delivery'],
+            'value': False,
+            'comment': reason,
+        }
+
+    now = timezone.now()
+    delivery.reject_delivery = False
+    delivery.status = PurchaseOrderDeliveryStatus.OPEN
+    delivery.header_checks = checks
+    if checked_by_user_id not in (None, ''):
+        delivery.qc_tl_checked_by_user_id = int(checked_by_user_id)
+        delivery.qc_tl_checked_at = now
+        delivery.qc_tl_comment = reason
+    delivery.save()
+    sync_po_from_delivery(delivery)
+
+    actor_payload = actor or actor_json(user_id=checked_by_user_id)
+    record_history(
+        po=po,
+        delivery=delivery,
+        event_type=PurchaseOrderHistoryEvent.ACCEPT,
+        remarks=f'QC unblock: {reason}',
+        before=before,
+        after={
+            'delivery_id': delivery.id,
+            'status': delivery.status,
+            'reject_delivery': False,
+            'reason': reason,
+        },
+        actor=actor_payload,
+    )
+    return delivery_list_dict(delivery)

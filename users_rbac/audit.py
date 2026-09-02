@@ -11,6 +11,11 @@ from django.views.decorators.http import require_GET
 from core.api_response import error_response, success_response
 from product.models import ProductAudit
 from stock_ledger.models import StockEntry
+from stock_ledger.util.activity import (
+    entry_activity_meta,
+    entry_activity_quantity,
+    enrich_activity_names,
+)
 from users_rbac.auth import client_ip, require_admin, require_auth
 from users_rbac.models import RbacAuditEvent, RbacUser
 
@@ -191,35 +196,72 @@ def _in_range(at_iso, dt_from, dt_to) -> bool:
     return True
 
 
-def _stock_activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
-    """Stock ledger rows stamped as this user (read-only)."""
-    stock_qs = StockEntry.objects.filter(
-        Q(actor_user_id=user.id) | Q(lan_username__iexact=user.username)
-    ).select_related('unit', 'location', 'lot__product')
-    if dt_from:
-        stock_qs = stock_qs.filter(recorded_at__gte=dt_from)
-    if dt_to:
-        stock_qs = stock_qs.filter(recorded_at__lte=dt_to)
-    items = []
-    for entry in stock_qs:
-        at = entry.recorded_at.isoformat() if entry.recorded_at else None
-        items.append(
-            {
-                'source': 'stock',
-                'at': at,
-                'action': entry.entry_type,
-                'entry_id': entry.id,
-                'product_id': entry.lot.product_id,
-                'product_name': entry.lot.product.name,
-                'location_id': entry.location_id,
-                'quantity': str(entry.quantity) if entry.quantity is not None else None,
-                'lan_username': entry.lan_username,
-                'actor_user_id': entry.actor_user_id,
-                'source_ip': entry.source_workstation_ip,
-                'request_path': None,
-            }
+def _stock_activity_queryset(user: RbacUser, dt_from, dt_to):
+    qs = (
+        StockEntry.objects.filter(
+            Q(actor_user_id=user.id) | Q(lan_username__iexact=user.username)
         )
-    return items
+        .select_related(
+            'unit',
+            'location',
+            'lot__product__unit',
+            'lot__product_supplier__outer_unit',
+            'lot__product_supplier__inner_unit',
+            'lot__product_supplier__purchase_shape_format',
+            'lot__shape_format',
+            'counterparty_location',
+            'posting',
+            'reversed_by',
+            'label',
+        )
+        .order_by('-recorded_at', '-id')
+    )
+    if dt_from:
+        qs = qs.filter(recorded_at__gte=dt_from)
+    if dt_to:
+        qs = qs.filter(recorded_at__lte=dt_to)
+    return qs
+
+
+def _stock_activity_row(entry: StockEntry) -> dict:
+    at = entry.recorded_at.isoformat() if entry.recorded_at else None
+    return {
+        'source': 'stock',
+        'at': at,
+        'action': entry.entry_type,
+        'entry_id': entry.id,
+        'product_id': entry.lot.product_id,
+        'product_name': entry.lot.product.name,
+        'location_id': entry.location_id,
+        'quantity': str(entry.quantity) if entry.quantity is not None else None,
+        'lan_username': entry.lan_username,
+        'actor_user_id': entry.actor_user_id,
+        'source_ip': entry.source_workstation_ip,
+        'request_path': None,
+        **entry_activity_quantity(entry),
+        **entry_activity_meta(entry),
+    }
+
+
+def _stock_activity_page(
+    user: RbacUser,
+    dt_from,
+    dt_to,
+    *,
+    limit: int,
+    offset: int,
+) -> tuple[list[dict], int]:
+    """One page of stock rows; count is total in range (for lazy load / load more)."""
+    qs = _stock_activity_queryset(user, dt_from, dt_to)
+    count = qs.count()
+    rows = [_stock_activity_row(entry) for entry in qs[offset : offset + limit]]
+    return enrich_activity_names(rows), count
+
+
+def _stock_activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
+    """All stock rows in range (admin user_activity merge)."""
+    items = [_stock_activity_row(entry) for entry in _stock_activity_queryset(user, dt_from, dt_to)]
+    return enrich_activity_names(items)
 
 
 def _activity_items(user: RbacUser, dt_from, dt_to) -> list[dict]:
@@ -290,16 +332,17 @@ def me_activity(request):
         limit, offset = _page_params(request)
     except ValueError as exc:
         return error_response(str(exc), status_code=400)
-    items = _stock_activity_items(user, dt_from, dt_to)
-    items.sort(key=lambda row: row.get('at') or '', reverse=True)
-    count = len(items)
+    items, count = _stock_activity_page(
+        user, dt_from, dt_to, limit=limit, offset=offset,
+    )
     return success_response(
         'My activity fetched.',
         data={
-            'items': items[offset : offset + limit],
+            'items': items,
             'count': count,
             'limit': limit,
             'offset': offset,
+            'has_more': offset + len(items) < count,
         },
     )
 

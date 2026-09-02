@@ -114,6 +114,7 @@ def po_list_dict(po: PurchaseOrder) -> dict:
         'sage_po_number': po.external_number,
         'external_number': po.external_number,
         'status': po.status,
+        'revision_no': po.revision_no,
         'supplier_id': po.supplier_id,
         'supplier_name': po.supplier.name if po.supplier_id else None,
         'supplier_image_url': image_url,

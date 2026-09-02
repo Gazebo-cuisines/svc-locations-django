@@ -849,6 +849,7 @@ class StockEntryLabel(models.Model):
         default=StockEntryLabelStatus.PENDING,
     )
     verified_count = models.PositiveIntegerField(default=0)
+    printed_count = models.PositiveIntegerField(default=0)
     printed_at = models.DateTimeField(null=True, blank=True)
     verified_at = models.DateTimeField(null=True, blank=True)
     actor_user_id = models.IntegerField(null=True, blank=True)

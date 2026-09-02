@@ -21,12 +21,37 @@ class WarehouseUnit(models.TextChoices):
     UNIT_11 = 'unit_11', 'Unit 11'
 
 
+class WarehouseAction(models.TextChoices):
+    GOODS_IN = 'goods_in', 'Goods in (with PO)'
+    GOODS_IN_WITHOUT_PO = 'goods_in_without_po', 'Goods in without PO'
+    GOODS_IN_STOCK_ADJUSTMENT = (
+        'goods_in_stock_adjustment', 'Goods in stock adjustment',
+    )
+    GOODS_OUT = 'goods_out', 'Goods out (with plan)'
+    GOODS_OUT_WITHOUT_PLAN = 'goods_out_without_plan', 'Goods out without plan'
+
+
+WAREHOUSE_ACTION_FIELDS = {
+    WarehouseAction.GOODS_IN: 'can_goods_in',
+    WarehouseAction.GOODS_IN_WITHOUT_PO: 'can_goods_in_without_po',
+    WarehouseAction.GOODS_IN_STOCK_ADJUSTMENT: 'can_goods_in_stock_adjustment',
+    WarehouseAction.GOODS_OUT: 'can_goods_out',
+    WarehouseAction.GOODS_OUT_WITHOUT_PLAN: 'can_goods_out_without_plan',
+}
+
+GOODS_IN_ACTIONS = frozenset({
+    WarehouseAction.GOODS_IN,
+    WarehouseAction.GOODS_IN_WITHOUT_PO,
+    WarehouseAction.GOODS_IN_STOCK_ADJUSTMENT,
+})
+
+
 class AdminArea(models.TextChoices):
     TECHNICAL = 'technical', 'Technical'
     OPERATIONAL = 'operational', 'Operational'
     NPD = 'npd', 'NPD'
     FINANCE = 'finance', 'Finance'
-    STOCK_MANAGEMENT = 'stock_management', 'Stock management'
+    STOCK_MANAGEMENT = 'stock_management', 'Stock Management Tool'
 
 
 class RbacAuditAction(models.TextChoices):
@@ -119,7 +144,10 @@ class WarehouseAccess(models.Model):
     )
     unit = models.CharField(max_length=32, choices=WarehouseUnit.choices)
     can_goods_in = models.BooleanField(default=False)
+    can_goods_in_without_po = models.BooleanField(default=False)
+    can_goods_in_stock_adjustment = models.BooleanField(default=False)
     can_goods_out = models.BooleanField(default=False)
+    can_goods_out_without_plan = models.BooleanField(default=False)
     goods_in_previous = models.BooleanField(default=False)
     goods_in_today = models.BooleanField(default=False)
     goods_in_future = models.BooleanField(default=False)

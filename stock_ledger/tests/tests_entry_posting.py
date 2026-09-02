@@ -91,9 +91,9 @@ class EntryPostingQueueTests(TestCase):
             f'/stock/audit/timeline/?product_id={self.product.id}',
         )
         self.assertEqual(hidden.status_code, 200)
-        self.assertNotIn(
+        self.assertIn(
             entry_id,
-            [row['entry_id'] for row in hidden.json()['data']],
+            [row['entry_id'] for row in hidden.json()['data']['items']],
         )
 
         # Post blocked until label verified.
@@ -120,7 +120,7 @@ class EntryPostingQueueTests(TestCase):
         live = self.client.get(
             f'/stock/audit/timeline/?product_id={self.product.id}',
         )
-        self.assertIn(entry_id, [row['entry_id'] for row in live.json()['data']])
+        self.assertIn(entry_id, [row['entry_id'] for row in live.json()['data']['items']])
 
         # Idempotent re-post.
         again = entry_posting.post_entry(entry_id=entry_id)

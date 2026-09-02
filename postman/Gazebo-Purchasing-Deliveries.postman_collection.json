@@ -13,6 +13,19 @@
   ],
   "item": [
     {
+      "name": "List rejected header QC",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/purchasing/deliveries/rejected/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "deliveries", "rejected", ""]
+        },
+        "description": "### List rejected header QC\n\n`GET /purchasing/deliveries/rejected/`\n\nGlobal queue of truck visits where header QC rejected the delivery (`status=rejected`). Newest first. Use this for QC to find mistaken rejects before unblocking.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Rejected header QC deliveries fetched successfully.`\n\n`data.count` plus `data.results[]`:\n\n| Field | Meaning |\n| --- | --- |\n| `id` | Delivery PK |\n| `purchase_order_id` / `purchase_order_number` / `purchase_order_status` | Parent PO |\n| `status` | Always `rejected` in this list |\n| `reject_delivery` | `true` |\n| `checked_at` / `checked_by_name` | Who submitted header QC |\n| `delivery_at` / `delivery_trace_number` | Visit date / Julian |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+      }
+    },
+    {
       "name": "List deliveries",
       "request": {
         "method": "GET",
@@ -80,6 +93,23 @@
           "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "qc", "header", ""]
         },
         "description": "### Header QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/qc/header/`\n\nVehicle / packaging / reject checks for **this truck**. Required answers depend on the goods-in header template (food vs packaging vs other). Set `reject_delivery.value=true` (or fail a critical check) to turn the truck away: delivery becomes `rejected`, PO qty is unchanged, then `POST /deliveries/` for the replacement.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | yes | Warehouse user PK |\n| `delivery_date` | no | Defaults to expected/today; Julian trace unless override |\n| `trace_override` | no | Requires `override_reason` |\n| `answers` | yes | Object keyed by check code (`value`, optional `comment`) |\n| `qc_tl_checked_by_user_id` | no | Dual sign-off |\n| `remarks` | no | Stored on PO when rejecting |\n\n**Response body**\n\nGoods-in form for this delivery. `reject_delivery` true and `delivery_status=rejected` when the truck is turned away.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Saved |\n| 400 | Missing answers, delivery not open, PO not ordered/partial |\n| 404 | PO or delivery not found |"
+      }
+    },
+    {
+      "name": "Unblock header QC",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"QC override — packaging OK on recheck\",\n  \"checked_by_user_id\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/qc/header/unblock/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "qc", "header", "unblock", ""]
+        },
+        "description": "### Unblock header QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/qc/header/unblock/`\n\nQC override: reopen a **rejected** truck visit so line QC / receive can continue on the same delivery. Keeps prior `checked_at` and header answers; clears `reject_delivery` and sets `status=open`. Prefer this when the reject was a mistake; for a replacement truck use `POST /deliveries/` instead.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Rejected delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `reason` | yes | Why QC is overriding the reject (audit) |\n| `checked_by_user_id` | no | QC/TL actor; stored on dual-sign-off fields |\n\n**Response body**\n\n`message`: `Header QC unblocked successfully.` Delivery dict with `status=open`, `reject_delivery=false`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Unblocked |\n| 400 | Missing reason, not rejected, another open delivery exists, or PO not ordered/partial |\n| 404 | PO or delivery not found |"
       }
     },
     {
@@ -206,7 +236,26 @@
           "host": ["{{base_url}}"],
           "path": ["purchasing", "pos", "{{po_id}}", "timeline", ""]
         },
-        "description": "### PO timeline\n\n`GET /purchasing/pos/:po_id/timeline/`\n\nSame event shape as product (`GET /product/:id/timeline/`) and recipe audit: newest first. Each event has `before_json` / `after_json` / `changed_fields` plus an `actor` object recorded at write time (JWT sub, name, email, workstation, IP).\n\nComposes PO create/update, goods-in QC (`accept` / `reject` / `non_conformance` / `note`), stock receive (`goods_in`), label print/scan, and stock post.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Purchase order timeline fetched successfully.`\n\n`data` is an array of events:\n\n| Field | Meaning |\n| --- | --- |\n| `at` | ISO datetime |\n| `entity` | `purchase_order`, `delivery`, `po_line`, or `stock_entry` |\n| `action` | `create`, `update`, `accept`, `reject`, `non_conformance`, `note`, `goods_in`, `label_printed`, `label_scanned`, `stock_posted` |\n| `actor` | `{ user_id, sub, name, email, source_workstation, source_workstation_ip }` |\n| `before_json` | State before this step |\n| `after_json` | State after this step |\n| `changed_fields` | Keys that differ |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
+        "description": "### PO timeline\n\n`GET /purchasing/pos/:po_id/timeline/`\n\nSame event shape as product (`GET /product/:id/timeline/`) and recipe audit: newest first. Each event has `before_json` / `after_json` / `changed_fields` plus an `actor` object recorded at write time (JWT sub, name, email, workstation, IP).\n\nComposes PO create/update/amend, goods-in QC (`accept` / `reject` / `non_conformance` / `note`), stock receive (`goods_in`), label print/scan, and stock post.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Purchase order timeline fetched successfully.`\n\n`data` is an array of events:\n\n| Field | Meaning |\n| --- | --- |\n| `at` | ISO datetime |\n| `entity` | `purchase_order`, `delivery`, `po_line`, or `stock_entry` |\n| `action` | `create`, `update`, `amend`, `accept`, `reject`, `non_conformance`, `note`, `goods_in`, `label_printed`, `label_scanned`, `stock_posted` |\n| `actor` | `{ user_id, sub, name, email, source_workstation, source_workstation_ip }` |\n| `before_json` | State before this step |\n| `after_json` | State after this step |\n| `changed_fields` | Keys that differ |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
+      }
+    },
+    {
+      "name": "Amend PO",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"expected_at\": \"2026-09-15\",\n  \"remarks\": \"Supplier confirmed +2 bags\",\n  \"lines\": [\n    {\n      \"id\": 1,\n      \"product_id\": 10,\n      \"qty_ordered\": \"7\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/purchasing/pos/{{po_id}}/amend/",
+          "host": ["{{base_url}}"],
+          "path": ["purchasing", "pos", "{{po_id}}", "amend", ""]
+        },
+        "description": "### Amend purchase order\n\n`POST /purchasing/pos/:po_id/amend/`\n\nChange an **ordered** or **partial** PO in place (same PO number / Sage ref). Use after the supplier changes qty or dates — not for draft edits (`PATCH /pos/:id/`). Each call bumps `revision_no` and writes an `amend` timeline event.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `expected_at` | no | New expected delivery date (`YYYY-MM-DD`) |\n| `ordered_at` | no | Ordered date |\n| `remarks` | no | Header note |\n| `ship_to_location_id` | no | Ship-to location PK |\n| `sage_po_number` / `external_number` | no | Sage PO ref (must stay unique) |\n| `lines` | no | Full replacement set of lines (match by `id` or `line_no`) |\n| `lines[].id` | no | Existing PO line PK (preferred match) |\n| `lines[].line_no` | no | Match / set line number |\n| `lines[].product_id` | yes (per line) | Product PK |\n| `lines[].qty_ordered` | yes (per line) | Must be ≥ received+rejected on that line |\n| `lines[].product_supplier_id` | no | Supplier pack mapping |\n| `lines[].unit_cost` | no | Override cost |\n| `lines[].label_format` / `label_count` | no | Label plan |\n| `status` | — | **Not allowed** |\n| `supplier_id` | — | **Not allowed** |\n\n**Response body**\n\n`message`: `Purchase order amended successfully.` Full PO detail including bumped `revision_no` and updated `lines` (`qty_received` preserved).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Amended |\n| 400 | Wrong status, open delivery, qty below received, remove line with receipts, or supplier/status change |\n| 404 | PO not found |"
       }
     }
   ]
