@@ -122,3 +122,48 @@ class PoAmendTests(TestCase):
         )
         self.assertEqual(too_low.status_code, 400)
         self.assertIn('received', too_low.json()['message'])
+
+    def test_amend_received_adds_line_reopens_partial(self):
+        PurchaseOrderLine.objects.filter(pk=self.line.id).update(
+            qty_received=Decimal('5'),
+            qty_balance=Decimal('0'),
+            line_closed=True,
+            stock_in_done=True,
+        )
+        self.po.status = PurchaseOrderStatus.RECEIVED
+        self.po.save(update_fields=['status'])
+
+        extra = Product.objects.create(
+            name=f'Amend Extra {uuid4().hex[:6]}',
+            recipe_code=f'AX{uuid4().hex[:6]}',
+            product_class_id=71,
+            category_id=71,
+            range_id=71,
+            unit=self.unit,
+            source_container=self.wh,
+            destination_container=self.wh,
+        )
+        resp = self.client.post(
+            f'/purchasing/pos/{self.po.id}/amend/',
+            data=(
+                '{'
+                f'"lines":['
+                f'{{"id":{self.line.id},"product_id":{self.product.id},'
+                f'"qty_ordered":"5"}},'
+                f'{{"product_id":{extra.id},"qty_ordered":"2"}}'
+                f']'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        self.assertEqual(data['status'], 'partial')
+        self.assertEqual(data['revision_no'], 1)
+        self.assertEqual(len(data['lines']), 2)
+        kept = next(l for l in data['lines'] if l['id'] == self.line.id)
+        self.assertEqual(kept['qty_ordered'], '5')
+        self.assertEqual(kept['qty_received'], '5')
+        new = next(l for l in data['lines'] if l['product_id'] == extra.id)
+        self.assertEqual(new['qty_ordered'], '2')
+        self.assertEqual(new['qty_received'], '0')
