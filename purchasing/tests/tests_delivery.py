@@ -253,3 +253,111 @@ class NestedDeliveryTests(TestCase):
             PurchaseOrderDelivery.objects.filter(purchase_order=self.po).count(),
             1,
         )
+
+    def test_multi_line_same_delivery_stays_open(self):
+        product_b = Product.objects.create(
+            name=f'Salt B {uuid4().hex[:8]}',
+            recipe_code=f'SB{uuid4().hex[:6]}',
+            product_class_id=91,
+            category_id=91,
+            range_id=91,
+            unit=self.kg,
+            label_mode=ProductLabelMode.PER_UNIT,
+            source_container=self.wh,
+            destination_container=self.wh,
+        )
+        mapping_b = ProductSupplier.objects.create(
+            product=product_b,
+            supplier=self.supplier,
+            supplier_code='SALT-B-1X10',
+            supplier_product_name='Salt B 1x10kg',
+            outer_qty=Decimal('1'),
+            outer_unit=self.bag,
+            inner_qty=Decimal('10'),
+            inner_unit=self.kg,
+            is_default=True,
+            is_active=True,
+        )
+        line_b = PurchaseOrderLine.objects.create(
+            purchase_order=self.po,
+            line_no=2,
+            product=product_b,
+            product_supplier=mapping_b,
+            unit=self.kg,
+            qty_ordered=Decimal('4'),
+            qty_received=Decimal('0'),
+            qty_balance=Decimal('4'),
+            multiplier=mapping_b.multiplier,
+            shape_format_label=mapping_b.shape_format_label,
+            unit_cost=Decimal('1'),
+        )
+
+        delivery = create_delivery(self.po.id)
+        self._header(delivery.id)
+        self._line_qc(delivery.id)
+        submit_line_qc(
+            self.po.id,
+            line_b.id,
+            delivery_id=delivery.id,
+            body={
+                'checked_by_user_id': 1,
+                'answers': {'spec_check': {'value': True}},
+            },
+        )
+
+        self._receive(delivery.id, 5)
+        delivery.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(delivery.status, PurchaseOrderDeliveryStatus.OPEN)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+
+        receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': line_b.id,
+                    'quantity': '4',
+                    'idempotency_key': f'del-b-{uuid4()}',
+                }],
+            },
+            delivery_id=delivery.id,
+        )
+        delivery.refresh_from_db()
+        self.po.refresh_from_db()
+        line_b.refresh_from_db()
+        self.assertEqual(delivery.status, PurchaseOrderDeliveryStatus.RECEIVED)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.RECEIVED)
+        self.assertEqual(line_b.qty_received, Decimal('4'))
+        self.assertEqual(
+            PurchaseOrderDelivery.objects.filter(purchase_order=self.po).count(),
+            1,
+        )
+
+    def test_finish_delivery_closes_with_balance(self):
+        delivery = create_delivery(self.po.id)
+        self._header(delivery.id)
+        self._line_qc(delivery.id)
+        receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'finish_delivery': True,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '2',
+                    'shortfall_reason': 'split_pallet',
+                    'remarks': 'rest on next truck',
+                    'idempotency_key': f'del-fin-{uuid4()}',
+                }],
+            },
+            delivery_id=delivery.id,
+        )
+        delivery.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(delivery.status, PurchaseOrderDeliveryStatus.RECEIVED)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+        self.assertEqual(
+            create_delivery(self.po.id).status,
+            PurchaseOrderDeliveryStatus.OPEN,
+        )

@@ -292,8 +292,10 @@ def receive_purchase_order(
     if not isinstance(raw_lines, list) or not raw_lines:
         raise ReceiveError('lines must be a non-empty list.')
 
+    finish_delivery = bool(body.get('finish_delivery'))
     results = []
     did_receive = False
+    had_short_delivery = False
     for index, raw in enumerate(raw_lines, start=1):
         if not isinstance(raw, dict):
             raise ReceiveError(f'lines[{index}] must be an object.')
@@ -362,6 +364,8 @@ def receive_purchase_order(
                 )
             leftover = (open_qty - purchase_qty).quantize(Decimal('0.000001'))
             shortfall_reason = _parse_shortfall(raw, index, leftover)
+            if shortfall_reason == LineShortfallReason.SHORT_DELIVERY:
+                had_short_delivery = True
 
         lot_body = raw.get('lot') if isinstance(raw.get('lot'), dict) else {}
         use_by = _optional_date(
@@ -692,9 +696,11 @@ def receive_purchase_order(
 
     recompute_po_status(po)
     if did_receive:
-        delivery.status = PurchaseOrderDeliveryStatus.RECEIVED
-        delivery.save(update_fields=['status', 'updated_at'])
-        sync_po_from_delivery(delivery)
+        po_done = not po.lines.filter(qty_balance__gt=0).exists()
+        if po_done or had_short_delivery or finish_delivery:
+            delivery.status = PurchaseOrderDeliveryStatus.RECEIVED
+            delivery.save(update_fields=['status', 'updated_at'])
+            sync_po_from_delivery(delivery)
     form = resolve_goods_in_form(po.id, delivery_id=delivery.id)
     form['receive_results'] = results
     return form
