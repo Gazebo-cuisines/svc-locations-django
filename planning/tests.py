@@ -292,6 +292,31 @@ class PickingListApiTests(TestCase):
         self.assertEqual(box_row['queued_quantity'], '20.000000')
         self.assertEqual(box_row['issued_quantity'], '0')
         self.assertEqual(box_row['remaining_quantity'], '30.000000')
+        self.assertEqual(
+            box_row['steps'],
+            {
+                'print_label': False,
+                'verify_label': False,
+                'posted': False,
+                'labels': [
+                    {
+                        'entry_id': entry.id,
+                        'entry_code': f'E{entry.id}',
+                        'print_label': False,
+                        'verify_label': False,
+                        'posted': False,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(
+            box_row['answers'],
+            {
+                'qty_queued': '20.000000',
+                'qty_issued': '0',
+                'qty_remaining': '30.000000',
+            },
+        )
 
         posting = entry.posting
         posting.status = StockEntryPostingStatus.POSTED
@@ -305,6 +330,23 @@ class PickingListApiTests(TestCase):
         self.assertEqual(box_row['queued_quantity'], '0')
         self.assertEqual(box_row['issued_quantity'], '20.000000')
         self.assertEqual(box_row['remaining_quantity'], '30.000000')
+        self.assertEqual(
+            box_row['steps'],
+            {
+                'print_label': True,
+                'verify_label': True,
+                'posted': True,
+                'labels': [],
+            },
+        )
+        self.assertEqual(
+            box_row['answers'],
+            {
+                'qty_queued': '0',
+                'qty_issued': '20.000000',
+                'qty_remaining': '30.000000',
+            },
+        )
 
 
 class PlanPublishApiTests(TestCase):

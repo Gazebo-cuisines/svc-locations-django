@@ -15,6 +15,7 @@ from stock_ledger.models import (
     StockEntryPostingStatus,
     StockEntryType,
 )
+from stock_ledger.util import entry_labels, entry_posting
 from stock_ledger.util.conversions import StockValidationError, stock_to_kg, stock_to_packs
 
 
@@ -100,12 +101,47 @@ def issue_qty_by_requirement(
     return issued_by, queued_by
 
 
+def _queued_out_steps_by_req(req_ids: list[int]) -> dict[int, list[dict]]:
+    if not req_ids:
+        return {}
+    rows = (
+        StockEntry.objects
+        .filter(
+            entry_type=StockEntryType.TRANSFER_OUT,
+            source_document_type='plan_requirement',
+            source_document_id__in=req_ids,
+            reversed_by__isnull=True,
+            posting__status=StockEntryPostingStatus.QUEUED,
+        )
+        .select_related('label', 'posting')
+        .order_by('id')
+    )
+    by_req: dict[int, list[dict]] = {}
+    for entry in rows:
+        by_req.setdefault(entry.source_document_id, []).append({
+            'entry_id': entry.id,
+            'entry_code': entry_labels.entry_code(entry.id),
+            **entry_posting.queued_step_flags(entry),
+        })
+    return by_req
+
+
+def _line_steps(labels: list[dict]) -> dict:
+    return {
+        'print_label': all(row['print_label'] for row in labels),
+        'verify_label': all(row['verify_label'] for row in labels),
+        'posted': all(row['posted'] for row in labels),
+        'labels': labels,
+    }
+
+
 def _attach_issue_progress(lines: list[dict]) -> None:
     """Stamp issued/queued/remaining from plan-linked transfer_out rows."""
     req_ids = [
         rid for line in lines for rid in (line.get('requirement_ids') or [])
     ]
     issued_by, queued_by = issue_qty_by_requirement(req_ids)
+    steps_by_req = _queued_out_steps_by_req(req_ids)
     for line in lines:
         ids = line.get('requirement_ids') or []
         issued = sum((issued_by[i] for i in ids), Decimal('0'))
@@ -145,6 +181,17 @@ def _attach_issue_progress(lines: list[dict]) -> None:
         line['queued_quantity'] = _dec(queued)
         line['remaining_quantity'] = _dec(remaining)
         line['status'] = status
+        labels = [
+            row
+            for rid in ids
+            for row in steps_by_req.get(rid, [])
+        ]
+        line['steps'] = _line_steps(labels)
+        line['answers'] = {
+            'qty_queued': line['queued_quantity'],
+            'qty_issued': line['issued_quantity'],
+            'qty_remaining': line['remaining_quantity'],
+        }
 
 
 def build_picking_list(
