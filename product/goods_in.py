@@ -50,6 +50,7 @@ def category_has_direct_consume(category: Category | None) -> bool:
 
 
 def product_is_direct_consume(product: Product) -> bool:
+    return False  # temp: direct_consume off
     if not product.category_id:
         return False
     category = getattr(product, 'category', None)
