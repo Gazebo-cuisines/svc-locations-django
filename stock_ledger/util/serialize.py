@@ -114,6 +114,7 @@ def receipt_meta_by_lot_ids(lot_ids: set[int]) -> dict[int, dict]:
     ):
         loc = entry.counterparty_location
         candidate = {
+            'receipt_entry_id': entry.id,
             'supplier_id': loc.id if loc is not None else None,
             'supplier_name': loc.name if loc is not None else None,
             'po_number': entry.po_number or None,
@@ -170,6 +171,7 @@ def serialize_balance_row(
         'use_by': balance.lot.use_by.isoformat() if balance.lot.use_by else None,
         'location_id': balance.location_id,
         'location_name': balance.location.name if balance.location_id else None,
+        'receipt_entry_id': meta.get('receipt_entry_id'),
         'supplier_id': meta.get('supplier_id'),
         'supplier_name': meta.get('supplier_name'),
         'po_number': meta.get('po_number'),

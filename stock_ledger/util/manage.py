@@ -22,6 +22,7 @@ from stock_ledger.util.activity import entry_activity_quantity
 from stock_ledger.util.conversions import StockValidationError
 from stock_ledger.util.serialize import actor_names_for, manage_entry_detail
 from stock_ledger.util.services import PRODUCTION_SOURCE_DOC, _entry_is_reversed
+from purchasing.services.po_qty import unapply_po_receipt_from_entry
 
 _TRACEABILITY_NOTE = (
     'Full history stays on the audit timeline. '
@@ -848,6 +849,29 @@ def _cancel_queued_leg(
     return True
 
 
+def _rollback_po_receipts_for_entries(
+    entry_ids: list[int],
+    *,
+    reason: str,
+    actor_user_id: int | None = None,
+    lan_username: str | None = None,
+) -> list[dict]:
+    rollbacks: list[dict] = []
+    for entry_id in entry_ids:
+        entry = StockEntry.objects.filter(pk=entry_id).first()
+        if entry is None or entry.entry_type != StockEntryType.RECEIPT:
+            continue
+        result = unapply_po_receipt_from_entry(
+            entry,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
+        )
+        if result is not None:
+            rollbacks.append(result)
+    return rollbacks
+
+
 @transaction.atomic
 def remove_entry(
     *,
@@ -882,6 +906,8 @@ def remove_entry(
     cancelled_codes: list[str] = []
     reversed_codes: list[str] = []
     voided_serials: list[str] = []
+    po_rollbacks: list[dict] = []
+    affected_entry_ids: list[int] = []
 
     if action == 'reverse':
         if entry.entry_type == StockEntryType.PRODUCTION_OUTPUT:
@@ -899,6 +925,7 @@ def remove_entry(
                 lan_username=lan_username,
                 source_workstation=source_workstation,
             )
+            affected_entry_ids = void_entry_ids
         elif _is_reverse_preview_executable(preview, entry):
             reversed_codes, void_entry_ids = _execute_reverse_plan(
                 preview,
@@ -908,6 +935,7 @@ def remove_entry(
                 lan_username=lan_username,
                 source_workstation=source_workstation,
             )
+            affected_entry_ids = void_entry_ids
         else:
             raise ManageRemoveError(
                 'This remove is not available yet.',
@@ -919,6 +947,12 @@ def remove_entry(
             actor_user_id=actor_user_id,
             lan_username=lan_username,
             source_workstation=source_workstation,
+        )
+        po_rollbacks = _rollback_po_receipts_for_entries(
+            affected_entry_ids,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
         )
     elif action == 'cancel':
         legs = _transfer_legs(entry)
@@ -954,6 +988,12 @@ def remove_entry(
             lan_username=lan_username,
             source_workstation=source_workstation,
         )
+        po_rollbacks = _rollback_po_receipts_for_entries(
+            leg_ids,
+            reason=reason,
+            actor_user_id=actor_user_id,
+            lan_username=lan_username,
+        )
     elif action != 'already_removed':
         raise ManageRemoveError(
             f'Cannot remove entry (action={action}).',
@@ -974,6 +1014,7 @@ def remove_entry(
         'confirmation_lines': confirmation_lines,
         'redo_todos': redo_todos,
         'traceability_note': traceability_note,
+        'po_rollbacks': po_rollbacks,
     }
 
 

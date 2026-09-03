@@ -467,6 +467,7 @@ def receive_purchase_order(
                         'po_id': po.id,
                         'line_id': line.id,
                         'line_no': line.line_no,
+                        'delivery_id': delivery.id,
                         'purchase_qty': str(purchase_part),
                     },
                 )
