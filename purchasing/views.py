@@ -40,6 +40,7 @@ from purchasing.services.delivery import (
 from purchasing.services.checklist import adhoc_checklist, delivery_checklist
 from purchasing.services.goods_in_form import (
     GoodsInFormError,
+    po_list_steps_map,
     resolve_goods_in_form,
 )
 from purchasing.services.draft_qc import (
@@ -87,21 +88,25 @@ def _parse_json_body(request):
 def po_collection_api(request):
     if request.method == 'GET':
         try:
-            rows = list_purchase_orders(
+            rows = list(list_purchase_orders(
                 status=request.GET.get('status'),
                 supplier_id=request.GET.get('supplier_id'),
                 sage_po_number=(
                     request.GET.get('sage_po_number')
                     or request.GET.get('external_number')
                 ),
-            )
+            ))
         except (TypeError, ValueError) as exc:
             return api_error(str(exc), status_code=400)
+        steps_by_id = po_list_steps_map(rows)
         return api_success(
             'Purchase order list fetched successfully.',
             {
-                'count': rows.count(),
-                'results': [po_list_dict(po) for po in rows],
+                'count': len(rows),
+                'results': [
+                    {**po_list_dict(po), 'steps': steps_by_id[po.id]}
+                    for po in rows
+                ],
             },
         )
 

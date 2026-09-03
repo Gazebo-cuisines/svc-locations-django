@@ -2277,12 +2277,31 @@ def entry_cancel_api(request, entry_id: int):
 @csrf_exempt
 @require_GET
 def entry_queued_list_api(request):
-    """Goods-in inbox: receipts waiting for label confirm + stock post."""
+    """Inbox: queued receipts and transfer_out waiting for print/verify/post."""
     try:
         limit = int(request.GET.get('limit') or 100)
+        entry_type = request.GET.get('entry_type') or None
+        raw_src = request.GET.get('source_document_id')
+        raw_loc = request.GET.get('location_id')
+        source_document_id = (
+            int(raw_src) if raw_src not in (None, '') else None
+        )
+        location_id = int(raw_loc) if raw_loc not in (None, '') else None
     except (TypeError, ValueError):
-        return api_error('limit must be an integer.')
-    rows = entry_posting.list_queued_receipts(limit=limit)
+        return api_error(
+            'limit, source_document_id, and location_id must be integers.',
+        )
+    if entry_type and entry_type not in (
+        StockEntryType.RECEIPT,
+        StockEntryType.TRANSFER_OUT,
+    ):
+        return api_error('entry_type must be receipt or transfer_out.')
+    rows = entry_posting.list_queued_receipts(
+        limit=limit,
+        entry_type=entry_type,
+        source_document_id=source_document_id,
+        location_id=location_id,
+    )
     results = []
     for entry in rows:
         row = entry_dict(entry)
@@ -2293,6 +2312,14 @@ def entry_queued_list_api(request):
         label = entry_labels.get_label(entry)
         if label is not None:
             row['label'] = entry_labels.label_state_dict(label)
+        row['steps'] = entry_posting.queued_step_flags(entry)
+        if entry.entry_type == StockEntryType.TRANSFER_OUT:
+            row['goods_out_label'] = entry_labels.build_goods_out_label(
+                issue_entry=entry,
+                copies=label.label_count if label is not None else 1,
+                label=label,
+            )
+        elif label is not None:
             row['goods_in_label'] = entry_labels.build_goods_in_label(entry, label)
         results.append(row)
     return api_success(

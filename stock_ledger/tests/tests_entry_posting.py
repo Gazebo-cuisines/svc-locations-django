@@ -181,6 +181,59 @@ class EntryPostingQueueTests(TestCase):
             ).exists(),
         )
 
+    def test_queued_inbox_includes_transfer_out_steps(self):
+        dest = Location.objects.create(id=80, name='PQ Inbox Dest', visible=True)
+        services.receipt(
+            idempotency_key=f'pq-inbox-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('50'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+        queued = self.client.post(
+            '/stock/transfer/',
+            data=(
+                '{'
+                f'"idempotency_key":"pq-inbox-xfer-{uuid4()}",'
+                f'"lot_id":{self.lot.id},'
+                f'"from_location_id":{self.wh.id},'
+                f'"to_location_id":{dest.id},'
+                '"quantity":"10",'
+                '"queue_stock":true,'
+                '"requirement_ids":[91]'
+                '}'
+            ),
+            content_type='application/json',
+        )
+        self.assertEqual(queued.status_code, 201, queued.content)
+        out_id = queued.json()['data']['out']['id']
+
+        inbox = self.client.get('/stock/entries/queued/?entry_type=transfer_out')
+        self.assertEqual(inbox.status_code, 200)
+        rows = inbox.json()['data']['results']
+        row = next(r for r in rows if r['id'] == out_id)
+        self.assertEqual(row['entry_type'], 'transfer_out')
+        self.assertEqual(
+            row['steps'],
+            {'print_label': False, 'verify_label': False, 'posted': False},
+        )
+        self.assertEqual(row['goods_out_label']['barcode'], f'E{out_id}')
+        self.assertEqual(row['goods_out_label']['status'], 'pending')
+        self.assertEqual(row['goods_out_label']['verified_count'], 0)
+
+        by_src = self.client.get('/stock/entries/queued/?source_document_id=91')
+        self.assertIn(out_id, [r['id'] for r in by_src.json()['data']['results']])
+        by_loc = self.client.get(
+            f'/stock/entries/queued/?location_id={self.wh.id}&entry_type=transfer_out',
+        )
+        self.assertIn(out_id, [r['id'] for r in by_loc.json()['data']['results']])
+        receipts = self.client.get('/stock/entries/queued/?entry_type=receipt')
+        self.assertNotIn(out_id, [r['id'] for r in receipts.json()['data']['results']])
+        bad = self.client.get('/stock/entries/queued/?entry_type=issue')
+        self.assertEqual(bad.status_code, 400)
+
     def test_queued_transfer_rejects_more_than_lot_balance(self):
         dest = Location.objects.create(id=78, name='PQ Dest Over', visible=True)
         services.receipt(

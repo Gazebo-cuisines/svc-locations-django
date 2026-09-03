@@ -14,7 +14,7 @@ from stock_ledger.models import (
     StockEntryType,
     StockLot,
 )
-from stock_ledger.util import entry_labels
+from stock_ledger.util import entry_labels, entry_posting
 from stock_ledger.util.conversions import StockValidationError
 from users_rbac.models import RbacUser
 
@@ -141,7 +141,7 @@ def queued_draws_for_entry(entry: StockEntry) -> list[dict]:
             posting__status=StockEntryPostingStatus.QUEUED,
         )
         .exclude(entry_type=StockEntryType.COUNT_ADJUSTMENT)
-        .select_related('posting', 'counterparty_location')
+        .select_related('posting', 'counterparty_location', 'label')
         .order_by('id')
     )
     actor_ids = {
@@ -183,5 +183,13 @@ def queued_draws_for_entry(entry: StockEntry) -> list[dict]:
             'blocked_by': blocked_by,
             'next_step': next_step,
             'post_endpoint': f'/stock/entries/{draw.id}/post/',
+            'steps': entry_posting.queued_step_flags(draw),
+            'answers': {
+                'quantity': (
+                    format(abs(draw.quantity), 'f').rstrip('0').rstrip('.')
+                    or '0'
+                ),
+                'entry_code': entry_labels.entry_code(draw.id),
+            },
         })
     return rows

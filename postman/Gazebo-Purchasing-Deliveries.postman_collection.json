@@ -1,15 +1,30 @@
 {
   "info": {
     "name": "Gazebo - Purchasing Deliveries",
-    "description": "Goods-in **truck visits** against one purchase order.\n\n**Table:** `po_purchase_order_delivery` (session QC) + `po_purchase_order_delivery_line` (this visit’s line QC / qty).\n\nPO line totals (`qty_ordered` / `qty_received` / `qty_balance`) stay on the order. Each visit has its own header QC, reject flag, photos, and lots. A header-rejected visit does **not** consume qty; the supplier’s next truck is `POST /deliveries/`. When every line `qty_balance` is 0 the PO auto-closes (`received`) and no further deliveries are accepted.\n\n**Vars:** `{{base_url}}`, `{{po_id}}`, `{{delivery_id}}`, `{{line_id}}`, `{{location_id}}`.",
+    "description": "Goods-in **truck visits** against one purchase order.\n\n**Table:** `po_purchase_order_delivery` (session QC) + `po_purchase_order_delivery_line` (this visit\u2019s line QC / qty).\n\nPO line totals (`qty_ordered` / `qty_received` / `qty_balance`) stay on the order. Each visit has its own header QC, reject flag, photos, and lots. A header-rejected visit does **not** consume qty; the supplier\u2019s next truck is `POST /deliveries/`. When every line `qty_balance` is 0 the PO auto-closes (`received`) and no further deliveries are accepted.\n\n**Vars:** `{{base_url}}`, `{{po_id}}`, `{{delivery_id}}`, `{{line_id}}`, `{{location_id}}`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    {"key": "base_url", "value": "http://127.0.0.1:8000"},
-    {"key": "po_id", "value": "1"},
-    {"key": "delivery_id", "value": "1"},
-    {"key": "line_id", "value": "1"},
-    {"key": "location_id", "value": "8"}
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "po_id",
+      "value": "1"
+    },
+    {
+      "key": "delivery_id",
+      "value": "1"
+    },
+    {
+      "key": "line_id",
+      "value": "1"
+    },
+    {
+      "key": "location_id",
+      "value": "8"
+    }
   ],
   "item": [
     {
@@ -19,8 +34,15 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/deliveries/rejected/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "deliveries", "rejected", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "deliveries",
+            "rejected",
+            ""
+          ]
         },
         "description": "### List rejected header QC\n\n`GET /purchasing/deliveries/rejected/`\n\nGlobal queue of truck visits where header QC rejected the delivery (`status=rejected`). Newest first. Use this for QC to find mistaken rejects before unblocking.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Rejected header QC deliveries fetched successfully.`\n\n`data.count` plus `data.results[]`:\n\n| Field | Meaning |\n| --- | --- |\n| `id` | Delivery PK |\n| `purchase_order_id` / `purchase_order_number` / `purchase_order_status` | Parent PO |\n| `status` | Always `rejected` in this list |\n| `reject_delivery` | `true` |\n| `checked_at` / `checked_by_name` | Who submitted header QC |\n| `delivery_at` / `delivery_trace_number` | Visit date / Julian |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
       }
@@ -32,8 +54,16 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            ""
+          ]
         },
         "description": "### List deliveries\n\n`GET /purchasing/pos/:po_id/deliveries/`\n\nLists every truck visit on this PO (rejected stays on file; later visits are extra rows). Use this after a reject to confirm D1 is `rejected` before opening D2.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Deliveries fetched successfully.` `data.count` plus `data.results[]` with `id`, `status` (`open` \\| `rejected` \\| `received`), `delivery_at`, `delivery_trace_number`, `reject_delivery`, `checked_at`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
       }
@@ -42,14 +72,30 @@
       "name": "Start delivery",
       "request": {
         "method": "POST",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
-        "body": {"mode": "raw", "raw": "{}"},
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            ""
+          ]
         },
-        "description": "### Start delivery\n\n`POST /purchasing/pos/:po_id/deliveries/`\n\nOpens a new goods-in visit. Example: Mitaka salt 5 bags — after truck 1 is rejected, POST again for truck 2 (3 bags) then truck 3 (2 bags). Blocked when an `open` delivery exists, when the PO is not `ordered`/`partial`, or when `qty_balance` is 0 on every line (PO already `received`).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None** (empty JSON object is fine).\n\n**Response body**\n\n`201` `Delivery created successfully.` `data.id`, `data.status=open`, `data.purchase_order_id`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 201 | Created |\n| 400 | Already an open delivery, PO fully received, or status not ordered/partial |\n| 404 | PO not found |"
+        "description": "### Start delivery\n\n`POST /purchasing/pos/:po_id/deliveries/`\n\nOpens a new goods-in visit. Example: Mitaka salt 5 bags \u2014 after truck 1 is rejected, POST again for truck 2 (3 bags) then truck 3 (2 bags). Blocked when an `open` delivery exists, when the PO is not `ordered`/`partial`, or when `qty_balance` is 0 on every line (PO already `received`).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None** (empty JSON object is fine).\n\n**Response body**\n\n`201` `Delivery created successfully.` `data.id`, `data.status=open`, `data.purchase_order_id`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 201 | Created |\n| 400 | Already an open delivery, PO fully received, or status not ordered/partial |\n| 404 | PO not found |"
       }
     },
     {
@@ -59,10 +105,19 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            ""
+          ]
         },
-        "description": "### Get delivery goods-in form\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/`\n\nResolved GFF001F checklist **for this visit** (header items, line items, saved answers, attachments on this delivery only). PO qty totals are included so the warehouse sees remaining balance.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK on this PO |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods inward form resolved successfully.` Same shape as `GET …/goods-in-form/` plus `delivery_id` and `delivery_status`. `reject_delivery` and `saved_header_answers` come from this visit.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
+        "description": "### Get delivery goods-in form\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/`\n\nResolved GFF001F checklist **for this visit** (header items, line items, saved answers, attachments on this delivery only). PO qty totals are included so the warehouse sees remaining balance.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK on this PO |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods inward form resolved successfully.` Same shape as `GET \u2026/goods-in-form/` plus `delivery_id` and `delivery_status`. `reject_delivery` and `saved_header_answers` come from this visit.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
       }
     },
     {
@@ -72,25 +127,51 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/checklist/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "checklist", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "checklist",
+            ""
+          ]
         },
-        "description": "### Get delivery checklist\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/checklist/`\n\nExpo step list for this truck’s **header** QC. Same answers as GET form, remapped: each question already has `state`, `value`, `comment`, plus a progress `summary`. Existing GET form is unchanged. Adhoc twin: `GET /purchasing/adhoc-goods-in/:sessionId/checklist/`.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK on this PO |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods-in checklist resolved successfully.`\n\n`data.checklist_version` is the header template version. `data.steps[]` starts with a virtual `delivery_date` step (`group=delivery`), then header items (`group=header`).\n\n| Field | Meaning |\n| --- | --- |\n| `id` / `code` | Stable check code |\n| `kind` | Same as template `input_type` (`bool` \\| `decimal` \\| `text` \\| `date`) |\n| `state` | `pending` (no answer) \\| `done` \\| `needs_comment` (fail, comment required, empty) \\| `fail` |\n| `image_key` | Slug for bundled art (`vehicle-clean-fb-pest-odour`), never a URL. `null` for `delivery_date` and `comment` |\n| `value` / `comment` | Saved answer, or `null` |\n\n`data.summary`: `done`, `total`, `remaining`, `blocking[]` (required steps still `pending` or `needs_comment`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
+        "description": "### Get delivery checklist\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/checklist/`\n\nExpo step list for this truck\u2019s **header** QC. Same answers as GET form, remapped: each question already has `state`, `value`, `comment`, plus a progress `summary`. Existing GET form is unchanged. Adhoc twin: `GET /purchasing/adhoc-goods-in/:sessionId/checklist/`.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK on this PO |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods-in checklist resolved successfully.`\n\n`data.checklist_version` is the header template version. `data.steps[]` starts with a virtual `delivery_date` step (`group=delivery`), then header items (`group=header`).\n\n| Field | Meaning |\n| --- | --- |\n| `id` / `code` | Stable check code |\n| `kind` | Same as template `input_type` (`bool` \\| `decimal` \\| `text` \\| `date`) |\n| `state` | `pending` (no answer) \\| `done` \\| `needs_comment` (fail, comment required, empty) \\| `fail` |\n| `image_key` | Slug for bundled art (`vehicle-clean-fb-pest-odour`), never a URL. `null` for `delivery_date` and `comment` |\n| `value` / `comment` | Saved answer, or `null` |\n\n`data.summary`: `done`, `total`, `remaining`, `blocking[]` (required steps still `pending` or `needs_comment`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
       }
     },
     {
       "name": "Header QC",
       "request": {
         "method": "POST",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"checked_by_user_id\": 1,\n  \"delivery_date\": \"2026-08-17\",\n  \"answers\": {\n    \"damaged_product\": { \"value\": false },\n    \"reject_delivery\": { \"value\": false }\n  }\n}"
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/qc/header/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "qc", "header", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "qc",
+            "header",
+            ""
+          ]
         },
         "description": "### Header QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/qc/header/`\n\nVehicle / packaging / reject checks for **this truck**. Required answers depend on the goods-in header template (food vs packaging vs other). Set `reject_delivery.value=true` (or fail a critical check) to turn the truck away: delivery becomes `rejected`, PO qty is unchanged, then `POST /deliveries/` for the replacement.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | yes | Warehouse user PK |\n| `delivery_date` | no | Defaults to expected/today; Julian trace unless override |\n| `trace_override` | no | Requires `override_reason` |\n| `answers` | yes | Object keyed by check code (`value`, optional `comment`) |\n| `qc_tl_checked_by_user_id` | no | Dual sign-off |\n| `remarks` | no | Stored on PO when rejecting |\n\n**Response body**\n\nGoods-in form for this delivery. `reject_delivery` true and `delivery_status=rejected` when the truck is turned away.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Saved |\n| 400 | Missing answers, delivery not open, PO not ordered/partial |\n| 404 | PO or delivery not found |"
       }
@@ -99,15 +180,32 @@
       "name": "Unblock header QC",
       "request": {
         "method": "POST",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"reason\": \"QC override — packaging OK on recheck\",\n  \"checked_by_user_id\": 1\n}"
+          "raw": "{\n  \"reason\": \"QC override \u2014 packaging OK on recheck\",\n  \"checked_by_user_id\": 1\n}"
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/qc/header/unblock/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "qc", "header", "unblock", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "qc",
+            "header",
+            "unblock",
+            ""
+          ]
         },
         "description": "### Unblock header QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/qc/header/unblock/`\n\nQC override: reopen a **rejected** truck visit so line QC / receive can continue on the same delivery. Keeps prior `checked_at` and header answers; clears `reject_delivery` and sets `status=open`. Prefer this when the reject was a mistake; for a replacement truck use `POST /deliveries/` instead.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Rejected delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `reason` | yes | Why QC is overriding the reject (audit) |\n| `checked_by_user_id` | no | QC/TL actor; stored on dual-sign-off fields |\n\n**Response body**\n\n`message`: `Header QC unblocked successfully.` Delivery dict with `status=open`, `reject_delivery=false`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Unblocked |\n| 400 | Missing reason, not rejected, another open delivery exists, or PO not ordered/partial |\n| 404 | PO or delivery not found |"
       }
@@ -116,15 +214,31 @@
       "name": "Draft header QC",
       "request": {
         "method": "PATCH",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"checked_by_user_id\": 1,\n  \"answers\": {\n    \"damaged_product\": { \"value\": false }\n  }\n}"
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/qc/header/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "qc", "header", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "qc",
+            "header",
+            ""
+          ]
         },
         "description": "### Draft header QC\n\n`PATCH /purchasing/pos/:po_id/deliveries/:delivery_id/qc/header/`\n\nSave one or more header answers without completing QC. The operator can leave and resume: GET form returns `saved_header_answers` and `qc_draft=true`. `checked_at` stays empty until POST submit with every required answer.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | yes | Warehouse user PK |\n| `answers` | yes | Partial object keyed by check code |\n| `delivery_date` | no | Stored on the delivery if sent |\n\n**Response body**\n\n`message`: `Header QC draft saved successfully.` Goods-in form. `qc_draft` true, `checked_at` null.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Draft saved |\n| 400 | Unknown code, header already submitted, delivery not open |\n| 404 | PO or delivery not found |"
       }
@@ -133,32 +247,66 @@
       "name": "Line QC",
       "request": {
         "method": "POST",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"checked_by_user_id\": 1,\n  \"answers\": {\n    \"spec_check\": { \"value\": true }\n  }\n}"
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/lines/{{line_id}}/qc/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "lines", "{{line_id}}", "qc", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "lines",
+            "{{line_id}}",
+            "qc",
+            ""
+          ]
         },
-        "description": "### Line QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/lines/:line_id/qc/`\n\nProduct checks for this visit (use-by, temp, spec). Must follow passed header QC on the **same** open delivery. A previous visit’s line QC is not reused — truck 3 of a split drop needs its own lots / UBD.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n| `line_id` | yes | PO line PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | no | Actor for history |\n| `answers` | yes | Object keyed by line check code |\n| `trace_override` / `trace_number` | no | Lot trace; else delivery Julian |\n\n**Response body**\n\nGoods-in form. Line `line_check_ok` on this delivery line.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Saved |\n| 400 | Header not done, delivery rejected, missing answers |\n| 404 | PO, delivery, or line not found |"
+        "description": "### Line QC\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/lines/:line_id/qc/`\n\nProduct checks for this visit (use-by, temp, spec). Must follow passed header QC on the **same** open delivery. A previous visit\u2019s line QC is not reused \u2014 truck 3 of a split drop needs its own lots / UBD.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n| `line_id` | yes | PO line PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | no | Actor for history |\n| `answers` | yes | Object keyed by line check code |\n| `trace_override` / `trace_number` | no | Lot trace; else delivery Julian |\n\n**Response body**\n\nGoods-in form. Line `line_check_ok` on this delivery line.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Saved |\n| 400 | Header not done, delivery rejected, missing answers |\n| 404 | PO, delivery, or line not found |"
       }
     },
     {
       "name": "Draft line QC",
       "request": {
         "method": "PATCH",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"checked_by_user_id\": 1,\n  \"answers\": {\n    \"spec_check\": { \"value\": true }\n  }\n}"
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/lines/{{line_id}}/qc/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "lines", "{{line_id}}", "qc", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "lines",
+            "{{line_id}}",
+            "qc",
+            ""
+          ]
         },
         "description": "### Draft line QC\n\n`PATCH /purchasing/pos/:po_id/deliveries/:delivery_id/lines/:line_id/qc/`\n\nSave one or more line answers without setting `line_check_ok`. Resume via GET form (`lines[].qc_draft`). POST submit still requires every shown required check.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery PK |\n| `line_id` | yes | PO line PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `checked_by_user_id` | yes | Warehouse user PK |\n| `answers` | yes | Partial object keyed by line check code |\n\n**Response body**\n\n`message`: `Line QC draft saved successfully.` Goods-in form. Line `qc_draft` true, `line_check_ok` false.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Draft saved |\n| 400 | Unknown code, line already submitted, delivery rejected |\n| 404 | PO, delivery, or line not found |"
       }
@@ -167,17 +315,32 @@
       "name": "Receive",
       "request": {
         "method": "POST",
-        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "raw",
           "raw": "{\n  \"location_id\": {{location_id}},\n  \"lines\": [\n    {\n      \"line_id\": {{line_id}},\n      \"quantity\": \"3\",\n      \"shortfall_reason\": \"short_delivery\",\n      \"idempotency_key\": \"po-1-d2-salt-3\"\n    }\n  ]\n}"
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/receive/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "receive", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "receive",
+            ""
+          ]
         },
-        "description": "### Receive against a delivery\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/receive/`\n\nStocks this visit and adds qty onto the PO line. Example: 5 bags ordered, this truck 3 bags with `short_delivery` — PO goes `partial`, balance 2, delivery `received`. The last 2 bags are a **new** delivery. Over-receive vs remaining balance is 400. Header reject on this delivery is 400 (qty stays 0).\n\nWarehouse write gate: `goods_in`.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery that passed header QC |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes (if no ship-to) | Stock location |\n| `lines` | yes | Non-empty array |\n| `lines[].line_id` | yes | PO line |\n| `lines[].quantity` | yes | Purchase qty this drop |\n| `lines[].idempotency_key` | yes | Replay-safe stock key |\n| `lines[].shortfall_reason` | yes if qty < balance | e.g. `short_delivery` |\n| `quarantine` | no | Require quarantine location |\n\n**Response body**\n\n`201` `Goods received successfully.` Goods-in form plus `receive_results[]` (`qty_received`, `qty_balance`, stock entries). Delivery `status=received`. If all lines satisfied, PO `status=received`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 201 | Received |\n| 400 | Rejected/open QC missing, over qty, no balance, line QC fail |\n| 404 | PO, delivery, or line not found |"
+        "description": "### Receive against a delivery\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/receive/`\n\nStocks this visit and adds qty onto the PO line(s). You can receive one line at a time on the **same** open delivery \u2014 the visit stays `open` while other lines still have balance, so warehouse does not open D2/D3 for products on the same truck.\n\nThe delivery is marked `received` only when:\n\n- every PO line has `qty_balance=0` (PO fully done), or\n- any line in this request uses `shortfall_reason=short_delivery` (truck leaving; rest later = new delivery), or\n- `finish_delivery=true` (explicitly end this visit while balance remains, e.g. after `split_pallet` / `other`)\n\nExample: 5 bags ordered, this truck 3 bags with `short_delivery` \u2014 PO goes `partial`, balance 2, delivery `received`. The last 2 bags are a **new** delivery. Over-receive vs remaining balance is 400. Header reject on this delivery is 400 (qty stays 0).\n\nWarehouse write gate: `goods_in`.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Open delivery that passed header QC |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes (if no ship-to) | Stock location |\n| `lines` | yes | Non-empty array |\n| `lines[].line_id` | yes | PO line |\n| `lines[].quantity` | yes | Purchase qty this drop |\n| `lines[].idempotency_key` | yes | Replay-safe stock key |\n| `lines[].shortfall_reason` | yes if qty < balance | e.g. `short_delivery` closes visit; `split_pallet` / `other` leave visit open unless `finish_delivery` |\n| `finish_delivery` | no | `true` to close this visit while PO balance remains |\n| `quarantine` | no | Require quarantine location |\n\n**Response body**\n\n`201` `Goods received successfully.` Goods-in form plus `receive_results[]` (`qty_received`, `qty_balance`, stock entries). Delivery `status` stays `open` when more lines can still be received on this visit; otherwise `received`. If all lines satisfied, PO `status=received`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 201 | Received |\n| 400 | Rejected/open QC missing, over qty, no balance, line QC fail |\n| 404 | PO, delivery, or line not found |\n"
       }
     },
     {
@@ -187,10 +350,20 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/attachments/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "attachments", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "attachments",
+            ""
+          ]
         },
-        "description": "### List delivery attachments\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/attachments/`\n\nPhotos / COA / delivery note for **this visit** (a rejected truck’s photos stay here, not on the replacement delivery).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`Attachments fetched successfully.` `data.count` / `data.results[]` with `id`, `kind`, `url`, `delivery_id`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
+        "description": "### List delivery attachments\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/attachments/`\n\nPhotos / COA / delivery note for **this visit** (a rejected truck\u2019s photos stay here, not on the replacement delivery).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`Attachments fetched successfully.` `data.count` / `data.results[]` with `id`, `kind`, `url`, `delivery_id`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | Success |\n| 404 | PO or delivery not found |"
       }
     },
     {
@@ -201,14 +374,34 @@
         "body": {
           "mode": "formdata",
           "formdata": [
-            {"key": "file", "type": "file", "src": [], "description": "JPEG/PNG/WebP/PDF ≤ 5 MB"},
-            {"key": "kind", "value": "photo", "type": "text", "description": "photo | coa | delivery_note | other"}
+            {
+              "key": "file",
+              "type": "file",
+              "src": [],
+              "description": "JPEG/PNG/WebP/PDF \u2264 5 MB"
+            },
+            {
+              "key": "kind",
+              "value": "photo",
+              "type": "text",
+              "description": "photo | coa | delivery_note | other"
+            }
           ]
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/attachments/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "attachments", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "attachments",
+            ""
+          ]
         },
         "description": "### Upload delivery attachment\n\n`POST /purchasing/pos/:po_id/deliveries/:delivery_id/attachments/`\n\nStores a file on this visit (S3 key under `Goods-in/`). Rejected-truck evidence stays on the rejected delivery row.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\nMultipart.\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `file` | yes | JPEG, PNG, WebP, or PDF, max 5 MB |\n| `kind` | no | `photo` (default), `coa`, `delivery_note`, `other` |\n| `line_id` | no | Tie to a PO line |\n| `uploaded_by_user_id` | no | Else JWT actor |\n\n**Response body**\n\n`201` `Attachment uploaded successfully.` Attachment dict including `delivery_id` and presigned `url`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 201 | Uploaded |\n| 400 | Missing/invalid file or kind |\n| 404 | PO or delivery not found |"
       }
@@ -220,10 +413,20 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/deliveries/{{delivery_id}}/print/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "deliveries", "{{delivery_id}}", "print", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "deliveries",
+            "{{delivery_id}}",
+            "print",
+            ""
+          ]
         },
-        "description": "### Print delivery PDF\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/print/`\n\nGFF001F-style PDF for **this visit’s** saved header/line answers (not the whole PO history).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`application/pdf` (`goods-in-{po_id}-{delivery_id}.pdf`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | PDF |\n| 404 | PO or delivery not found |"
+        "description": "### Print delivery PDF\n\n`GET /purchasing/pos/:po_id/deliveries/:delivery_id/print/`\n\nGFF001F-style PDF for **this visit\u2019s** saved header/line answers (not the whole PO history).\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n| `delivery_id` | yes | Delivery PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`application/pdf` (`goods-in-{po_id}-{delivery_id}.pdf`).\n\n**Status codes**\n\n| Code | When |\n| --- | --- | --- |\n| 200 | PDF |\n| 404 | PO or delivery not found |"
       }
     },
     {
@@ -233,8 +436,16 @@
         "header": [],
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/timeline/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "timeline", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "timeline",
+            ""
+          ]
         },
         "description": "### PO timeline\n\n`GET /purchasing/pos/:po_id/timeline/`\n\nSame event shape as product (`GET /product/:id/timeline/`) and recipe audit: newest first. Each event has `before_json` / `after_json` / `changed_fields` plus an `actor` object recorded at write time (JWT sub, name, email, workstation, IP).\n\nComposes PO create/update/amend, goods-in QC (`accept` / `reject` / `non_conformance` / `note`), stock receive (`goods_in`), label print/scan, and stock post.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Purchase order timeline fetched successfully.`\n\n`data` is an array of events:\n\n| Field | Meaning |\n| --- | --- |\n| `at` | ISO datetime |\n| `entity` | `purchase_order`, `delivery`, `po_line`, or `stock_entry` |\n| `action` | `create`, `update`, `amend`, `accept`, `reject`, `non_conformance`, `note`, `goods_in`, `label_printed`, `label_scanned`, `stock_posted` |\n| `actor` | `{ user_id, sub, name, email, source_workstation, source_workstation_ip }` |\n| `before_json` | State before this step |\n| `after_json` | State after this step |\n| `changed_fields` | Keys that differ |\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |\n| 404 | PO not found |"
       }
@@ -244,7 +455,10 @@
       "request": {
         "method": "POST",
         "header": [
-          {"key": "Content-Type", "value": "application/json"}
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -252,10 +466,18 @@
         },
         "url": {
           "raw": "{{base_url}}/purchasing/pos/{{po_id}}/amend/",
-          "host": ["{{base_url}}"],
-          "path": ["purchasing", "pos", "{{po_id}}", "amend", ""]
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "purchasing",
+            "pos",
+            "{{po_id}}",
+            "amend",
+            ""
+          ]
         },
-        "description": "### Amend purchase order\n\n`POST /purchasing/pos/:po_id/amend/`\n\nChange an **ordered**, **partial**, or **received** PO in place (same PO number / Sage ref). Adding a line on a fully received PO reopens it to `partial` so warehouse can goods-in the new balance — existing received qty stays untouched. Use after the supplier changes qty or dates — not for draft edits (`PATCH /pos/:id/`). Each call bumps `revision_no` and writes an `amend` timeline event.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `expected_at` | no | New expected delivery date (`YYYY-MM-DD`) |\n| `ordered_at` | no | Ordered date |\n| `remarks` | no | Header note |\n| `ship_to_location_id` | no | Ship-to location PK |\n| `sage_po_number` / `external_number` | no | Sage PO ref (must stay unique) |\n| `lines` | no | Full replacement set of lines (match by `id` or `line_no`) |\n| `lines[].id` | no | Existing PO line PK (preferred match) |\n| `lines[].line_no` | no | Match / set line number |\n| `lines[].product_id` | yes (per line) | Product PK |\n| `lines[].qty_ordered` | yes (per line) | Must be ≥ received+rejected on that line |\n| `lines[].product_supplier_id` | no | Supplier pack mapping |\n| `lines[].unit_cost` | no | Override cost |\n| `lines[].label_format` / `label_count` | no | Label plan |\n| `status` | — | **Not allowed** |\n| `supplier_id` | — | **Not allowed** |\n\n**Response body**\n\n`message`: `Purchase order amended successfully.` Full PO detail including bumped `revision_no` and updated `lines` (`qty_received` preserved).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Amended |\n| 400 | Wrong status (e.g. draft/cancelled), open delivery, qty below received, remove line with receipts, or supplier/status change |\n| 404 | PO not found |"
+        "description": "### Amend purchase order\n\n`POST /purchasing/pos/:po_id/amend/`\n\nChange an **ordered**, **partial**, or **received** PO in place (same PO number / Sage ref). Adding a line on a fully received PO reopens it to `partial` so warehouse can goods-in the new balance \u2014 existing received qty stays untouched. Use after the supplier changes qty or dates \u2014 not for draft edits (`PATCH /pos/:id/`). Each call bumps `revision_no` and writes an `amend` timeline event.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `po_id` | yes | Purchase order PK |\n\n**Query parameters**\n\nNone.\n\n**Request body**\n\n| Field | Required | Description |\n| --- | --- | --- |\n| `expected_at` | no | New expected delivery date (`YYYY-MM-DD`) |\n| `ordered_at` | no | Ordered date |\n| `remarks` | no | Header note |\n| `ship_to_location_id` | no | Ship-to location PK |\n| `sage_po_number` / `external_number` | no | Sage PO ref (must stay unique) |\n| `lines` | no | Full replacement set of lines (match by `id` or `line_no`) |\n| `lines[].id` | no | Existing PO line PK (preferred match) |\n| `lines[].line_no` | no | Match / set line number |\n| `lines[].product_id` | yes (per line) | Product PK |\n| `lines[].qty_ordered` | yes (per line) | Must be \u2265 received+rejected on that line |\n| `lines[].product_supplier_id` | no | Supplier pack mapping |\n| `lines[].unit_cost` | no | Override cost |\n| `lines[].label_format` / `label_count` | no | Label plan |\n| `status` | \u2014 | **Not allowed** |\n| `supplier_id` | \u2014 | **Not allowed** |\n\n**Response body**\n\n`message`: `Purchase order amended successfully.` Full PO detail including bumped `revision_no` and updated `lines` (`qty_received` preserved).\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Amended |\n| 400 | Wrong status (e.g. draft/cancelled), open delivery, qty below received, remove line with receipts, or supplier/status change |\n| 404 | PO not found |"
       }
     }
   ]

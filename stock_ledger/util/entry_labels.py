@@ -111,23 +111,32 @@ def build_goods_out_label(
     issue_entry: StockEntry,
     source_entry: StockEntry | None = None,
     copies: int = 1,
+    label: StockEntryLabel | None = None,
 ) -> dict:
     lot = issue_entry.lot
     product = lot.product if lot is not None else None
+    label = label if label is not None else get_label(issue_entry)
+    if source_entry is None and issue_entry.source_entry_id:
+        source_entry = issue_entry.source_entry
+    label_format = (
+        label.label_format if label is not None else StockEntryLabelFormat.BOX
+    )
     return {
         'title': 'Goods OUT',
         'entry_id': issue_entry.id,
         'entry_code': entry_code(issue_entry.id),
         'barcode': entry_code(issue_entry.id),
         'bcid': 'datamatrix',
-        'label_format': StockEntryLabelFormat.BOX,
-        'size_mm': _size_for(StockEntryLabelFormat.BOX),
+        'label_format': label_format,
+        'size_mm': _size_for(label_format),
         'copies': max(1, int(copies)),
         'trace_number': lot.trace_number if lot is not None else None,
         'source_entry_id': source_entry.id if source_entry is not None else None,
         'source_entry_code': (
             entry_code(source_entry.id) if source_entry is not None else None
         ),
+        'status': label.status if label is not None else None,
+        'verified_count': label.verified_count if label is not None else 0,
         'human_readable': {
             'product_id': product.id if product is not None else None,
             'product_name': product.name if product is not None else None,

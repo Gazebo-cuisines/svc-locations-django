@@ -763,6 +763,14 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(draw['blocked_by'], 'label_not_printed')
         self.assertIn(f'E{out_id}', draw['next_step'])
         self.assertEqual(draw['post_endpoint'], f'/stock/entries/{out_id}/post/')
+        self.assertEqual(
+            draw['steps'],
+            {'print_label': False, 'verify_label': False, 'posted': False},
+        )
+        self.assertEqual(
+            draw['answers'],
+            {'quantity': '5', 'entry_code': f'E{out_id}'},
+        )
 
         # Once it posts, the balance catches up and nothing is pending.
         entry_labels.mark_printed(entry_id=out_id)

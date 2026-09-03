@@ -193,17 +193,61 @@ def post_entry(
     }
 
 
-def list_queued_receipts(*, limit: int = 100) -> list[StockEntry]:
+_QUEUED_TYPES = (
+    StockEntryType.RECEIPT,
+    StockEntryType.TRANSFER_OUT,
+)
+
+
+def queued_step_flags(entry: StockEntry) -> dict:
+    label = entry_labels.get_label(entry)
+    posting = get_posting(entry)
+    printed = bool(
+        label is not None
+        and (
+            label.printed_at is not None
+            or label.status in (
+                StockEntryLabelStatus.PRINTED,
+                StockEntryLabelStatus.VERIFIED,
+            )
+        )
+    )
+    return {
+        'print_label': printed,
+        'verify_label': bool(
+            label is not None
+            and label.status == StockEntryLabelStatus.VERIFIED
+        ),
+        'posted': (
+            posting is None
+            or posting.status == StockEntryPostingStatus.POSTED
+        ),
+    }
+
+
+def list_queued_receipts(
+    *,
+    limit: int = 100,
+    entry_type: str | None = None,
+    source_document_id: int | None = None,
+    location_id: int | None = None,
+) -> list[StockEntry]:
     limit = max(1, min(int(limit), 500))
-    return list(
+    qs = (
         StockEntry.objects
         .select_related(
             'lot__product', 'unit', 'location', 'label', 'posting',
-            'counterparty_location',
+            'counterparty_location', 'source_entry',
         )
-        .filter(
-            entry_type=StockEntryType.RECEIPT,
-            posting__status=StockEntryPostingStatus.QUEUED,
-        )
-        .order_by('posting__queued_at', 'id')[:limit]
+        .filter(posting__status=StockEntryPostingStatus.QUEUED)
+        .order_by('posting__queued_at', 'id')
     )
+    if entry_type:
+        qs = qs.filter(entry_type=entry_type)
+    else:
+        qs = qs.filter(entry_type__in=_QUEUED_TYPES)
+    if source_document_id is not None:
+        qs = qs.filter(source_document_id=source_document_id)
+    if location_id is not None:
+        qs = qs.filter(location_id=location_id)
+    return list(qs[:limit])

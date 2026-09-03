@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from product.goods_in import effective_goods_in_type, product_is_direct_consume
 from product.models import ProductGoodsInType, ProductStorageRegime, ProductTechnical
@@ -20,6 +21,15 @@ from purchasing.services.attachments import list_attachments
 from purchasing.services.po import get_purchase_order
 from purchasing.serialize import _qty_str, rbac_names, shortfall_reason_options
 from purchasing.services.po_qty import queued_hold_by_line_no
+from stock_ledger.models import (
+    StockEntry,
+    StockEntryLabel,
+    StockEntryLabelStatus,
+    StockEntryPosting,
+    StockEntryPostingStatus,
+    StockEntryType,
+)
+from stock_ledger.util import entry_labels
 
 
 class GoodsInFormError(ValueError):
@@ -152,6 +162,165 @@ def _header_key(lines, tech_by_product: dict) -> tuple[str, str | None]:
     return gin_type, tech.storage_regime if tech else None
 
 
+_LINE_STEP_ORDER = (
+    'line_qc',
+    'received',
+    'print_label',
+    'verify_label',
+    'posted',
+)
+
+
+def _positive(value) -> bool:
+    try:
+        return Decimal(str(value or 0)) > 0
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def _label_printed(label: StockEntryLabel | None) -> bool:
+    if label is None:
+        return False
+    if label.printed_at is not None:
+        return True
+    return label.status in (
+        StockEntryLabelStatus.PRINTED,
+        StockEntryLabelStatus.VERIFIED,
+    )
+
+
+def _entry_label_step(entry: StockEntry) -> dict:
+    try:
+        label = entry.label
+    except StockEntryLabel.DoesNotExist:
+        label = None
+    try:
+        posting = entry.posting
+    except StockEntryPosting.DoesNotExist:
+        posting = None
+    return {
+        'entry_id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
+        'print_label': _label_printed(label),
+        'verify_label': bool(
+            label is not None
+            and label.status == StockEntryLabelStatus.VERIFIED
+        ),
+        'posted': (
+            posting is None
+            or posting.status == StockEntryPostingStatus.POSTED
+        ),
+    }
+
+
+def _label_steps_by_po_ids(po_ids: list[int]) -> dict[int, dict[int, list[dict]]]:
+    if not po_ids:
+        return {}
+    rows = (
+        StockEntry.objects
+        .filter(
+            entry_type=StockEntryType.RECEIPT,
+            source_document_type='po',
+            source_document_id__in=po_ids,
+        )
+        .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
+        .select_related('label', 'posting')
+        .order_by('id')
+    )
+    by_po: dict[int, dict[int, list[dict]]] = {}
+    for entry in rows:
+        line_no = entry.source_document_line
+        if line_no is None or entry.source_document_id is None:
+            continue
+        by_po.setdefault(entry.source_document_id, {}).setdefault(
+            line_no, [],
+        ).append(_entry_label_step(entry))
+    return by_po
+
+
+def _label_steps_by_line_no(po_id: int) -> dict[int, list[dict]]:
+    return _label_steps_by_po_ids([po_id]).get(po_id, {})
+
+
+def _thin_steps(po: PurchaseOrder, labels_by_line: dict[int, list[dict]]) -> dict:
+    labels = [row for rows in labels_by_line.values() for row in rows]
+    queued = [row for row in labels if not row['posted']]
+    return {
+        'header_qc': po.checked_at is not None,
+        'print_label': _all_true(labels, 'print_label'),
+        'verify_label': _all_true(labels, 'verify_label'),
+        'queued_label_count': len(queued),
+    }
+
+
+def po_list_steps_map(pos: list[PurchaseOrder]) -> dict[int, dict]:
+    by_po = _label_steps_by_po_ids([po.id for po in pos])
+    return {
+        po.id: _thin_steps(po, by_po.get(po.id, {}))
+        for po in pos
+    }
+
+
+def _all_true(labels: list[dict], flag: str) -> bool:
+    return all(row[flag] for row in labels)
+
+
+def _answered(saved: dict, code: str) -> bool:
+    raw = (saved or {}).get(code)
+    if isinstance(raw, dict):
+        return raw.get('value') not in (None, '')
+    return raw not in (None, '')
+
+
+def _check_flags(items, saved: dict) -> dict:
+    flags = {}
+    for item in items:
+        code = item['code'] if isinstance(item, dict) else item.code
+        if not code:
+            continue
+        flags[code] = _answered(saved, code)
+    return flags
+
+
+def _line_steps(block: dict, labels: list[dict]) -> dict:
+    received = _positive(block['qty_received']) or _positive(block['qty_queued'])
+    return {
+        'line_id': block['line_id'],
+        'line_qc': bool(block['line_check_ok']),
+        'checks': _check_flags(
+            (block.get('template') or {}).get('items') or [],
+            block.get('saved_answers') or {},
+        ),
+        'received': received,
+        'print_label': _all_true(labels, 'print_label'),
+        'verify_label': _all_true(labels, 'verify_label'),
+        'posted': _all_true(labels, 'posted'),
+        'labels': labels,
+    }
+
+
+def _current_step(header_qc: bool, line_steps: list[dict]) -> str:
+    if not header_qc:
+        return 'header_qc'
+    for row in line_steps:
+        for flag in _LINE_STEP_ORDER:
+            if not row[flag]:
+                return flag
+    return 'done'
+
+
+def _answers_block(saved_header: dict, line_blocks: list[dict]) -> dict:
+    lines = {}
+    for block in line_blocks:
+        lines[str(block['line_id'])] = {
+            **(block.get('saved_answers') or {}),
+            'qty_received': block['qty_received'],
+            'qty_queued': block['qty_queued'],
+            'qty_balance': block['qty_balance'],
+        }
+    return {'header': saved_header or {}, 'lines': lines}
+
+
 def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
     try:
         po = get_purchase_order(po_id)
@@ -251,10 +420,21 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         or session.header_checks
         or {}
     )
+    header_qc = session.checked_at is not None
+    labels_by_line = _label_steps_by_line_no(po.id)
+    line_steps = [
+        _line_steps(block, labels_by_line.get(block['line_no'], []))
+        for block in line_blocks
+    ]
+    if delivery_id is None:
+        resume = delivery
+    else:
+        resume = open_delivery_for(po.id) or latest_delivery_for(po.id) or delivery
 
     return {
         'purchase_order_id': po.id,
         'delivery_id': delivery.id if delivery is not None else None,
+        'resume_delivery_id': resume.id if resume is not None else None,
         'delivery_status': delivery.status if delivery is not None else None,
         'number': po.external_number or po.number,
         'sage_po_number': po.external_number,
@@ -293,4 +473,11 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             po.id,
             delivery_id=delivery.id if delivery is not None else None,
         ),
+        'steps': {
+            'current': _current_step(header_qc, line_steps),
+            'header_qc': header_qc,
+            'header': _check_flags(header_template.items.all(), saved_header),
+            'lines': line_steps,
+        },
+        'answers': _answers_block(saved_header, line_blocks),
     }
