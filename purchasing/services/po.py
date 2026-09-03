@@ -498,6 +498,7 @@ def amend_purchase_order(po_id: int, *, body: dict, actor=None) -> PurchaseOrder
     if po.status not in (
         PurchaseOrderStatus.ORDERED,
         PurchaseOrderStatus.PARTIAL,
+        PurchaseOrderStatus.RECEIVED,
     ):
         raise PoValidationError(
             f'Purchase order status={po.status} cannot be amended.',
