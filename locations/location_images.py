@@ -6,7 +6,7 @@ from botocore.exceptions import ClientError
 from django.conf import settings
 
 from core.images import prepare_webp, s3_image_args
-from core.s3 import s3_client as _s3_client
+from core.s3 import presigned_get, s3_client as _s3_client
 from locations.models import Location
 
 ALLOWED_CONTENT_TYPES = {
@@ -30,14 +30,7 @@ def location_image_url(
 ) -> str | None:
     if not location.image_key:
         return None
-    try:
-        return _s3_client().generate_presigned_url(
-            'get_object',
-            Params={'Bucket': _bucket(), 'Key': location.image_key},
-            ExpiresIn=expires_in,
-        )
-    except Exception:
-        return None
+    return presigned_get(location.image_key, expires_in=expires_in)
 
 
 def upload_location_image(location: Location, uploaded_file) -> str:

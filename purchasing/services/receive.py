@@ -469,6 +469,7 @@ def receive_purchase_order(
                     source_workstation=receipt_audit.get('source_workstation'),
                     meta={
                         'po_id': po.id,
+                        'delivery_id': delivery.id,
                         'line_id': line.id,
                         'line_no': line.line_no,
                         'delivery_id': delivery.id,

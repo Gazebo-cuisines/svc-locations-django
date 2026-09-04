@@ -177,3 +177,46 @@ class ActivityQuantityDisplayTests(TestCase):
             row['label_reprint_path'],
             f'/stock/entries/{entry.id}/labels/print/',
         )
+
+    def test_me_activity_flags_user_cancelled_queued_receipt(self):
+        entry = services.receipt(
+            idempotency_key=f'act-cancel-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('10'),
+            unit_id=self.kg.id,
+            counterparty_location_id=self.supplier.id,
+            effective_at=timezone.now(),
+            defer_balance=True,
+            actor_user_id=self.floor.id,
+            lan_username='actfloor',
+        )
+        entry_posting.queue_entry(
+            entry=entry,
+            actor_user_id=self.floor.id,
+            lan_username='actfloor',
+        )
+        entry_posting.cancel_entry(entry_id=entry.id)
+
+        with patch('users_rbac.auth.attach_user') as mock_attach:
+            def _set_user(request, **kwargs):
+                request.rbac_user = self.floor
+                return None
+
+            mock_attach.side_effect = _set_user
+            resp = self.client.get('/auth/me/activity/?limit=10&offset=0')
+
+        row = next(
+            item for item in resp.json()['data']['items']
+            if item['entry_id'] == entry.id
+        )
+        self.assertFalse(row['is_live'])
+        self.assertTrue(row['is_removed'])
+        self.assertTrue(row['user_cancelled'])
+        self.assertFalse(row['manager_removed'])
+        self.assertEqual(row['ui_status'], 'cancelled')
+        self.assertEqual(row['posting_status'], 'cancelled')
+        self.assertIsNotNone(row['removed_at'])
+        self.assertEqual(row['removed_by_user_id'], self.floor.id)
+        self.assertEqual(row['removed_by_name'], 'actfloor')
+        self.assertFalse(row['can_reprint_label'])

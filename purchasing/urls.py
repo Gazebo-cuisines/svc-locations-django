@@ -13,6 +13,7 @@ from purchasing.views import (
     po_attachments_api,
     po_collection_api,
     po_delivery_attachments_api,
+    po_delivery_cancel_api,
     po_delivery_checklist_api,
     po_delivery_collection_api,
     po_delivery_detail_api,
@@ -59,6 +60,7 @@ urlpatterns = [
     path('deliveries/rejected/', rejected_deliveries_api, name='purchasing-rejected-deliveries'),
     path('pos/<int:po_id>/deliveries/', po_delivery_collection_api, name='purchasing-po-delivery-list'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/', po_delivery_detail_api, name='purchasing-po-delivery-detail'),
+    path('pos/<int:po_id>/deliveries/<int:delivery_id>/cancel/', po_delivery_cancel_api, name='purchasing-po-delivery-cancel'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/checklist/', po_delivery_checklist_api, name='purchasing-po-delivery-checklist'),
     path('pos/<int:po_id>/deliveries/<int:delivery_id>/qc/header/', po_delivery_header_qc_api, name='purchasing-po-delivery-header-qc'),
     path(

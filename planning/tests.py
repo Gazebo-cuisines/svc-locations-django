@@ -147,10 +147,13 @@ class PickingListApiTests(TestCase):
         self.assertIsNone(box_row['pack_unit_name'])
         self.assertIsNone(box_row['shape_format_label'])
         self.assertEqual(len(box_row['requirement_ids']), 2)
+        self.assertEqual(box_row['line_id'], box_row['requirement_ids'][0])
         self.assertEqual(box_row['status'], 'open')
         self.assertEqual(box_row['issued_quantity'], '0')
         self.assertEqual(box_row['queued_quantity'], '0')
         self.assertEqual(box_row['remaining_quantity'], '50.000000')
+        self.assertEqual(data['steps']['current'], 'queue')
+        self.assertFalse(box_row['steps']['queue'])
 
         dept_names = {d['from_location'] for d in data['by_department']}
         self.assertEqual(dept_names, {'Unit 11', 'Spice Room'})
@@ -292,22 +295,25 @@ class PickingListApiTests(TestCase):
         self.assertEqual(box_row['queued_quantity'], '20.000000')
         self.assertEqual(box_row['issued_quantity'], '0')
         self.assertEqual(box_row['remaining_quantity'], '30.000000')
+        label = {
+            'entry_id': entry.id,
+            'entry_code': f'E{entry.id}',
+            'print_label': False,
+            'verify_label': False,
+            'posted': False,
+        }
+        expected_steps = {
+            'line_id': box_row['line_id'],
+            'queue': True,
+            'print': False,
+            'verify': False,
+            'labels': [label],
+        }
+        self.assertEqual(box_row['steps'], expected_steps)
+        self.assertEqual(queued.json()['data']['steps']['current'], 'print')
         self.assertEqual(
-            box_row['steps'],
-            {
-                'print_label': False,
-                'verify_label': False,
-                'posted': False,
-                'labels': [
-                    {
-                        'entry_id': entry.id,
-                        'entry_code': f'E{entry.id}',
-                        'print_label': False,
-                        'verify_label': False,
-                        'posted': False,
-                    },
-                ],
-            },
+            queued.json()['data']['answers']['lines'][str(box_row['line_id'])],
+            box_row['answers'],
         )
         self.assertEqual(
             box_row['answers'],
@@ -333,12 +339,22 @@ class PickingListApiTests(TestCase):
         self.assertEqual(
             box_row['steps'],
             {
-                'print_label': True,
-                'verify_label': True,
-                'posted': True,
-                'labels': [],
+                'line_id': box_row['line_id'],
+                'queue': True,
+                'print': True,
+                'verify': True,
+                'labels': [
+                    {
+                        'entry_id': entry.id,
+                        'entry_code': f'E{entry.id}',
+                        'print_label': True,
+                        'verify_label': True,
+                        'posted': True,
+                    },
+                ],
             },
         )
+        self.assertEqual(posted.json()['data']['steps']['current'], 'queue')
         self.assertEqual(
             box_row['answers'],
             {

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from purchasing.models import (
@@ -46,6 +47,7 @@ def latest_delivery_for(po_id: int) -> PurchaseOrderDelivery | None:
     return (
         PurchaseOrderDelivery.objects
         .filter(purchase_order_id=po_id)
+        .exclude(status=PurchaseOrderDeliveryStatus.CANCELLED)
         .order_by('-id')
         .first()
     )
@@ -213,6 +215,12 @@ def delivery_list_dict(delivery: PurchaseOrderDelivery) -> dict:
         'qc_tl_checked_by_user_id': delivery.qc_tl_checked_by_user_id,
         'qc_tl_checked_by_name': names.get(delivery.qc_tl_checked_by_user_id),
         'qc_tl_checked_at': _iso_dt(delivery.qc_tl_checked_at),
+        # Null unless the row came from the annotated list queryset.
+        'qty_received_total': (
+            _qty_str(getattr(delivery, 'qty_received_total', None) or Decimal('0'))
+            if hasattr(delivery, 'qty_received_total') else None
+        ),
+        'line_count_received': getattr(delivery, 'line_count_received', None),
         'created_at': _iso_dt(delivery.created_at),
         'updated_at': _iso_dt(delivery.updated_at),
     }
@@ -222,7 +230,13 @@ def list_deliveries(po_id: int) -> list[PurchaseOrderDelivery]:
     if not PurchaseOrder.objects.filter(pk=po_id).exists():
         raise DeliveryError('Purchase order not found.')
     return list(
-        PurchaseOrderDelivery.objects.filter(purchase_order_id=po_id).order_by('id'),
+        PurchaseOrderDelivery.objects
+        .filter(purchase_order_id=po_id)
+        .annotate(
+            qty_received_total=Sum('lines__qty_received'),
+            line_count_received=Count('lines', filter=Q(lines__qty_received__gt=0)),
+        )
+        .order_by('id'),
     )
 
 
@@ -241,6 +255,56 @@ def list_rejected_deliveries() -> list[dict]:
         item['purchase_order_status'] = po.status
         out.append(item)
     return out
+
+
+@transaction.atomic
+def cancel_delivery(
+    po_id: int,
+    delivery_id: int,
+    *,
+    reason: str,
+    actor=None,
+) -> dict:
+    """Abandon a truck visit that never booked anything in, so the PO can be amended."""
+    reason = (reason or '').strip()
+    if not reason:
+        raise DeliveryError('reason is required.')
+
+    try:
+        po = PurchaseOrder.objects.select_for_update().get(pk=po_id)
+    except PurchaseOrder.DoesNotExist as exc:
+        raise DeliveryError('Purchase order not found.') from exc
+
+    delivery = get_delivery(po_id, delivery_id)
+    if delivery.status != PurchaseOrderDeliveryStatus.OPEN:
+        raise DeliveryError(
+            f'Only an open delivery can be cancelled (status={delivery.status}).',
+        )
+    if delivery.lines.filter(
+        Q(qty_received__gt=0) | Q(qty_rejected__gt=0),
+    ).exists():
+        raise DeliveryError(
+            'This delivery already has goods booked in; finish it instead.',
+        )
+
+    before = {'delivery_id': delivery.id, 'status': delivery.status}
+    delivery.status = PurchaseOrderDeliveryStatus.CANCELLED
+    delivery.save(update_fields=['status', 'updated_at'])
+
+    record_history(
+        po=po,
+        delivery=delivery,
+        event_type=PurchaseOrderHistoryEvent.CANCEL,
+        remarks=f'Delivery cancelled: {reason}',
+        before=before,
+        after={
+            'delivery_id': delivery.id,
+            'status': delivery.status,
+            'reason': reason,
+        },
+        actor=actor or actor_json(),
+    )
+    return delivery_list_dict(delivery)
 
 
 @transaction.atomic

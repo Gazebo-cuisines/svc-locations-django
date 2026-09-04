@@ -23,6 +23,7 @@ class PurchaseOrderHistoryEvent(models.TextChoices):
     AMEND = 'amend', 'Amend'
     ACCEPT = 'accept', 'Accept'
     REJECT = 'reject', 'Reject'
+    CANCEL = 'cancel', 'Cancel'
     NON_CONFORMANCE = 'non_conformance', 'Non-conformance'
     NOTE = 'note', 'Note'
 
@@ -258,6 +259,7 @@ class PurchaseOrderDeliveryStatus(models.TextChoices):
     OPEN = 'open', 'Open'
     REJECTED = 'rejected', 'Rejected'
     RECEIVED = 'received', 'Received'
+    CANCELLED = 'cancelled', 'Cancelled'
 
 
 class PurchaseOrderDelivery(models.Model):
@@ -295,13 +297,7 @@ class PurchaseOrderDelivery(models.Model):
         ordering = ['id']
         constraints = [
             models.CheckConstraint(
-                check=models.Q(
-                    status__in=[
-                        PurchaseOrderDeliveryStatus.OPEN,
-                        PurchaseOrderDeliveryStatus.REJECTED,
-                        PurchaseOrderDeliveryStatus.RECEIVED,
-                    ],
-                ),
+                check=models.Q(status__in=PurchaseOrderDeliveryStatus.values),
                 name='chk_po_delivery_status',
             ),
             models.UniqueConstraint(

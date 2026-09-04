@@ -130,6 +130,12 @@ def po_list_dict(po: PurchaseOrder) -> dict:
         'delivery_at': _iso_date(po.delivery_at),
         'source': po.source,
         'reject_delivery': po.reject_delivery,
+        # Null unless the row came from the annotated list queryset.
+        'line_count': getattr(po, 'line_count', None),
+        'received_line_count': getattr(po, 'received_line_count', None),
+        'delivery_count': getattr(po, 'delivery_count', None),
+        'open_delivery_id': getattr(po, 'open_delivery_id', None),
+        'last_delivery_at': _iso_date(getattr(po, 'last_delivery_at_agg', None)),
         'created_at': _iso_dt(po.created_at),
         'updated_at': _iso_dt(po.updated_at),
     }
