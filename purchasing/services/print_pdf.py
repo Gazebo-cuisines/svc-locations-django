@@ -76,6 +76,9 @@ def _fmt_date(value) -> str:
 
 
 def _qty_display(line: dict) -> str:
+    visit = line.get('delivery_qty_received')
+    if visit not in (None, ''):
+        return _fmt(visit)
     recv = line.get('qty_received')
     if recv not in (None, '', '0'):
         return _fmt(recv)

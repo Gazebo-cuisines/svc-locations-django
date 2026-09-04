@@ -24,7 +24,7 @@ def container_list_dict(location: Location) -> dict:
         'visible': location.visible,
         'static': location.static,
         'locked': location.locked,
-        'roles': list(location.roles.values_list('role', flat=True)),
+        'roles': [row.role for row in location.roles.all()],
     }
 
 def global_container_list_dict(location: Location) -> dict:

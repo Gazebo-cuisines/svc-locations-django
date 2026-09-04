@@ -6,14 +6,7 @@ from locations.utils.api_response import api_error, api_success
 
 
 def location_queryset():
-    return Location.objects.prefetch_related(
-        'roles',
-        'features',
-        'addresses',
-        'contacts',
-        'stock_profile',
-        'supplier_profile',
-    ).order_by('name')
+    return Location.objects.prefetch_related('roles', 'features').order_by('name')
 
 
 def apply_list_filters(request: HttpRequest, queryset):

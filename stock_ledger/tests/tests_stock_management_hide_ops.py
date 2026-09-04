@@ -185,6 +185,14 @@ class StockManagementHideOpsTests(TestCase):
         entry_ids = {row['entry_id'] for row in timeline.json()['data']['items']}
         self.assertIn(self.posted.id, entry_ids)
 
+    def test_audit_timeline_batches_device_codes(self):
+        with patch('stock_ledger.views.codes_for_serials', return_value={}) as mocked:
+            resp = self.client.get(
+                f'/stock/audit/timeline/?product_id={self.product.id}',
+            )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(mocked.call_count, 1)
+
     def _me_activity(self, user):
         with patch('users_rbac.auth.attach_user') as mock_attach:
             def _set_user(request, **kwargs):

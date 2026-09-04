@@ -47,6 +47,11 @@ urlpatterns = [
         views.goods_out_suggest_api,
         name='stock-goods-out-suggest',
     ),
+    path(
+        'goods-out/form/',
+        views.goods_out_form_api,
+        name='stock-goods-out-form',
+    ),
 
     path('scan/', views.scan_resolve_api, name='stock-scan'),
     path('recall/', views.recall_api, name='stock-recall'),
