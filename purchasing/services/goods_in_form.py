@@ -300,6 +300,22 @@ def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, 
     return by_line
 
 
+def delivery_label_counts(po_id: int, delivery_ids: list[int]) -> dict[int, dict]:
+    """Labels made vs still queued, per visit."""
+    out: dict[int, dict] = {}
+    for delivery_id in delivery_ids:
+        rows = [
+            row
+            for rows in _label_steps_for_delivery(po_id, delivery_id).values()
+            for row in rows
+        ]
+        out[delivery_id] = {
+            'label_count': len(rows),
+            'queued_label_count': sum(1 for row in rows if not row['posted']),
+        }
+    return out
+
+
 def _thin_steps(po: PurchaseOrder, labels_by_line: dict[int, list[dict]]) -> dict:
     labels = [row for rows in labels_by_line.values() for row in rows]
     queued = [row for row in labels if not row['posted']]

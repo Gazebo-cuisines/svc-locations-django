@@ -149,7 +149,9 @@ def build_goods_out_label(
 
 
 def label_state_dict(label: StockEntryLabel) -> dict:
-    ok_scans = label.scans.filter(result=StockEntryLabelScanResult.OK).count()
+    # One hit (or zero, when scans are prefetched) instead of two COUNT round trips.
+    scans = list(label.scans.all())
+    ok_scans = sum(1 for scan in scans if scan.result == StockEntryLabelScanResult.OK)
     return {
         'entry_id': label.stock_entry_id,
         'entry_code': entry_code(label.stock_entry_id),
@@ -158,7 +160,7 @@ def label_state_dict(label: StockEntryLabel) -> dict:
         'status': label.status,
         'verified_count': label.verified_count,
         'printed_count': label.printed_count,
-        'scan_count': label.scans.count(),
+        'scan_count': len(scans),
         'ok_scan_count': ok_scans,
         'printed_at': label.printed_at.isoformat() if label.printed_at else None,
         'verified_at': label.verified_at.isoformat() if label.verified_at else None,

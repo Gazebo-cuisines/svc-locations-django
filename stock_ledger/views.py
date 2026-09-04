@@ -2280,6 +2280,7 @@ def entry_queued_list_api(request):
     """Inbox: queued receipts and transfer_out waiting for print/verify/post."""
     try:
         limit = int(request.GET.get('limit') or 100)
+        offset = int(request.GET.get('offset') or 0)
         entry_type = request.GET.get('entry_type') or None
         raw_src = request.GET.get('source_document_id')
         raw_loc = request.GET.get('location_id')
@@ -2289,7 +2290,7 @@ def entry_queued_list_api(request):
         location_id = int(raw_loc) if raw_loc not in (None, '') else None
     except (TypeError, ValueError):
         return api_error(
-            'limit, source_document_id, and location_id must be integers.',
+            'limit, offset, source_document_id, and location_id must be integers.',
         )
     if entry_type and entry_type not in (
         StockEntryType.RECEIPT,
@@ -2297,6 +2298,8 @@ def entry_queued_list_api(request):
     ):
         return api_error('entry_type must be receipt or transfer_out.')
     limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    preload_kg_factors()
     total = entry_posting.queued_receipts_qs(
         entry_type=entry_type,
         source_document_id=source_document_id,
@@ -2304,6 +2307,7 @@ def entry_queued_list_api(request):
     ).count()
     rows = entry_posting.list_queued_receipts(
         limit=limit,
+        offset=offset,
         entry_type=entry_type,
         source_document_id=source_document_id,
         location_id=location_id,
@@ -2334,7 +2338,8 @@ def entry_queued_list_api(request):
             'count': len(results),
             'total': total,
             'limit': limit,
-            'has_more': total > len(results),
+            'offset': offset,
+            'has_more': offset + len(results) < total,
             'results': results,
         },
     )
