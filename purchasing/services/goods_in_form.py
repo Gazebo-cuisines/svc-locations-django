@@ -7,6 +7,7 @@ from purchasing.models import (
     GoodsInCheckScope,
     GoodsInCheckTemplate,
     PurchaseOrder,
+    PurchaseOrderDeliveryLine,
 )
 from purchasing.services.delivery import (
     DeliveryError,
@@ -213,10 +214,10 @@ def _entry_label_step(entry: StockEntry) -> dict:
     }
 
 
-def _label_steps_by_po_ids(po_ids: list[int]) -> dict[int, dict[int, list[dict]]]:
+def _receipt_entries(po_ids: list[int]):
     if not po_ids:
-        return {}
-    rows = (
+        return StockEntry.objects.none()
+    return (
         StockEntry.objects
         .filter(
             entry_type=StockEntryType.RECEIPT,
@@ -227,8 +228,21 @@ def _label_steps_by_po_ids(po_ids: list[int]) -> dict[int, dict[int, list[dict]]
         .select_related('label', 'posting')
         .order_by('id')
     )
+
+
+def _entry_delivery_id(entry: StockEntry) -> int | None:
+    """Delivery stamped on the posting at receive; None for older rows."""
+    try:
+        posting = entry.posting
+    except StockEntryPosting.DoesNotExist:
+        return None
+    raw = (posting.meta or {}).get('delivery_id')
+    return int(raw) if raw not in (None, '') else None
+
+
+def _label_steps_by_po_ids(po_ids: list[int]) -> dict[int, dict[int, list[dict]]]:
     by_po: dict[int, dict[int, list[dict]]] = {}
-    for entry in rows:
+    for entry in _receipt_entries(po_ids):
         line_no = entry.source_document_line
         if line_no is None or entry.source_document_id is None:
             continue
@@ -240,6 +254,50 @@ def _label_steps_by_po_ids(po_ids: list[int]) -> dict[int, dict[int, list[dict]]
 
 def _label_steps_by_line_no(po_id: int) -> dict[int, list[dict]]:
     return _label_steps_by_po_ids([po_id]).get(po_id, {})
+
+
+def _delivery_entry_bounds(po_id: int, delivery_id: int) -> dict[int, tuple[int, int]]:
+    """Entry-id window per line_no, for receipts with no delivery stamp.
+
+    Entry ids only grow as receives land, so a visit owns the ids above the
+    previous visit's last receipt up to its own.
+    """
+    rows = (
+        PurchaseOrderDeliveryLine.objects
+        .filter(delivery__purchase_order_id=po_id)
+        .order_by('delivery_id')
+        .values_list('delivery_id', 'po_line__line_no', 'last_receipt_entry_id')
+    )
+    bounds: dict[int, tuple[int, int]] = {}
+    floor: dict[int, int] = {}
+    for row_delivery_id, line_no, last_entry_id in rows:
+        if row_delivery_id == delivery_id:
+            if last_entry_id is not None:
+                bounds[line_no] = (floor.get(line_no, 0), last_entry_id)
+        elif row_delivery_id < delivery_id and last_entry_id is not None:
+            floor[line_no] = max(floor.get(line_no, 0), last_entry_id)
+    return bounds
+
+
+def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, list[dict]]:
+    """This visit's labels only: entries stamped with another delivery drop out."""
+    if delivery_id is None:
+        return _label_steps_by_line_no(po_id)
+    bounds = _delivery_entry_bounds(po_id, delivery_id)
+    by_line: dict[int, list[dict]] = {}
+    for entry in _receipt_entries([po_id]):
+        line_no = entry.source_document_line
+        if line_no is None:
+            continue
+        stamped = _entry_delivery_id(entry)
+        if stamped is None:
+            lower, upper = bounds.get(line_no, (0, 0))
+            if not lower < entry.id <= upper:
+                continue
+        elif stamped != delivery_id:
+            continue
+        by_line.setdefault(line_no, []).append(_entry_label_step(entry))
+    return by_line
 
 
 def _thin_steps(po: PurchaseOrder, labels_by_line: dict[int, list[dict]]) -> dict:
@@ -289,7 +347,11 @@ def _check_flags(items, saved: dict) -> dict:
 
 
 def _line_steps(block: dict, labels: list[dict]) -> dict:
-    received = _positive(block['qty_received']) or _positive(block['qty_queued'])
+    per_visit = block.get('delivery_qty_received')
+    received = (
+        _positive(per_visit) if per_visit is not None
+        else _positive(block['qty_received']) or _positive(block['qty_queued'])
+    )
     return {
         'line_id': block['line_id'],
         'line_qc': bool(block['line_check_ok']),
@@ -396,9 +458,17 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
             'storage_regime': regime,
             'qty_ordered': _qty_str(line.qty_ordered),
             'qty_received': _qty_str(line.qty_received),
+            'delivery_qty_received': (
+                None if delivery is None
+                else _qty_str(dline.qty_received if dline is not None else Decimal('0'))
+            ),
             'qty_rejected': _qty_str(line.qty_rejected),
             'qty_queued': _qty_str(holds.get(line.line_no, 0)),
             'qty_balance': _qty_str(line.qty_balance),
+            'use_by': _iso_date(
+                dline.use_by if dline is not None and dline.use_by else line.use_by,
+            ),
+            'line_closed': line.line_closed,
             'shortfall_reason': line.shortfall_reason,
             'needs_credit_note': line.qty_rejected > 0,
             'pack_size': line.shape_format_label,
@@ -427,7 +497,9 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         or {}
     )
     header_qc = session.checked_at is not None
-    labels_by_line = _label_steps_by_line_no(po.id)
+    labels_by_line = _label_steps_for_delivery(
+        po.id, delivery.id if delivery is not None else None,
+    )
     line_steps = [
         _line_steps(block, labels_by_line.get(block['line_no'], []))
         for block in line_blocks
