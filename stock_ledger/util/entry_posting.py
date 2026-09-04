@@ -225,14 +225,12 @@ def queued_step_flags(entry: StockEntry) -> dict:
     }
 
 
-def list_queued_receipts(
+def queued_receipts_qs(
     *,
-    limit: int = 100,
     entry_type: str | None = None,
     source_document_id: int | None = None,
     location_id: int | None = None,
-) -> list[StockEntry]:
-    limit = max(1, min(int(limit), 500))
+):
     qs = (
         StockEntry.objects
         .select_related(
@@ -250,4 +248,20 @@ def list_queued_receipts(
         qs = qs.filter(source_document_id=source_document_id)
     if location_id is not None:
         qs = qs.filter(location_id=location_id)
+    return qs
+
+
+def list_queued_receipts(
+    *,
+    limit: int = 100,
+    entry_type: str | None = None,
+    source_document_id: int | None = None,
+    location_id: int | None = None,
+) -> list[StockEntry]:
+    limit = max(1, min(int(limit), 500))
+    qs = queued_receipts_qs(
+        entry_type=entry_type,
+        source_document_id=source_document_id,
+        location_id=location_id,
+    )
     return list(qs[:limit])

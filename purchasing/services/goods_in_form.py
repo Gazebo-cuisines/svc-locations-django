@@ -262,7 +262,13 @@ def po_list_steps_map(pos: list[PurchaseOrder]) -> dict[int, dict]:
 
 
 def _all_true(labels: list[dict], flag: str) -> bool:
+    """PO level: no receipts yet means nothing is waiting on a label."""
     return all(row[flag] for row in labels)
+
+
+def _labels_done(labels: list[dict], flag: str) -> bool:
+    """Line level: nothing printed, verified or posted until a label exists."""
+    return bool(labels) and all(row[flag] for row in labels)
 
 
 def _answered(saved: dict, code: str) -> bool:
@@ -292,9 +298,9 @@ def _line_steps(block: dict, labels: list[dict]) -> dict:
             block.get('saved_answers') or {},
         ),
         'received': received,
-        'print_label': _all_true(labels, 'print_label'),
-        'verify_label': _all_true(labels, 'verify_label'),
-        'posted': _all_true(labels, 'posted'),
+        'print_label': _labels_done(labels, 'print_label'),
+        'verify_label': _labels_done(labels, 'verify_label'),
+        'posted': _labels_done(labels, 'posted'),
         'labels': labels,
     }
 

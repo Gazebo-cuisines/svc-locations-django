@@ -394,6 +394,93 @@ class EntryPostingQueueTests(TestCase):
         self.assertEqual(out['source_document_type'], 'plan_requirement')
         self.assertEqual(out['source_document_id'], 91)
 
+    def test_queued_by_po_source_and_label_reprint_after_post(self):
+        entries = []
+        for _ in range(3):
+            entry = services.receipt(
+                idempotency_key=f'pq-po15-{uuid4()}',
+                lot=self.lot,
+                location_id=self.wh.id,
+                quantity=Decimal('10'),
+                unit_id=self.unit.id,
+                effective_at=timezone.now(),
+                counterparty_location_id=self.supplier.id,
+                defer_balance=True,
+                source_document_type='po',
+                source_document_id=15,
+            )
+            entry_posting.queue_entry(entry=entry)
+            entry_labels.create_entry_label(
+                entry=entry, label_format='pallet', label_count=1,
+            )
+            entries.append(entry)
+        other = services.receipt(
+            idempotency_key=f'pq-po16-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+            defer_balance=True,
+            source_document_type='po',
+            source_document_id=16,
+        )
+        entry_posting.queue_entry(entry=other)
+
+        listed = self.client.get(
+            '/stock/entries/queued/?source_document_id=15&entry_type=receipt',
+        )
+        self.assertEqual(listed.status_code, 200, listed.content)
+        data = listed.json()['data']
+        ids = [row['id'] for row in data['results']]
+        self.assertEqual(ids, [e.id for e in entries])
+        self.assertNotIn(other.id, ids)
+        self.assertEqual(data['count'], 3)
+        self.assertEqual(data['total'], 3)
+        self.assertFalse(data['has_more'])
+        self.assertEqual(
+            data['results'][0]['goods_in_label']['barcode'],
+            f'E{entries[0].id}',
+        )
+
+        # total counts every match; count/limit describe the page.
+        paged = self.client.get(
+            '/stock/entries/queued/?source_document_id=15&entry_type=receipt&limit=2',
+        )
+        pdata = paged.json()['data']
+        self.assertEqual(pdata['count'], 2)
+        self.assertEqual(pdata['total'], 3)
+        self.assertEqual(pdata['limit'], 2)
+        self.assertTrue(pdata['has_more'])
+
+        # Reprint still works once the entry is posted and off the queue.
+        target = entries[0]
+        verified = self.client.post(
+            f'/stock/entries/{target.id}/labels/verify/',
+            data=f'{{"code":"E{target.id}","post_stock":true}}',
+            content_type='application/json',
+        )
+        self.assertEqual(verified.status_code, 200, verified.content)
+        self.assertEqual(
+            verified.json()['data']['posting_status'],
+            StockEntryPostingStatus.POSTED,
+        )
+        gone = self.client.get(
+            '/stock/entries/queued/?source_document_id=15&entry_type=receipt',
+        )
+        self.assertNotIn(target.id, [r['id'] for r in gone.json()['data']['results']])
+        self.assertEqual(gone.json()['data']['total'], 2)
+
+        reprint = self.client.get(f'/stock/entries/{target.id}/label/')
+        self.assertEqual(reprint.status_code, 200, reprint.content)
+        rdata = reprint.json()['data']
+        self.assertEqual(rdata['goods_in_label']['barcode'], f'E{target.id}')
+        self.assertEqual(rdata['label']['status'], StockEntryLabelStatus.VERIFIED)
+
+        missing = self.client.get('/stock/entries/99999999/label/')
+        self.assertEqual(missing.status_code, 404)
+
     def test_fifo_override_required_and_listed_on_product(self):
         dest = Location.objects.create(id=76, name='PQ Belts 2', visible=True)
         soon = StockLot.objects.create(

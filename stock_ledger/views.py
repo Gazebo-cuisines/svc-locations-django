@@ -2296,6 +2296,12 @@ def entry_queued_list_api(request):
         StockEntryType.TRANSFER_OUT,
     ):
         return api_error('entry_type must be receipt or transfer_out.')
+    limit = max(1, min(limit, 500))
+    total = entry_posting.queued_receipts_qs(
+        entry_type=entry_type,
+        source_document_id=source_document_id,
+        location_id=location_id,
+    ).count()
     rows = entry_posting.list_queued_receipts(
         limit=limit,
         entry_type=entry_type,
@@ -2324,7 +2330,13 @@ def entry_queued_list_api(request):
         results.append(row)
     return api_success(
         'Queued receipts fetched.',
-        {'count': len(results), 'results': results},
+        {
+            'count': len(results),
+            'total': total,
+            'limit': limit,
+            'has_more': total > len(results),
+            'results': results,
+        },
     )
 
 @csrf_exempt
