@@ -130,13 +130,16 @@ def resolve_lot(
         'origin': origin,
         'supplier_lot_code': supplier_lot_code,
     }
-    try:
-        lot, _ = StockLot.objects.get_or_create(**lookup, defaults=defaults)
+    # MySQL unique keys ignore NULLs, so duplicate identities can exist — take the oldest.
+    lot = StockLot.objects.filter(**lookup).order_by('id').first()
+    if lot is not None:
         return lot
+    try:
+        return StockLot.objects.create(**lookup, **defaults)
     except IntegrityError as exc:
         if not _is_dup_entry(exc):
             raise
-        lot = StockLot.objects.filter(**lookup).first()
+        lot = StockLot.objects.filter(**lookup).order_by('id').first()
         if lot is None:
             raise
         return lot
