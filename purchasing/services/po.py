@@ -2,12 +2,13 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Count, Max, OuterRef, Prefetch, Q, Subquery
 
 from locations.models import Location, LocationRole
 from product.models import Product, ProductSupplier
 from purchasing.models import (
     PurchaseOrder,
+    PurchaseOrderDelivery,
     PurchaseOrderDeliveryStatus,
     PurchaseOrderHistoryEvent,
     PurchaseOrderLine,
@@ -503,10 +504,18 @@ def amend_purchase_order(po_id: int, *, body: dict, actor=None) -> PurchaseOrder
         raise PoValidationError(
             f'Purchase order status={po.status} cannot be amended.',
         )
-    if po.deliveries.filter(status=PurchaseOrderDeliveryStatus.OPEN).exists():
-        raise PoValidationError(
-            'Finish or cancel the open delivery before amending this PO.',
-        )
+    open_delivery = po.deliveries.filter(
+        status=PurchaseOrderDeliveryStatus.OPEN,
+    ).first()
+    if open_delivery is not None:
+        booked = open_delivery.lines.filter(
+            Q(qty_received__gt=0) | Q(qty_rejected__gt=0),
+        ).exists()
+        if not booked:
+            raise PoValidationError(
+                f'Delivery {open_delivery.id} is still open. Cancel it, '
+                f'then amend this PO.',
+            )
     if body.get('status') not in (None, ''):
         raise PoValidationError('status cannot change via amend.')
 
@@ -549,6 +558,22 @@ def get_purchase_order(po_id: int) -> PurchaseOrder:
 def list_purchase_orders(*, status=None, supplier_id=None, sage_po_number=None):
     qs = PurchaseOrder.objects.select_related(
         'supplier', 'ship_to_location',
+    ).annotate(
+        # distinct=True: joining lines and deliveries together multiplies rows.
+        line_count=Count('lines', distinct=True),
+        received_line_count=Count(
+            'lines',
+            filter=Q(lines__qty_balance=0) | Q(lines__line_closed=True),
+            distinct=True,
+        ),
+        delivery_count=Count('deliveries', distinct=True),
+        last_delivery_at_agg=Max('deliveries__delivery_at'),
+        open_delivery_id=Subquery(
+            PurchaseOrderDelivery.objects.filter(
+                purchase_order_id=OuterRef('pk'),
+                status=PurchaseOrderDeliveryStatus.OPEN,
+            ).values('id')[:1],
+        ),
     ).order_by('-id')
     if status not in (None, ''):
         statuses = [

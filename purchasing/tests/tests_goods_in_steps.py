@@ -26,6 +26,7 @@ from purchasing.services.goods_in_form import resolve_goods_in_form
 from purchasing.services.header_qc import submit_header_qc
 from purchasing.services.line_qc import submit_line_qc
 from purchasing.services.receive import receive_purchase_order
+from stock_ledger.models import StockEntryPosting
 from stock_ledger.util.entry_labels import mark_printed
 
 
@@ -153,6 +154,108 @@ class GoodsInStepsTests(TestCase):
         self.assertTrue(done_line['posted'])
         self.assertEqual(done['steps']['current'], 'done')
         self.assertEqual(done['answers']['lines'][str(self.line.id)]['qty_queued'], '0')
+
+    def _receive_first_truck(self) -> tuple[int, int]:
+        """Queue 1 of 2 units, then send the truck away. Returns (delivery, entry)."""
+        data = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'finish_delivery': True,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'idempotency_key': f'step-d1-{uuid4()}',
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                    'shortfall_reason': 'split_pallet',
+                }],
+            },
+        )
+        return data['delivery_id'], data['receive_results'][0]['stock_entry_id']
+
+    def _qc_delivery(self, delivery_id: int) -> None:
+        submit_header_qc(
+            self.po.id,
+            delivery_id=delivery_id,
+            body={
+                'checked_by_user_id': 1,
+                'answers': {
+                    'damaged_product': {'value': False},
+                    'reject_delivery': {'value': False},
+                },
+            },
+        )
+        submit_line_qc(
+            self.po.id,
+            self.line.id,
+            delivery_id=delivery_id,
+            body={
+                'checked_by_user_id': 1,
+                'answers': {'spec_check': {'value': True}},
+            },
+        )
+
+    def test_second_delivery_starts_clean_and_first_keeps_its_labels(self):
+        d1_id, entry_id = self._receive_first_truck()
+        d2 = create_delivery(self.po.id)
+        self._qc_delivery(d2.id)
+
+        second = resolve_goods_in_form(self.po.id, delivery_id=d2.id)
+        line_steps = second['steps']['lines'][0]
+        self.assertEqual(line_steps['labels'], [])
+        self.assertFalse(line_steps['received'])
+        self.assertFalse(line_steps['print_label'])
+        self.assertFalse(line_steps['verify_label'])
+        self.assertFalse(line_steps['posted'])
+        self.assertEqual(second['steps']['current'], 'received')
+
+        first = resolve_goods_in_form(self.po.id, delivery_id=d1_id)
+        first_labels = first['steps']['lines'][0]['labels']
+        self.assertEqual([row['entry_id'] for row in first_labels], [entry_id])
+        self.assertTrue(first['steps']['lines'][0]['received'])
+
+    def test_per_delivery_qty_use_by_and_line_closed_on_lines(self):
+        d1_id, _ = self._receive_first_truck()
+        first = resolve_goods_in_form(self.po.id, delivery_id=d1_id)
+        block = first['lines'][0]
+        self.assertEqual(block['delivery_qty_received'], '1')
+        self.assertEqual(block['qty_received'], '0')
+        self.assertEqual(block['use_by'], self.line.use_by.isoformat())
+        self.assertFalse(block['line_closed'])
+
+        d2 = create_delivery(self.po.id)
+        second = resolve_goods_in_form(self.po.id, delivery_id=d2.id)
+        second_block = second['lines'][0]
+        self.assertEqual(second_block['delivery_qty_received'], '0')
+        self.assertEqual(second_block['use_by'], self.line.use_by.isoformat())
+
+    def test_unstamped_posting_still_lands_on_its_own_delivery(self):
+        d1_id, entry_id = self._receive_first_truck()
+        posting = StockEntryPosting.objects.get(stock_entry_id=entry_id)
+        posting.meta = {
+            key: value for key, value in posting.meta.items() if key != 'delivery_id'
+        }
+        posting.save(update_fields=['meta'])
+
+        d2 = create_delivery(self.po.id)
+        first = resolve_goods_in_form(self.po.id, delivery_id=d1_id)
+        second = resolve_goods_in_form(self.po.id, delivery_id=d2.id)
+        self.assertEqual(
+            [row['entry_id'] for row in first['steps']['lines'][0]['labels']],
+            [entry_id],
+        )
+        self.assertEqual(second['steps']['lines'][0]['labels'], [])
+
+    def test_po_list_flags_stay_true_before_any_receipt(self):
+        listed = Client().get(f'/purchasing/pos/?supplier_id={self.supplier.id}')
+        self.assertEqual(listed.status_code, 200, listed.content)
+        row = next(
+            item for item in listed.json()['data']['results'] if item['id'] == self.po.id
+        )
+        self.assertTrue(row['steps']['print_label'])
+        self.assertTrue(row['steps']['verify_label'])
+        self.assertEqual(row['steps']['queued_label_count'], 0)
 
     def test_header_and_line_check_flags_are_per_question(self):
         delivery = create_delivery(self.po.id)

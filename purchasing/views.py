@@ -30,6 +30,7 @@ from purchasing.services.attachments import (
 )
 from purchasing.services.delivery import (
     DeliveryError,
+    cancel_delivery,
     create_delivery,
     delivery_list_dict,
     get_delivery,
@@ -40,6 +41,7 @@ from purchasing.services.delivery import (
 from purchasing.services.checklist import adhoc_checklist, delivery_checklist
 from purchasing.services.goods_in_form import (
     GoodsInFormError,
+    delivery_label_counts,
     po_list_steps_map,
     resolve_goods_in_form,
 )
@@ -425,6 +427,26 @@ def po_delivery_header_qc_unblock_api(request, po_id: int, delivery_id: int):
 
 
 @csrf_exempt
+@require_http_methods(['POST'])
+def po_delivery_cancel_api(request, po_id: int, delivery_id: int):
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    try:
+        data = cancel_delivery(
+            po_id,
+            delivery_id,
+            reason=body.get('reason') or '',
+            actor=actor_json(request, user_id=body.get('cancelled_by_user_id')),
+        )
+    except DeliveryError as exc:
+        msg = str(exc)
+        status = 404 if 'not found' in msg.lower() else 400
+        return api_error(msg, status_code=status)
+    return api_success('Delivery cancelled successfully.', data)
+
+
+@csrf_exempt
 @require_http_methods(['GET', 'POST'])
 def po_delivery_collection_api(request, po_id: int):
     if request.method == 'GET':
@@ -434,11 +456,15 @@ def po_delivery_collection_api(request, po_id: int):
             msg = str(exc)
             status = 404 if 'not found' in msg.lower() else 400
             return api_error(msg, status_code=status)
+        label_counts = delivery_label_counts(po_id, [row.id for row in rows])
         return api_success(
             'Deliveries fetched successfully.',
             {
                 'count': len(rows),
-                'results': [delivery_list_dict(row) for row in rows],
+                'results': [
+                    {**delivery_list_dict(row), **label_counts[row.id]}
+                    for row in rows
+                ],
             },
         )
     try:

@@ -68,6 +68,26 @@
       }
     },
     {
+      "name": "Goods out form (steps)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/goods-out/form/?location_id={{location_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["stock", "goods-out", "form", ""],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "description": "Source warehouse"
+            }
+          ]
+        },
+        "description": "### Goods out form (without plan)\n\n`GET /stock/goods-out/form/`\n\nWizard flags for **Goods Out without plan** — not goods-in. Floor process:\n\n1. **Find** — scan a GI sticker or search/pick the product\n2. **Qty** — enter cases or free kg\n3. **FIFO** — review suggested bags (oldest first)\n4. **Scan** — scan those stickers into the cart until the target is met\n5. **Queue** — `POST /stock/transfer/`\n6. **Print** — print the Goods OUT label and attach it\n7. **Verify** — scan the OUT sticker to post stock\n\nGreen rail is Find → Qty → FIFO → Scan (`steps.rail`). Print / verify are the screens after queue. Find–Scan live on the client until queue; the server only sees them as done once a transfer is queued.\n\nGroups today's queued + posted `goods_out_adhoc` transfer-out stickers by product.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | yes | Source warehouse |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`message`: `Goods out form resolved successfully.`\n\n`data`:\n\n| Field | Meaning |\n| --- | --- |\n| `location_id` / `location_name` | Warehouse |\n| `steps.rail` | `[find, qty, fifo, scan]` |\n| `steps.current` | `find` / `qty` / `fifo` / `scan` / `queue` / `print` / `verify` / `done` |\n| `steps.lines[]` | Per product: `line_id` = `product_id`, rail+queue+print+verify bools, `labels[]` |\n| `answers.lines` | Keyed by product id: `qty_queued`, `qty_issued` |\n\nEmpty warehouse (nothing queued today) returns `current=find` and `lines=[]`.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Form resolved |\n| 400 | Missing / non-integer `location_id` |\n| 404 | Location not found |"
+      }
+    },
+    {
       "name": "Scan bag for Goods Out (FIFO + auto dest)",
       "request": {
         "method": "GET",

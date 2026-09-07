@@ -225,20 +225,24 @@ def queued_step_flags(entry: StockEntry) -> dict:
     }
 
 
-def list_queued_receipts(
+def queued_receipts_qs(
     *,
-    limit: int = 100,
     entry_type: str | None = None,
     source_document_id: int | None = None,
     location_id: int | None = None,
-) -> list[StockEntry]:
-    limit = max(1, min(int(limit), 500))
+):
     qs = (
         StockEntry.objects
         .select_related(
             'lot__product', 'unit', 'location', 'label', 'posting',
             'counterparty_location', 'source_entry',
+            # entry_dict reads the shape mapping and its units on every row.
+            'lot__shape_format',
+            'lot__product_supplier__outer_unit',
+            'lot__product_supplier__inner_unit',
+            'lot__product_supplier__purchase_shape_format',
         )
+        .prefetch_related('label__scans')
         .filter(posting__status=StockEntryPostingStatus.QUEUED)
         .order_by('posting__queued_at', 'id')
     )
@@ -250,4 +254,22 @@ def list_queued_receipts(
         qs = qs.filter(source_document_id=source_document_id)
     if location_id is not None:
         qs = qs.filter(location_id=location_id)
-    return list(qs[:limit])
+    return qs
+
+
+def list_queued_receipts(
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    entry_type: str | None = None,
+    source_document_id: int | None = None,
+    location_id: int | None = None,
+) -> list[StockEntry]:
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+    qs = queued_receipts_qs(
+        entry_type=entry_type,
+        source_document_id=source_document_id,
+        location_id=location_id,
+    )
+    return list(qs[offset:offset + limit])

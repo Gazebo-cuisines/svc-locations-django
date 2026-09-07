@@ -15,8 +15,13 @@ from stock_ledger.models import (
     StockEntryPostingStatus,
     StockEntryType,
 )
-from stock_ledger.util import entry_labels, entry_posting
 from stock_ledger.util.conversions import StockValidationError, stock_to_kg, stock_to_packs
+from stock_ledger.util.goods_out_form import (
+    PLAN_ORDER,
+    form_steps,
+    label_row,
+    plan_line_steps,
+)
 
 
 def _dec(value) -> str | None:
@@ -101,7 +106,7 @@ def issue_qty_by_requirement(
     return issued_by, queued_by
 
 
-def _queued_out_steps_by_req(req_ids: list[int]) -> dict[int, list[dict]]:
+def _out_steps_by_req(req_ids: list[int]) -> dict[int, list[dict]]:
     if not req_ids:
         return {}
     rows = (
@@ -111,28 +116,15 @@ def _queued_out_steps_by_req(req_ids: list[int]) -> dict[int, list[dict]]:
             source_document_type='plan_requirement',
             source_document_id__in=req_ids,
             reversed_by__isnull=True,
-            posting__status=StockEntryPostingStatus.QUEUED,
         )
+        .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
         .select_related('label', 'posting')
         .order_by('id')
     )
     by_req: dict[int, list[dict]] = {}
     for entry in rows:
-        by_req.setdefault(entry.source_document_id, []).append({
-            'entry_id': entry.id,
-            'entry_code': entry_labels.entry_code(entry.id),
-            **entry_posting.queued_step_flags(entry),
-        })
+        by_req.setdefault(entry.source_document_id, []).append(label_row(entry))
     return by_req
-
-
-def _line_steps(labels: list[dict]) -> dict:
-    return {
-        'print_label': all(row['print_label'] for row in labels),
-        'verify_label': all(row['verify_label'] for row in labels),
-        'posted': all(row['posted'] for row in labels),
-        'labels': labels,
-    }
 
 
 def _attach_issue_progress(lines: list[dict]) -> None:
@@ -141,7 +133,7 @@ def _attach_issue_progress(lines: list[dict]) -> None:
         rid for line in lines for rid in (line.get('requirement_ids') or [])
     ]
     issued_by, queued_by = issue_qty_by_requirement(req_ids)
-    steps_by_req = _queued_out_steps_by_req(req_ids)
+    steps_by_req = _out_steps_by_req(req_ids)
     for line in lines:
         ids = line.get('requirement_ids') or []
         issued = sum((issued_by[i] for i in ids), Decimal('0'))
@@ -181,12 +173,13 @@ def _attach_issue_progress(lines: list[dict]) -> None:
         line['queued_quantity'] = _dec(queued)
         line['remaining_quantity'] = _dec(remaining)
         line['status'] = status
+        line['line_id'] = ids[0] if ids else None
         labels = [
             row
             for rid in ids
             for row in steps_by_req.get(rid, [])
         ]
-        line['steps'] = _line_steps(labels)
+        line['steps'] = plan_line_steps(line_id=line['line_id'], labels=labels)
         line['answers'] = {
             'qty_queued': line['queued_quantity'],
             'qty_issued': line['issued_quantity'],
@@ -316,9 +309,19 @@ def build_picking_list(
         )
     ]
 
+    payload = form_steps(
+        [row['steps'] for row in lines],
+        {
+            str(row['line_id']): row['answers']
+            for row in lines
+            if row.get('line_id') is not None
+        },
+        order=PLAN_ORDER,
+    )
     return {
         'from_location': from_location,
         'to_location': to_location,
         'lines': lines,
         'by_department': by_department,
+        **payload,
     }

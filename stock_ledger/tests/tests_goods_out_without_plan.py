@@ -15,7 +15,7 @@ from stock_ledger.models import (
     StockLot,
     StockLotOrigin,
 )
-from stock_ledger.util import services
+from stock_ledger.util import entry_posting, services  # noqa: F401
 
 
 class GoodsOutWithoutPlanTests(TestCase):
@@ -384,3 +384,51 @@ class GoodsOutWithoutPlanTests(TestCase):
         )
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertIn('lines cannot be combined', resp.json()['message'])
+
+    def test_goods_out_form_steps_after_queue(self):
+        empty = self.client.get(
+            f'/stock/goods-out/form/?location_id={self.wh.id}',
+        )
+        self.assertEqual(empty.status_code, 200, empty.content)
+        self.assertEqual(empty.json()['data']['steps']['current'], 'find')
+        self.assertEqual(empty.json()['data']['steps']['rail'], [
+            'find', 'qty', 'fifo', 'scan',
+        ])
+        self.assertEqual(empty.json()['data']['steps']['lines'], [])
+
+        queued = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-form-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'quantity': '25',
+                'unit_id': self.unit.id,
+                'queue_stock': True,
+                'source_entry_id': self.entry.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(queued.status_code, 201, queued.content)
+        out_id = queued.json()['data']['out']['id']
+
+        form = self.client.get(
+            f'/stock/goods-out/form/?location_id={self.wh.id}',
+        )
+        self.assertEqual(form.status_code, 200, form.content)
+        data = form.json()['data']
+        self.assertEqual(data['steps']['current'], 'print')
+        line = data['steps']['lines'][0]
+        self.assertEqual(line['line_id'], self.product.id)
+        self.assertTrue(line['find'])
+        self.assertTrue(line['qty'])
+        self.assertTrue(line['fifo'])
+        self.assertTrue(line['scan'])
+        self.assertTrue(line['queue'])
+        self.assertFalse(line['print'])
+        self.assertFalse(line['verify'])
+        self.assertEqual(line['labels'][0]['entry_id'], out_id)
+        self.assertEqual(
+            data['answers']['lines'][str(self.product.id)]['qty_queued'],
+            '25.000000',
+        )

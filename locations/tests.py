@@ -1,11 +1,19 @@
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
-from django.test import SimpleTestCase
+from django.db import connection
+from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.test.utils import CaptureQueriesContext
 
-from locations.models import Location, LocationRelationType
+from locations.models import (
+    Location,
+    LocationRelationType,
+    LocationRole,
+    LocationRoleAssignment,
+)
 from locations.services.hierarchy import assert_valid_edge
 from locations.services.location_tree import build_location_tree
+from locations.views.location_views import location_list_api
 
 
 class HierarchyValidationTests(SimpleTestCase):
@@ -74,3 +82,20 @@ class LocationTreeBuildTests(SimpleTestCase):
         self.assertEqual(len(tree[0]['children']), 1)
         self.assertEqual(tree[0]['children'][0]['id'], mid.id)
         self.assertEqual(tree[0]['children'][0]['children'][0]['id'], leaf.id)
+
+
+class LocationListPrefetchTests(TestCase):
+    def test_list_query_count_does_not_grow_with_rows(self):
+        for i in range(12):
+            loc = Location.objects.create(
+                id=3100 + i, name=f'Prefetch {i}', visible=True,
+            )
+            LocationRoleAssignment.objects.create(
+                location=loc, role=LocationRole.STORAGE,
+            )
+        with CaptureQueriesContext(connection) as ctx:
+            resp = location_list_api(
+                RequestFactory().get('/container/locations/'),
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertLessEqual(len(ctx.captured_queries), 10)

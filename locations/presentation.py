@@ -28,8 +28,8 @@ def location_list_dict(location: Location) -> dict:
         'visible': location.visible,
         'static': location.static,
         'locked': location.locked,
-        'roles': list(location.roles.values_list('role', flat=True)),
-        'features': list(location.features.values_list('feature', flat=True)),
+        'roles': [row.role for row in location.roles.all()],
+        'features': [row.feature for row in location.features.all()],
         'image_key': location.image_key,
         'image_url': location_image_url(location),
     }

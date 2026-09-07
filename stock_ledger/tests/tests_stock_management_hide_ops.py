@@ -185,6 +185,14 @@ class StockManagementHideOpsTests(TestCase):
         entry_ids = {row['entry_id'] for row in timeline.json()['data']['items']}
         self.assertIn(self.posted.id, entry_ids)
 
+    def test_audit_timeline_batches_device_codes(self):
+        with patch('stock_ledger.views.codes_for_serials', return_value={}) as mocked:
+            resp = self.client.get(
+                f'/stock/audit/timeline/?product_id={self.product.id}',
+            )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(mocked.call_count, 1)
+
     def _me_activity(self, user):
         with patch('users_rbac.auth.attach_user') as mock_attach:
             def _set_user(request, **kwargs):
@@ -207,6 +215,7 @@ class StockManagementHideOpsTests(TestCase):
         self.assertFalse(row['is_live'])
         self.assertTrue(row['is_removed'])
         self.assertTrue(row['manager_removed'])
+        self.assertFalse(row['user_cancelled'])
         self.assertEqual(row['remove_reason'], 'Wrong label')
         self.assertEqual(row['entry_code'], f'E{self.posted.id}')
         self.assertEqual(row['ui_status'], 'removed')
@@ -235,4 +244,6 @@ class StockManagementHideOpsTests(TestCase):
         )
         self.assertFalse(row['is_live'])
         self.assertTrue(row['manager_removed'])
+        self.assertFalse(row['user_cancelled'])
+        self.assertEqual(row['ui_status'], 'removed')
         self.assertEqual(row['remove_reason'], 'Wrong label')

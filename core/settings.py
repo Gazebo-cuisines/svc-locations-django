@@ -182,6 +182,9 @@ AWS_PROFILE = os.getenv('AWS_PROFILE')
 AWS_DEFAULT_REGION = os.getenv('AWS_DEFAULT_REGION', 'eu-west-2')
 SES_FROM_EMAIL = os.getenv('SES_FROM_EMAIL', '')
 SES_LOGO_PATH = os.getenv('SES_LOGO_PATH', '')
+BEDROCK_REGION = os.getenv('BEDROCK_REGION', '')
+BEDROCK_AGENT_ID = os.getenv('BEDROCK_AGENT_ID', '')
+BEDROCK_AGENT_ALIAS_ID = os.getenv('BEDROCK_AGENT_ALIAS_ID', 'TSTALIASID')
 # Public API origin for one-click email unsubscribe links
 PUBLIC_API_BASE_URL = os.getenv(
     'PUBLIC_API_BASE_URL',

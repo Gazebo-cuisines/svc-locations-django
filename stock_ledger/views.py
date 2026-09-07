@@ -48,6 +48,10 @@ from stock_ledger.util import (
     stickers,
     stock_units,
 )
+from stock_ledger.util.goods_out_form import (
+    GoodsOutFormError,
+    resolve_adhoc_goods_out_form,
+)
 from stock_ledger.util.allocation_status import (
     STATUS_COMPLETE,
     STATUS_INCOMPLETE,
@@ -356,10 +360,15 @@ def entry_dict(entry: StockEntry) -> dict:
     }
 
 
-def audit_event_dict(entry: StockEntry) -> dict:
+def audit_event_dict(entry: StockEntry, device_codes: dict | None = None) -> dict:
     lot = entry.lot
     product = lot.product
     posting = entry_posting.get_posting(entry)
+    codes = (
+        device_codes
+        if device_codes is not None
+        else codes_for_serials([entry.device_serial])
+    )
     row = {
         'entry_id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),
@@ -396,7 +405,7 @@ def audit_event_dict(entry: StockEntry) -> dict:
         'source_workstation': entry.source_workstation,
         'source_workstation_ip': entry.source_workstation_ip,
         'device_serial': entry.device_serial,
-        'device_code': codes_for_serials([entry.device_serial]).get(entry.device_serial),
+        'device_code': codes.get(entry.device_serial),
         'posting_status': posting.status if posting is not None else None,
     }
     label = entry_labels.get_label(entry)
@@ -1714,6 +1723,24 @@ def goods_out_suggest_api(request):
 
 
 @csrf_exempt
+@require_GET
+def goods_out_form_api(request):
+    """Without-plan wizard: Find → Qty → FIFO → Scan → Queue → Print → Verify."""
+    raw = request.GET.get('location_id')
+    if raw in (None, ''):
+        return api_error('location_id is required.')
+    try:
+        location_id = int(raw)
+    except (TypeError, ValueError):
+        return api_error('location_id must be an integer.')
+    try:
+        data = resolve_adhoc_goods_out_form(location_id)
+    except GoodsOutFormError as exc:
+        return api_error(str(exc), status_code=404)
+    return api_success('Goods out form resolved successfully.', data)
+
+
+@csrf_exempt
 @require_http_methods(['POST'])
 @gate_warehouse_write()
 def transfer_api(request):
@@ -2280,6 +2307,7 @@ def entry_queued_list_api(request):
     """Inbox: queued receipts and transfer_out waiting for print/verify/post."""
     try:
         limit = int(request.GET.get('limit') or 100)
+        offset = int(request.GET.get('offset') or 0)
         entry_type = request.GET.get('entry_type') or None
         raw_src = request.GET.get('source_document_id')
         raw_loc = request.GET.get('location_id')
@@ -2289,15 +2317,24 @@ def entry_queued_list_api(request):
         location_id = int(raw_loc) if raw_loc not in (None, '') else None
     except (TypeError, ValueError):
         return api_error(
-            'limit, source_document_id, and location_id must be integers.',
+            'limit, offset, source_document_id, and location_id must be integers.',
         )
     if entry_type and entry_type not in (
         StockEntryType.RECEIPT,
         StockEntryType.TRANSFER_OUT,
     ):
         return api_error('entry_type must be receipt or transfer_out.')
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    preload_kg_factors()
+    total = entry_posting.queued_receipts_qs(
+        entry_type=entry_type,
+        source_document_id=source_document_id,
+        location_id=location_id,
+    ).count()
     rows = entry_posting.list_queued_receipts(
         limit=limit,
+        offset=offset,
         entry_type=entry_type,
         source_document_id=source_document_id,
         location_id=location_id,
@@ -2324,7 +2361,14 @@ def entry_queued_list_api(request):
         results.append(row)
     return api_success(
         'Queued receipts fetched.',
-        {'count': len(results), 'results': results},
+        {
+            'count': len(results),
+            'total': total,
+            'limit': limit,
+            'offset': offset,
+            'has_more': offset + len(results) < total,
+            'results': results,
+        },
     )
 
 @csrf_exempt
@@ -2386,7 +2430,9 @@ def audit_timeline_api(request):
         return api_error(str(exc), status_code=400)
 
     count = qs.count()
-    rows = [audit_event_dict(entry) for entry in qs[row_offset : row_offset + row_limit]]
+    entries = list(qs[row_offset : row_offset + row_limit])
+    device_codes = codes_for_serials(entry.device_serial for entry in entries)
+    rows = [audit_event_dict(entry, device_codes) for entry in entries]
     return api_success(
         'Stock audit timeline fetched.',
         {

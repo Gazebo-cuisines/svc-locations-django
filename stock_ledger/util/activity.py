@@ -103,12 +103,14 @@ def entry_activity_flags(entry: StockEntry) -> dict:
 
     is_live=False when cancelled (unposted) or reversed (posted).
     manager_removed=True when Stock Management Tool did the remove.
+    user_cancelled=True when the operator cancelled a queued posting.
     """
     flags = {
         'entry_code': entry_labels.entry_code(entry.id),
         'is_live': True,
         'is_removed': False,
         'manager_removed': False,
+        'user_cancelled': False,
         'remove_reason': None,
         'removed_at': None,
         'removed_by_user_id': None,
@@ -122,13 +124,20 @@ def entry_activity_flags(entry: StockEntry) -> dict:
     ):
         flags['is_live'] = False
         flags['is_removed'] = True
+        flags['removed_at'] = (
+            posting.cancelled_at.isoformat() if posting.cancelled_at else None
+        )
         mgr = _manager_meta(posting)
         if mgr:
             flags['manager_removed'] = True
             flags['remove_reason'] = mgr.get('reason')
-            flags['removed_at'] = mgr.get('removed_at')
+            flags['removed_at'] = mgr.get('removed_at') or flags['removed_at']
             flags['removed_by_user_id'] = mgr.get('actor_user_id')
             flags['removed_by_name'] = mgr.get('lan_username')
+        else:
+            flags['user_cancelled'] = True
+            flags['removed_by_user_id'] = posting.actor_user_id or entry.actor_user_id
+            flags['removed_by_name'] = posting.lan_username or entry.lan_username
         return flags
 
     reversal = None
@@ -170,10 +179,12 @@ def entry_activity_status(entry: StockEntry, *, flags: dict | None = None) -> di
     posting_status = posting.status if posting is not None else None
     label_status = label.status if label is not None else None
 
-    if flags['is_removed']:
+    if flags['manager_removed']:
         ui_status = 'removed'
-    elif posting_status == StockEntryPostingStatus.CANCELLED:
+    elif flags['user_cancelled'] or posting_status == StockEntryPostingStatus.CANCELLED:
         ui_status = 'cancelled'
+    elif flags['is_removed']:
+        ui_status = 'removed'
     elif posting_status == StockEntryPostingStatus.QUEUED:
         ui_status = 'queued'
     elif posting_status == StockEntryPostingStatus.POSTED:
