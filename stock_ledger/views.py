@@ -97,6 +97,7 @@ from stock_ledger.util.timeline import (
     consolidate_audit_items,
     expand_split_siblings,
     po_numbers_for_entries,
+    posted_history_qs,
     receive_group_key,
 )
 from stock_ledger.util.closing_stock_email import (
@@ -2480,6 +2481,89 @@ def audit_timeline_api(request):
             'order': 'recorded_at_desc',
             'view': view,
         },
+    )
+
+
+_GOODS_OUT_HISTORY_TYPES = (
+    StockEntryType.ISSUE,
+    StockEntryType.TRANSFER_OUT,
+)
+
+
+def _product_movement_history(
+    request,
+    product_id: int,
+    *,
+    entry_types: tuple[str, ...],
+    kind: str,
+    message: str,
+):
+    if not Product.objects.filter(pk=product_id).exists():
+        return api_error('Product not found.', status_code=404)
+    try:
+        location_id = request.GET.get('location_id')
+        loc_id = int(location_id) if location_id not in (None, '') else None
+        limit = request.GET.get('limit')
+        offset = request.GET.get('offset')
+        row_limit = int(limit) if limit not in (None, '') else 200
+        row_limit = max(1, min(row_limit, 1000))
+        row_offset = int(offset) if offset not in (None, '') else 0
+        if row_offset < 0:
+            raise ValueError('offset must be >= 0.')
+    except (TypeError, ValueError) as exc:
+        return api_error(str(exc), status_code=400)
+
+    qs = posted_history_qs(
+        product_id=product_id,
+        entry_types=entry_types,
+        location_id=loc_id,
+    )
+    count = qs.count()
+    entries = list(qs[row_offset : row_offset + row_limit])
+    entries, page_ids = expand_split_siblings(qs, entries)
+    device_codes = codes_for_serials(entry.device_serial for entry in entries)
+    po_numbers = po_numbers_for_entries(entries)
+    rows = consolidate_audit_items(
+        [audit_event_dict(entry, device_codes, po_numbers) for entry in entries],
+        page_ids=page_ids,
+    )
+    return api_success(
+        message,
+        {
+            'kind': kind,
+            'items': rows,
+            'count': count,
+            'limit': row_limit,
+            'offset': row_offset,
+            'has_more': row_offset + row_limit < count,
+            'order': 'recorded_at_desc',
+        },
+    )
+
+
+@csrf_exempt
+@require_GET
+def product_goods_in_history_api(request, product_id: int):
+    """Posted receipts for a product. Queued stickers stay on the Queue tab."""
+    return _product_movement_history(
+        request,
+        product_id,
+        entry_types=(StockEntryType.RECEIPT,),
+        kind='goods_in',
+        message='Goods in history fetched.',
+    )
+
+
+@csrf_exempt
+@require_GET
+def product_goods_out_history_api(request, product_id: int):
+    """Posted issues and warehouse transfer_out. No transfer_in or recon."""
+    return _product_movement_history(
+        request,
+        product_id,
+        entry_types=_GOODS_OUT_HISTORY_TYPES,
+        kind='goods_out',
+        message='Goods out history fetched.',
     )
 
 

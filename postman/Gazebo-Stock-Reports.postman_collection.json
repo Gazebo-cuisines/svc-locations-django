@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Gazebo - Stock Reports",
-    "description": "Sage-style stock criteria reports backed by `stock_entry`, plus daily closing-stock email recipients (AWS SES).\n\n**Domain:** goods in (receipts), goods out (issues), closing stock as-of date, operator activity (manager day overview), report email recipients.\n\n**Tables:** `stock_entry`, `stock_entry_posting`, `stock_entry_label_scan`, `rbac_user`; `stock_report_email_recipient`.\n\n**Vars:** `{{base_url}}`, `{{date_from}}`, `{{date_to}}`, `{{as_of}}`, `{{date}}`, `{{from_time}}`, `{{user_id}}`, `{{product_id}}`, `{{location_id}}`, `{{recipient_id}}`",
+    "description": "Sage-style stock criteria reports backed by `stock_entry`, plus daily closing-stock email recipients (AWS SES), plus product GI/GO history (posted only, box groups collapsed).\n\n**Domain:** goods in (receipts), goods out (issues), closing stock as-of date, operator activity (manager day overview), report email recipients, product movement history.\n\n**Tables:** `stock_entry`, `stock_entry_posting`, `stock_entry_label_scan`, `rbac_user`; `stock_report_email_recipient`.\n\n**Vars:** `{{base_url}}`, `{{date_from}}`, `{{date_to}}`, `{{as_of}}`, `{{date}}`, `{{from_time}}`, `{{user_id}}`, `{{product_id}}`, `{{location_id}}`, `{{recipient_id}}`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -47,6 +47,90 @@
     }
   ],
   "item": [
+    {
+      "name": "Product goods in history",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/products/{{product_id}}/history/goods-in/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "products",
+            "{{product_id}}",
+            "history",
+            "goods-in",
+            ""
+          ],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "disabled": true,
+              "description": "Optional: one warehouse"
+            },
+            {
+              "key": "limit",
+              "value": "200",
+              "disabled": true,
+              "description": "Optional page size 1–1000 (default 200)"
+            },
+            {
+              "key": "offset",
+              "value": "0",
+              "disabled": true,
+              "description": "Optional skip for paging"
+            }
+          ]
+        },
+        "description": "### Product goods in history\n\n`GET /stock/products/:product_id/history/goods-in/`\n\nPosted receipts for one product, newest first. Queued labels stay on the Queue tab. Split box receipts (`:u:1..N`) collapse to one parent with `units[]`. Use this on the product Move → Goods In grid instead of `/stock/audit/timeline/`.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `product_id` | yes | Product PK |\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | Restrict to one location |\n| `limit` | no | Max ledger rows before collapse, default 200, max 1000 |\n| `offset` | no | Skip that many ledger rows |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods in history fetched.\", data: { kind: \"goods_in\", items: [ { entry_id, entry_code, at, quantity, quantity_base, pack_quantity, location_name, trace_number, po_number, lan_username, posting_status, is_live, unit_count, units: [ { entry_id, entry_code, quantity, posting_status, is_live } ] } ], count, limit, offset, has_more, order } }`\n\n`items` are consolidated parents. Queued/cancelled/reversed receipts are omitted.\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including empty `items`) |\n| 400 | Bad `location_id` / `limit` / `offset` |\n| 404 | Unknown `product_id` |"
+      }
+    },
+    {
+      "name": "Product goods out history",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/stock/products/{{product_id}}/history/goods-out/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "stock",
+            "products",
+            "{{product_id}}",
+            "history",
+            "goods-out",
+            ""
+          ],
+          "query": [
+            {
+              "key": "location_id",
+              "value": "{{location_id}}",
+              "disabled": true,
+              "description": "Optional: source warehouse"
+            },
+            {
+              "key": "limit",
+              "value": "200",
+              "disabled": true,
+              "description": "Optional page size 1–1000 (default 200)"
+            },
+            {
+              "key": "offset",
+              "value": "0",
+              "disabled": true,
+              "description": "Optional skip for paging"
+            }
+          ]
+        },
+        "description": "### Product goods out history\n\n`GET /stock/products/:product_id/history/goods-out/`\n\nPosted warehouse goods-out for one product: `issue` and `transfer_out`. Newest first. Omits `transfer_in`, count adjustments, and queued picks. Split box outs collapse like goods-in.\n\n**Path parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `product_id` | yes | Product PK |\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | Restrict to one source location |\n| `limit` | no | Max ledger rows before collapse, default 200, max 1000 |\n| `offset` | no | Skip that many ledger rows |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status: \"success\", message: \"Goods out history fetched.\", data: { kind: \"goods_out\", items: [ { entry_id, entry_code, action, quantity, location_name, counterparty_location_name, trace_number, lan_username, posting_status, is_live, units } ], count, limit, offset, has_more, order } }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success (including empty `items`) |\n| 400 | Bad `location_id` / `limit` / `offset` |\n| 404 | Unknown `product_id` |"
+      }
+    },
     {
       "name": "Goods in report",
       "request": {

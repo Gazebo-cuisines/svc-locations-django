@@ -56,6 +56,12 @@ urlpatterns = [
     path('scan/', views.scan_resolve_api, name='stock-scan'),
     path('recall/', views.recall_api, name='stock-recall'),
     path('products/<int:product_id>/genealogy/', views.product_genealogy_api, name='stock-product-genealogy'),
+    
+    # goods in history ( only posted stock movements)
+    path('products/<int:product_id>/history/goods-in/', views.product_goods_in_history_api, name='stock-product-history-goods-in'),
+    # goods out history ( only posted stock movements)
+    path('products/<int:product_id>/history/goods-out/', views.product_goods_out_history_api, name='stock-product-history-goods-out'),
+    
     path('products/<int:product_id>/label/', views.product_label_api, name='stock-product-label'),
     path('entries/<int:entry_id>/label/', views.entry_label_api, name='stock-entry-label'),
     path('entries/<int:entry_id>/labels/print/', views.entry_label_print_api, name='stock-entry-label-print'),

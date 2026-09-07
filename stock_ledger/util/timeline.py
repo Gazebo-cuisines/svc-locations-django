@@ -11,6 +11,7 @@ from django.db.models import Q
 from purchasing.models import PurchaseOrder
 from stock_ledger.models import StockEntry
 from stock_ledger.util.entry_labels import entry_code
+from stock_ledger.util.reports import _operational_movement_entries
 
 _SPLIT_KEY = re.compile(r'^(?P<base>.+):u:(?P<n>\d+)$')
 
@@ -57,7 +58,35 @@ def _unit_row(row: dict) -> dict:
         'entry_code': row['entry_code'],
         'unit_serial': row['entry_code'],
         'quantity': row['quantity'],
+        'posting_status': row.get('posting_status'),
+        'is_live': row.get('is_live'),
     }
+
+
+def posted_history_qs(
+    *,
+    product_id: int,
+    entry_types: tuple[str, ...],
+    location_id: int | None = None,
+):
+    """Posted, not-reversed movements for product GI/GO history."""
+    qs = (
+        _operational_movement_entries()
+        .select_related(
+            'unit',
+            'location',
+            'counterparty_location',
+            'lot__product',
+            'lot__product_supplier__outer_unit',
+            'posting',
+            'label',
+        )
+        .filter(lot__product_id=product_id, entry_type__in=entry_types)
+        .order_by('-recorded_at', '-id')
+    )
+    if location_id is not None:
+        qs = qs.filter(location_id=location_id)
+    return qs
 
 
 def expand_split_siblings(
