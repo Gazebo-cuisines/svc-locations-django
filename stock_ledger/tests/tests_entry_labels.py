@@ -245,3 +245,49 @@ class EntryLabelTests(TestCase):
         self.assertEqual(out['copies'], 5)
         self.assertEqual(out['source_entry_code'], f'E{self.entry.id}')
         self.assertTrue(out['barcode'].startswith('E'))
+
+    def test_get_label_uses_goods_out_for_transfer_out(self):
+        dest = Location.objects.create(id=72, name='EL Kitchen', visible=True)
+        queued = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'el-xfer-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'to_location_id': dest.id,
+                'quantity': '10',
+                'queue_stock': True,
+                'source_entry_id': self.entry.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(queued.status_code, 201, queued.content)
+        out_id = queued.json()['data']['out']['id']
+
+        reprint = self.client.get(f'/stock/entries/{out_id}/label/')
+        self.assertEqual(reprint.status_code, 200, reprint.content)
+        data = reprint.json()['data']
+        self.assertEqual(data['entry_type'], 'transfer_out')
+        self.assertNotIn('goods_in_label', data)
+        self.assertEqual(data['goods_out_label']['title'], 'Goods OUT')
+        self.assertEqual(data['goods_out_label']['barcode'], f'E{out_id}')
+
+        printed = self.client.post(
+            f'/stock/entries/{out_id}/labels/print/',
+            data='{}',
+            content_type='application/json',
+        )
+        self.assertEqual(printed.status_code, 200, printed.content)
+        pdata = printed.json()['data']
+        self.assertNotIn('goods_in_label', pdata)
+        self.assertEqual(pdata['goods_out_label']['title'], 'Goods OUT')
+        self.assertEqual(pdata['goods_out_label']['barcode'], f'E{out_id}')
+
+    def test_get_label_keeps_goods_in_for_receipt(self):
+        reprint = self.client.get(f'/stock/entries/{self.entry.id}/label/')
+        self.assertEqual(reprint.status_code, 200, reprint.content)
+        data = reprint.json()['data']
+        self.assertEqual(data['entry_type'], 'receipt')
+        self.assertNotIn('goods_out_label', data)
+        self.assertEqual(data['goods_in_label']['title'], 'Goods IN')
+        self.assertEqual(data['goods_in_label']['barcode'], f'E{self.entry.id}')

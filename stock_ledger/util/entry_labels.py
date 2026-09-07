@@ -148,6 +148,24 @@ def build_goods_out_label(
     }
 
 
+def artwork_fields(entry: StockEntry, label: StockEntryLabel | None = None) -> dict:
+    """Reprint payload: OUT sticker for transfer_out, otherwise Goods IN."""
+    label = label if label is not None else get_label(entry)
+    if entry.entry_type == StockEntryType.TRANSFER_OUT:
+        return {
+            'entry_type': entry.entry_type,
+            'goods_out_label': build_goods_out_label(
+                issue_entry=entry,
+                copies=label.label_count if label is not None else 1,
+                label=label,
+            ),
+        }
+    return {
+        'entry_type': entry.entry_type,
+        'goods_in_label': build_goods_in_label(entry, label),
+    }
+
+
 def label_state_dict(label: StockEntryLabel) -> dict:
     # One hit (or zero, when scans are prefetched) instead of two COUNT round trips.
     scans = list(label.scans.all())

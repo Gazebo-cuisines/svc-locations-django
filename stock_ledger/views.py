@@ -93,6 +93,12 @@ from stock_ledger.util.reports import (
     operator_activity_detail,
     operator_activity_report,
 )
+from stock_ledger.util.timeline import (
+    consolidate_audit_items,
+    expand_split_siblings,
+    po_numbers_for_entries,
+    receive_group_key,
+)
 from stock_ledger.util.closing_stock_email import (
     recipient_id_from_unsubscribe_token,
 )
@@ -360,7 +366,11 @@ def entry_dict(entry: StockEntry) -> dict:
     }
 
 
-def audit_event_dict(entry: StockEntry, device_codes: dict | None = None) -> dict:
+def audit_event_dict(
+    entry: StockEntry,
+    device_codes: dict | None = None,
+    po_numbers: dict | None = None,
+) -> dict:
     lot = entry.lot
     product = lot.product
     posting = entry_posting.get_posting(entry)
@@ -369,6 +379,8 @@ def audit_event_dict(entry: StockEntry, device_codes: dict | None = None) -> dic
         if device_codes is not None
         else codes_for_serials([entry.device_serial])
     )
+    mapping = product_supplier_for_entry(entry)
+    pack = supplier_pack_fields(abs(entry.quantity), product, mapping)
     row = {
         'entry_id': entry.id,
         'entry_code': entry_labels.entry_code(entry.id),
@@ -381,6 +393,9 @@ def audit_event_dict(entry: StockEntry, device_codes: dict | None = None) -> dic
         'quantity_base': _dec(entry.quantity_base),
         'unit_id': entry.unit_id,
         'unit_name': entry.unit.name if entry.unit_id else None,
+        'pack_quantity': pack.get('pack_quantity'),
+        'pack_unit_name': pack.get('pack_unit_name'),
+        'receive_group_key': receive_group_key(entry.idempotency_key),
         'product_id': product.id,
         'product_name': product.name,
         'lot_id': lot.id,
@@ -397,7 +412,14 @@ def audit_event_dict(entry: StockEntry, device_codes: dict | None = None) -> dic
         'source_document_type': entry.source_document_type,
         'source_document_id': entry.source_document_id,
         'source_document_line': entry.source_document_line,
-        'po_number': entry.po_number,
+        'po_number': (
+            entry.po_number
+            or (
+                po_numbers.get(entry.source_document_id)
+                if po_numbers and entry.source_document_type == 'po'
+                else None
+            )
+        ),
         'remarks': entry.remarks,
         'reverses_entry_id': entry.reverses_entry_id,
         'actor_user_id': entry.actor_user_id,
@@ -407,6 +429,10 @@ def audit_event_dict(entry: StockEntry, device_codes: dict | None = None) -> dic
         'device_serial': entry.device_serial,
         'device_code': codes.get(entry.device_serial),
         'posting_status': posting.status if posting is not None else None,
+        'is_live': (
+            posting is None
+            or posting.status == StockEntryPostingStatus.POSTED
+        ),
     }
     label = entry_labels.get_label(entry)
     if label is not None:
@@ -2141,15 +2167,13 @@ def entry_detail_api(request, pk: int):
 @csrf_exempt
 @require_GET
 def entry_label_api(request, entry_id: int):
-    """Goods IN label payload for an entry (barcode E{id})."""
+    """Label payload for reprint (E{id}): OUT for transfer_out, else Goods IN."""
     try:
         entry = entry_labels.get_entry_for_label(entry_id)
     except StockValidationError as exc:
         return api_error(str(exc), status_code=404)
     label = entry_labels.get_label(entry)
-    data = {
-        'goods_in_label': entry_labels.build_goods_in_label(entry, label),
-    }
+    data = entry_labels.artwork_fields(entry, label)
     if label is not None:
         data['label'] = entry_labels.label_state_dict(label)
     return api_success('Entry label ready.', data)
@@ -2184,15 +2208,9 @@ def entry_label_print_api(request, entry_id: int):
     except StockValidationError as exc:
         msg = str(exc)
         return api_error(msg, status_code=404 if 'not found' in msg else 400)
-    return api_success(
-        'Entry labels marked printed.',
-        {
-            'label': entry_labels.label_state_dict(label),
-            'goods_in_label': entry_labels.build_goods_in_label(
-                label.stock_entry, label,
-            ),
-        },
-    )
+    data = entry_labels.artwork_fields(label.stock_entry, label)
+    data['label'] = entry_labels.label_state_dict(label)
+    return api_success('Entry labels marked printed.', data)
 
 
 @csrf_exempt
@@ -2311,13 +2329,17 @@ def entry_queued_list_api(request):
         entry_type = request.GET.get('entry_type') or None
         raw_src = request.GET.get('source_document_id')
         raw_loc = request.GET.get('location_id')
+        raw_product = request.GET.get('product_id')
         source_document_id = (
             int(raw_src) if raw_src not in (None, '') else None
         )
         location_id = int(raw_loc) if raw_loc not in (None, '') else None
+        product_id = (
+            int(raw_product) if raw_product not in (None, '') else None
+        )
     except (TypeError, ValueError):
         return api_error(
-            'limit, offset, source_document_id, and location_id must be integers.',
+            'limit, offset, source_document_id, location_id, and product_id must be integers.',
         )
     if entry_type and entry_type not in (
         StockEntryType.RECEIPT,
@@ -2331,6 +2353,7 @@ def entry_queued_list_api(request):
         entry_type=entry_type,
         source_document_id=source_document_id,
         location_id=location_id,
+        product_id=product_id,
     ).count()
     rows = entry_posting.list_queued_receipts(
         limit=limit,
@@ -2338,6 +2361,7 @@ def entry_queued_list_api(request):
         entry_type=entry_type,
         source_document_id=source_document_id,
         location_id=location_id,
+        product_id=product_id,
     )
     results = []
     for entry in rows:
@@ -2381,6 +2405,7 @@ def audit_timeline_api(request):
             'location',
             'counterparty_location',
             'lot__product',
+            'lot__product_supplier__outer_unit',
             'posting',
             'label',
         )
@@ -2398,6 +2423,9 @@ def audit_timeline_api(request):
         date_to = request.GET.get('date_to')
         limit = request.GET.get('limit')
         offset = request.GET.get('offset')
+        view = (request.GET.get('view') or 'detail').strip().lower()
+        if view not in ('detail', 'consolidated'):
+            raise ValueError('Invalid view. Use detail or consolidated.')
 
         if product_id not in (None, ''):
             qs = qs.filter(lot__product_id=int(product_id))
@@ -2431,8 +2459,16 @@ def audit_timeline_api(request):
 
     count = qs.count()
     entries = list(qs[row_offset : row_offset + row_limit])
+    page_ids = {entry.id for entry in entries}
+    if view == 'consolidated':
+        entries, page_ids = expand_split_siblings(qs, entries)
     device_codes = codes_for_serials(entry.device_serial for entry in entries)
-    rows = [audit_event_dict(entry, device_codes) for entry in entries]
+    po_numbers = po_numbers_for_entries(entries)
+    rows = [
+        audit_event_dict(entry, device_codes, po_numbers) for entry in entries
+    ]
+    if view == 'consolidated':
+        rows = consolidate_audit_items(rows, page_ids=page_ids)
     return api_success(
         'Stock audit timeline fetched.',
         {
@@ -2440,8 +2476,9 @@ def audit_timeline_api(request):
             'count': count,
             'limit': row_limit,
             'offset': row_offset,
-            'has_more': row_offset + len(rows) < count,
+            'has_more': row_offset + row_limit < count,
             'order': 'recorded_at_desc',
+            'view': view,
         },
     )
 
