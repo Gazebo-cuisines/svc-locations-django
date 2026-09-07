@@ -16,6 +16,7 @@ from product.models import (
     Range,
     Unit,
 )
+from purchasing.models import PurchaseOrder, PurchaseOrderStatus
 from stock_ledger.models import (
     StockBalance,
     StockEntryLabelStatus,
@@ -91,10 +92,12 @@ class EntryPostingQueueTests(TestCase):
             f'/stock/audit/timeline/?product_id={self.product.id}',
         )
         self.assertEqual(hidden.status_code, 200)
-        self.assertIn(
-            entry_id,
-            [row['entry_id'] for row in hidden.json()['data']['items']],
+        queued_row = next(
+            row for row in hidden.json()['data']['items']
+            if row['entry_id'] == entry_id
         )
+        self.assertEqual(queued_row['posting_status'], StockEntryPostingStatus.QUEUED)
+        self.assertFalse(queued_row['is_live'])
 
         # Post blocked until label verified.
         blocked = self.client.post(
@@ -120,7 +123,12 @@ class EntryPostingQueueTests(TestCase):
         live = self.client.get(
             f'/stock/audit/timeline/?product_id={self.product.id}',
         )
-        self.assertIn(entry_id, [row['entry_id'] for row in live.json()['data']['items']])
+        live_row = next(
+            row for row in live.json()['data']['items']
+            if row['entry_id'] == entry_id
+        )
+        self.assertTrue(live_row['is_live'])
+        self.assertEqual(live_row['posting_status'], StockEntryPostingStatus.POSTED)
 
         # Idempotent re-post.
         again = entry_posting.post_entry(entry_id=entry_id)
@@ -229,6 +237,10 @@ class EntryPostingQueueTests(TestCase):
             f'/stock/entries/queued/?location_id={self.wh.id}&entry_type=transfer_out',
         )
         self.assertIn(out_id, [r['id'] for r in by_loc.json()['data']['results']])
+        by_prod = self.client.get(
+            f'/stock/entries/queued/?product_id={self.product.id}&entry_type=transfer_out',
+        )
+        self.assertIn(out_id, [r['id'] for r in by_prod.json()['data']['results']])
         receipts = self.client.get('/stock/entries/queued/?entry_type=receipt')
         self.assertNotIn(out_id, [r['id'] for r in receipts.json()['data']['results']])
         bad = self.client.get('/stock/entries/queued/?entry_type=issue')
@@ -547,3 +559,103 @@ class EntryPostingQueueTests(TestCase):
         self.assertEqual(items[0]['scanned_trace'], later.trace_number)
         self.assertEqual(items[0]['recommended_trace'], soon.trace_number)
         self.assertEqual(items[0]['reason'], 'old stock at the back')
+
+    def test_timeline_consolidates_split_box_receipts(self):
+        base = f'pq-boxes-{uuid4()}'
+        ids = []
+        for i in range(1, 4):
+            entry = services.receipt(
+                idempotency_key=f'{base}:u:{i}',
+                lot=self.lot,
+                location_id=self.wh.id,
+                quantity=Decimal('10'),
+                unit_id=self.unit.id,
+                effective_at=timezone.now(),
+                counterparty_location_id=self.supplier.id,
+            )
+            ids.append(entry.id)
+        other = services.receipt(
+            idempotency_key=f'pq-other-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+        )
+
+        detail = self.client.get(
+            f'/stock/audit/timeline/?product_id={self.product.id}&lot_id={self.lot.id}',
+        )
+        self.assertEqual(detail.status_code, 200, detail.content)
+        ditems = detail.json()['data']['items']
+        split = [r for r in ditems if r['entry_id'] in ids]
+        self.assertEqual(len(split), 3)
+        self.assertEqual({r['receive_group_key'] for r in split}, {base})
+        self.assertIsNone(
+            next(r for r in ditems if r['entry_id'] == other.id)['receive_group_key'],
+        )
+
+        cons = self.client.get(
+            f'/stock/audit/timeline/?product_id={self.product.id}'
+            f'&lot_id={self.lot.id}&view=consolidated',
+        )
+        self.assertEqual(cons.status_code, 200, cons.content)
+        cdata = cons.json()['data']
+        self.assertEqual(cdata['view'], 'consolidated')
+        grouped = next(r for r in cdata['items'] if r.get('units'))
+        self.assertEqual(grouped['parent_entry_id'], min(ids))
+        self.assertEqual(grouped['entry_code'], f'E{min(ids)}')
+        self.assertEqual(grouped['unit_count'], 3)
+        self.assertEqual(grouped['quantity'], '30')
+        self.assertEqual(grouped['pack_quantity'], '3')
+        self.assertEqual(len(grouped['units']), 3)
+        self.assertEqual(
+            {u['entry_id'] for u in grouped['units']},
+            set(ids),
+        )
+        self.assertIn(
+            other.id,
+            [r['entry_id'] for r in cdata['items']],
+        )
+
+    def test_timeline_stamps_po_number_for_goods_in(self):
+        po = PurchaseOrder.objects.create(
+            number='PO-TL-1',
+            external_number='SAGE-TL-9',
+            supplier=self.supplier,
+            ship_to_location=self.wh,
+            status=PurchaseOrderStatus.ORDERED,
+            ordered_at=date.today(),
+        )
+        stamped = services.receipt(
+            idempotency_key=f'pq-po-stamped-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('4'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+            source_document_type='po',
+            source_document_id=po.id,
+            po_number='SAGE-TL-9',
+        )
+        filled = services.receipt(
+            idempotency_key=f'pq-po-fill-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('4'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+            source_document_type='po',
+            source_document_id=po.id,
+        )
+        resp = self.client.get(
+            f'/stock/audit/timeline/?product_id={self.product.id}'
+            f'&lot_id={self.lot.id}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        by_id = {row['entry_id']: row for row in resp.json()['data']['items']}
+        self.assertEqual(by_id[stamped.id]['po_number'], 'SAGE-TL-9')
+        self.assertEqual(by_id[filled.id]['po_number'], 'SAGE-TL-9')
