@@ -360,25 +360,26 @@ def _lot_groups(entries: list) -> list[dict]:
     return [groups[lot_id] for lot_id in order]
 
 
+def _row_from_lot(block: dict, group: dict) -> tuple[dict, list[dict]]:
+    row = dict(block)
+    row['lot_id'] = group['lot_id']
+    row['use_by'] = group['use_by']
+    row['delivery_qty_received'] = _qty_str(group['qty'])
+    answers = dict(block.get('saved_answers') or {})
+    if group['use_by']:
+        use_by_answer = dict(answers.get('use_by') or {})
+        use_by_answer['value'] = group['use_by']
+        answers['use_by'] = use_by_answer
+    row['saved_answers'] = answers
+    labels = [_entry_label_step(entry) for entry in group['entries']]
+    return row, labels
+
+
 def _split_line_by_lots(block: dict, entries: list) -> list[tuple[dict, list[dict]]]:
     groups = _lot_groups(entries)
-    if len(groups) <= 1:
+    if not groups:
         return [(block, [_entry_label_step(entry) for entry in entries])]
-    rows = []
-    for group in groups:
-        row = dict(block)
-        row['lot_id'] = group['lot_id']
-        row['use_by'] = group['use_by']
-        row['delivery_qty_received'] = _qty_str(group['qty'])
-        answers = dict(block.get('saved_answers') or {})
-        if group['use_by']:
-            use_by_answer = dict(answers.get('use_by') or {})
-            use_by_answer['value'] = group['use_by']
-            answers['use_by'] = use_by_answer
-        row['saved_answers'] = answers
-        labels = [_entry_label_step(entry) for entry in group['entries']]
-        rows.append((row, labels))
-    return rows
+    return [_row_from_lot(block, group) for group in groups]
 
 
 def delivery_label_counts(po_id: int, delivery_ids: list[int]) -> dict[int, dict]:
