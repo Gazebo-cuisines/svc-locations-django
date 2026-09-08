@@ -297,6 +297,9 @@ class GoodsInStepsTests(TestCase):
         )
 
     def test_two_use_by_lots_on_one_po_line_are_two_form_rows(self):
+        self.line.qty_ordered = Decimal('3')
+        self.line.qty_balance = Decimal('3')
+        self.line.save(update_fields=['qty_ordered', 'qty_balance'])
         use_a = date.today() + timedelta(days=10)
         use_b = date.today() + timedelta(days=20)
         first = receive_purchase_order(
@@ -320,7 +323,7 @@ class GoodsInStepsTests(TestCase):
                 'location_id': self.wh.id,
                 'lines': [{
                     'line_id': self.line.id,
-                    'quantity': '1',
+                    'quantity': '2',
                     'idempotency_key': f'step-lot-b-{uuid4()}',
                     'label_format': 'pallet',
                     'label_count': 1,
@@ -338,7 +341,7 @@ class GoodsInStepsTests(TestCase):
         )
         self.assertEqual(
             [row['delivery_qty_received'] for row in form['lines']],
-            ['1', '1'],
+            ['1', '2'],
         )
         self.assertEqual(len({row['lot_id'] for row in form['lines']}), 2)
         self.assertEqual(len(form['steps']['lines']), 2)
