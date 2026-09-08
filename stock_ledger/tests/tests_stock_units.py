@@ -925,6 +925,42 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(by_code[f'E{bag_a.id}'], Decimal('15'))
         self.assertEqual(by_code[f'E{bag_b.id}'], Decimal('20'))
 
+    def test_balances_omit_queued_stickers(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        queued = services.receipt(
+            idempotency_key=f'bc-q-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('10'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+            defer_balance=True,
+        )
+        posted = services.receipt(
+            idempotency_key=f'bc-p-{uuid4()}',
+            lot=lot,
+            location_id=self.wh.id,
+            quantity=Decimal('10'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            counterparty_location_id=self.supplier.id,
+            defer_balance=True,
+        )
+        entry_posting.queue_entry(entry=queued)
+        entry_posting.queue_entry(entry=posted)
+        entry_posting.post_entry(
+            entry_id=posted.id, require_label_verified=False,
+        )
+
+        resp = self.client.get(
+            f'/stock/balances/?product_id={self.product.id}&lot_id={lot.id}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        codes = [s['entry_code'] for s in resp.json()['data'][0]['stickers']]
+        self.assertEqual(codes, [f'E{posted.id}'])
+        self.assertNotIn(f'E{queued.id}', codes)
+
     def test_product_mode_refuses_batch_labels(self):
         entry = self._receipt(self._lot(use_by=date(2026, 9, 1)), '500')
         with self.assertRaises(StockValidationError) as ctx:

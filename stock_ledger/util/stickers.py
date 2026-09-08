@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from stock_ledger.models import (
     StockEntry,
@@ -93,6 +93,10 @@ def open_stickers_for_balances(balances) -> dict[tuple[int, int], list[dict]]:
                 lot_id__in={lot_id for lot_id, _ in keys},
                 location_id__in={loc_id for _, loc_id in keys},
                 reversed_by__isnull=True,
+            )
+            .filter(
+                Q(posting__isnull=True)
+                | Q(posting__status=StockEntryPostingStatus.POSTED)
             )
             .only('id', 'lot_id', 'location_id', 'quantity')
             .order_by('id')
