@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 
 from django.db.models import Sum
@@ -75,6 +76,67 @@ def remaining_for_entry(
         if cap < remaining:
             return cap
     return remaining
+
+
+def open_stickers_for_balances(balances) -> dict[tuple[int, int], list[dict]]:
+    """GI barcodes still holding stock on each (lot, location) balance row."""
+    keys = {(b.lot_id, b.location_id) for b in balances}
+    if not keys:
+        return {}
+    lot_left = {(b.lot_id, b.location_id): Decimal(str(b.quantity)) for b in balances}
+    receipts = [
+        row
+        for row in (
+            StockEntry.objects
+            .filter(
+                entry_type=StockEntryType.RECEIPT,
+                lot_id__in={lot_id for lot_id, _ in keys},
+                location_id__in={loc_id for _, loc_id in keys},
+                reversed_by__isnull=True,
+            )
+            .only('id', 'lot_id', 'location_id', 'quantity')
+            .order_by('id')
+        )
+        if (row.lot_id, row.location_id) in keys
+    ]
+    ids = [row.id for row in receipts]
+    drawn = defaultdict(lambda: ZERO)
+    adjustments = defaultdict(lambda: ZERO)
+    if ids:
+        for row in (
+            StockEntry.objects
+            .filter(source_entry_id__in=ids, reversed_by__isnull=True)
+            .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
+            .values('source_entry_id', 'entry_type')
+            .annotate(total=Sum('quantity'))
+        ):
+            src = row['source_entry_id']
+            total = row['total'] or ZERO
+            if row['entry_type'] == StockEntryType.COUNT_ADJUSTMENT:
+                adjustments[src] += total
+            else:
+                drawn[src] += abs(total)
+
+    out: dict[tuple[int, int], list[dict]] = {key: [] for key in keys}
+    for receipt in receipts:
+        key = (receipt.lot_id, receipt.location_id)
+        left = lot_left.get(key, ZERO)
+        if left <= ZERO:
+            continue
+        remaining = abs(receipt.quantity) + adjustments[receipt.id] - drawn[receipt.id]
+        if remaining < ZERO:
+            remaining = ZERO
+        if remaining > left:
+            remaining = left
+        if remaining <= ZERO:
+            continue
+        out[key].append({
+            'entry_id': receipt.id,
+            'entry_code': entry_labels.entry_code(receipt.id),
+            'quantity': remaining,
+        })
+        lot_left[key] = left - remaining
+    return out
 
 
 def check_draw(

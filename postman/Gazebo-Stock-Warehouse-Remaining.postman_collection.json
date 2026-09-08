@@ -84,7 +84,7 @@
             }
           ]
         },
-        "description": "### Balances (lot-level compare)\n\n`GET /stock/balances/?location_id={{location_id}}`\n\nLot-level balances for the same unit (not product-aggregated). Useful to compare with warehouse remaining totals and pack breakdown lots.\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | Storage location PK |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: [ { lot_id, product_id, quantity, pack_quantity, shape_format_label, display_kg, … } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
+        "description": "### Balances (lot-level compare)\n\n`GET /stock/balances/?location_id={{location_id}}`\n\nLot-level balances for the same unit (not product-aggregated). Useful to compare with warehouse remaining totals and pack breakdown lots. Each row includes remaining Goods IN barcodes in `stickers[]` (`E{id}` plus qty still on that bag).\n\n**Path parameters**\n\nNone.\n\n**Query parameters**\n\n| Param | Required | Description |\n| --- | --- | --- |\n| `location_id` | no | Storage location PK |\n\n**Request body**\n\n**None**.\n\n**Response body**\n\n`{ status, message, data: [ { lot_id, product_id, quantity, pack_quantity, shape_format_label, display_kg, stickers: [ { entry_id, entry_code, quantity } ], … } ] }`\n\n**Status codes**\n\n| Code | When |\n| --- | --- |\n| 200 | Success |"
       }
     }
   ]

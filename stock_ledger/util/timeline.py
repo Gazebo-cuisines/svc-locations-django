@@ -13,7 +13,8 @@ from stock_ledger.models import StockEntry
 from stock_ledger.util.entry_labels import entry_code
 from stock_ledger.util.reports import _operational_movement_entries
 
-_SPLIT_KEY = re.compile(r'^(?P<base>.+):u:(?P<n>\d+)$')
+# Receipt boxes `:u:N`; goods-out cart lines `:l:N`; transfer keys add `:out`.
+_SPLIT_KEY = re.compile(r'^(?P<base>.+):[ul]:(?P<n>\d+)(?::(?:out|in))?$')
 
 
 def receive_group_key(idempotency_key: str | None) -> str | None:
@@ -60,6 +61,8 @@ def _unit_row(row: dict) -> dict:
         'quantity': row['quantity'],
         'posting_status': row.get('posting_status'),
         'is_live': row.get('is_live'),
+        'source_entry_id': row.get('source_entry_id'),
+        'source_entry_code': row.get('source_entry_code'),
     }
 
 
@@ -104,6 +107,7 @@ def expand_split_siblings(
     extra_q = Q()
     for prefix in prefixes:
         extra_q |= Q(idempotency_key__startswith=f'{prefix}:u:')
+        extra_q |= Q(idempotency_key__startswith=f'{prefix}:l:')
     by_id = {entry.id: entry for entry in page_entries}
     for entry in qs.filter(extra_q):
         if receive_group_key(entry.idempotency_key) in prefixes:
@@ -156,6 +160,13 @@ def consolidate_audit_items(
         parent['units'] = [
             _unit_row(r) for r in sorted(rows, key=lambda r: r['entry_id'])
         ]
+        sources = {
+            (r.get('source_entry_id'), r.get('source_entry_code'))
+            for r in rows
+        }
+        if len(sources) != 1:
+            parent['source_entry_id'] = None
+            parent['source_entry_code'] = None
         out.append(parent)
 
     out.sort(key=lambda r: (r.get('at') or '', r['entry_id']), reverse=True)

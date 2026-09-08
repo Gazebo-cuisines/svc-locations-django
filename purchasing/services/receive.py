@@ -97,7 +97,7 @@ def _stock_quantity(line: PurchaseOrderLine, purchase_qty: Decimal) -> Decimal:
 
 def _entry_payload(entry: StockEntry) -> dict:
     # Lazy: avoid import cycle at module load (views → … → receive).
-    from stock_ledger.views import entry_dict
+    from stock_ledger.util.serialize import entry_dict
 
     entry = (
         StockEntry.objects
@@ -207,7 +207,7 @@ def _print_units_for_line(
     idempotency_key: str,
     audit: dict,
 ) -> list:
-    from stock_ledger.views import stock_unit_dict
+    from stock_ledger.util.serialize import stock_unit_dict
 
     print_count = raw.get('print_unit_count')
     print_qty = raw.get('print_quantity_per_unit')
