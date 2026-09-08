@@ -357,7 +357,7 @@ def scan_resolve_api(request):
 @csrf_exempt
 @require_GET
 def investigate_api(request):
-    """Read-only bag/product incident pack + briefing."""
+    """Read-only one-product warehouse dossier + br efing."""
     try:
         data = investigate.investigate(
             code=request.GET.get('code'),

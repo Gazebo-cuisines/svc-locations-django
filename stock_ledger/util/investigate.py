@@ -1,4 +1,4 @@
-"""Read-only sticker/product incident pack + briefing (floor-complaint shape)."""
+"""Read-only one-product warehouse dossier + briefing."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from stock_ledger.models import (
     StockEntryLabelStatus,
     StockEntryPostingStatus,
     StockEntryType,
+    StockFifoOverride,
 )
 from stock_ledger.util import entry_labels, entry_posting, scan, stickers
 from stock_ledger.util.conversions import StockValidationError
@@ -26,6 +27,12 @@ from stock_ledger.util.serialize import _pretty_qty, actor_names_for
 UK = ZoneInfo('Europe/London')
 _DRAW_TYPES = (StockEntryType.TRANSFER_OUT, StockEntryType.ISSUE)
 _ADHOC = 'goods_out_adhoc'
+_LEDGER_LIMIT = 200
+_RELATED = (
+    'destination_container',
+    'source_container',
+    'unit',
+)
 
 
 class InvestigateError(Exception):
@@ -102,7 +109,7 @@ def _resolve_product_and_bag(*, code, recipe_code, product_id, q):
         except StockValidationError as exc:
             product = (
                 Product.objects
-                .select_related('destination_container', 'unit')
+                .select_related(*_RELATED)
                 .filter(recipe_code__iexact=text)
                 .first()
                 or active_products(q=text).first()
@@ -126,7 +133,7 @@ def _resolve_product_and_bag(*, code, recipe_code, product_id, q):
     if product is None and recipe_code:
         product = (
             Product.objects
-            .select_related('destination_container', 'unit')
+            .select_related(*_RELATED)
             .filter(recipe_code__iexact=str(recipe_code).strip())
             .first()
         )
@@ -134,7 +141,7 @@ def _resolve_product_and_bag(*, code, recipe_code, product_id, q):
     if product is None and pid is not None:
         product = (
             Product.objects
-            .select_related('destination_container', 'unit')
+            .select_related(*_RELATED)
             .filter(pk=pid)
             .first()
         )
@@ -257,11 +264,192 @@ def _actor(draw) -> str:
     if posting is not None:
         uid = posting.actor_user_id
         lan = posting.lan_username or lan
+        meta = posting.meta if isinstance(posting.meta, dict) else {}
+        mr = meta.get('manager_remove') if isinstance(meta, dict) else None
+        if isinstance(mr, dict):
+            uid = mr.get('actor_user_id') or uid
+            lan = mr.get('lan_username') or lan
     if uid is not None:
         names = actor_names_for({uid})
         if names.get(uid):
             return names[uid]
     return lan or 'Unknown'
+
+
+def _reason(entry) -> str | None:
+    posting = entry_posting.get_posting(entry)
+    if posting is not None:
+        meta = posting.meta if isinstance(posting.meta, dict) else {}
+        mr = meta.get('manager_remove') if isinstance(meta, dict) else None
+        if isinstance(mr, dict) and mr.get('reason'):
+            return str(mr['reason']).strip() or None
+    try:
+        fo = entry.fifo_override
+    except StockFifoOverride.DoesNotExist:
+        fo = None
+    if fo is not None and (fo.reason or '').strip():
+        return fo.reason.strip()
+    if (entry.override_reason or '').strip():
+        return entry.override_reason.strip()
+    if (entry.remarks or '').strip():
+        return entry.remarks.strip()
+    return None
+
+
+def _when_label(dt) -> str:
+    local = _uk(dt)
+    if local is None:
+        return ''
+    return f'{local.day} {local.strftime("%b")} {local.strftime("%H:%M")}'
+
+
+def _product_entries(product_id: int) -> list:
+    rows = list(
+        StockEntry.objects
+        .filter(lot__product_id=product_id)
+        .select_related(
+            'lot',
+            'location',
+            'counterparty_location',
+            'unit',
+            'posting',
+            'label',
+            'source_entry',
+            'reverses_entry',
+            'reversed_by',
+            'fifo_override',
+        )
+        .order_by('-id')[:_LEDGER_LIMIT]
+    )
+    rows.reverse()
+    return rows
+
+
+def _how(entry, status, posting) -> str:
+    if (
+        posting is not None
+        and isinstance(posting.meta, dict)
+        and posting.meta.get('manager_remove')
+    ):
+        return 'manager_remove'
+    try:
+        if entry.fifo_override is not None:
+            return 'fifo_override'
+    except StockFifoOverride.DoesNotExist:
+        pass
+    if entry.entry_type == StockEntryType.REVERSAL:
+        return 'reversal'
+    if status == StockEntryPostingStatus.CANCELLED:
+        return 'cancel'
+    return status or entry.entry_type
+
+
+def _ledger_row(entry, unit: str | None) -> dict:
+    posting, queued_at, posted_at, cancelled_at, status = _draw_times(entry)
+    when = posted_at or cancelled_at or queued_at or entry.recorded_at
+    src = entry.location.name if entry.location_id else None
+    dest = (
+        entry.counterparty_location.name
+        if entry.counterparty_location_id
+        else None
+    )
+    try:
+        rev = entry.reversed_by
+    except StockEntry.DoesNotExist:
+        rev = None
+    reason = _reason(entry) or (_reason(rev) if rev is not None else None)
+    return {
+        'entry_id': entry.id,
+        'entry_code': entry_labels.entry_code(entry.id),
+        'entry_type': entry.entry_type,
+        'status': status,
+        'quantity': _pretty_qty(abs(entry.quantity)),
+        'unit': unit,
+        'from_location': src,
+        'to_location': dest,
+        'source_bag': (
+            entry_labels.entry_code(entry.source_entry_id)
+            if entry.source_entry_id else None
+        ),
+        'reverses': (
+            entry_labels.entry_code(entry.reverses_entry_id)
+            if entry.reverses_entry_id else None
+        ),
+        'reversed_by': (
+            entry_labels.entry_code(rev.id) if rev is not None else None
+        ),
+        'reversed_by_actor': _actor(rev) if rev is not None else None,
+        'source_document_type': entry.source_document_type,
+        'trace_number': entry.lot.trace_number if entry.lot_id else None,
+        'at': when.isoformat() if when else None,
+        'when_label': _when_label(when),
+        'queued_at': queued_at.isoformat() if queued_at else None,
+        'posted_at': posted_at.isoformat() if posted_at else None,
+        'cancelled_at': cancelled_at.isoformat() if cancelled_at else None,
+        'actor': _actor(entry),
+        'reason': reason,
+        'how': _how(entry, status, posting),
+    }
+
+
+def _split_ledger(entries, unit: str | None) -> dict:
+    goods_in, goods_out, transfer_in, reversals, cancelled = [], [], [], [], []
+    for entry in entries:
+        row = _ledger_row(entry, unit)
+        if entry.entry_type == StockEntryType.RECEIPT:
+            goods_in.append(row)
+        elif entry.entry_type in _DRAW_TYPES:
+            goods_out.append(row)
+            if row['status'] == StockEntryPostingStatus.CANCELLED:
+                cancelled.append(row)
+        elif entry.entry_type == StockEntryType.TRANSFER_IN:
+            transfer_in.append(row)
+        elif entry.entry_type == StockEntryType.REVERSAL:
+            reversals.append(row)
+        if (
+            row['reversed_by']
+            and entry.entry_type != StockEntryType.REVERSAL
+            and row not in reversals
+            and row not in cancelled
+        ):
+            reversals.append(row)
+    return {
+        'goods_in': goods_in,
+        'goods_out': goods_out,
+        'transfer_in': transfer_in,
+        'reversals': reversals,
+        'cancelled': cancelled,
+    }
+
+
+def _line(row: dict) -> str:
+    qty = f'{row["quantity"]} {row["unit"]}' if row.get('unit') else row['quantity']
+    route = ''
+    if row.get('from_location') and row.get('to_location'):
+        route = f' {row["from_location"]} → {row["to_location"]}'
+    elif row.get('from_location'):
+        route = f' at {row["from_location"]}'
+    src = f' from {row["source_bag"]}' if row.get('source_bag') else ''
+    rev = ''
+    if row.get('reverses'):
+        rev = f' reverses {row["reverses"]}'
+    elif row.get('reversed_by'):
+        who = row.get('reversed_by_actor') or ''
+        rev = f' reversed by {row["reversed_by"]}'
+        if who:
+            rev += f' ({who})'
+    reason = row.get('reason') or 'not recorded'
+    clock = row.get('when_label') or ''
+    when = f' {clock}' if clock else ''
+    left = (
+        f' remaining {row["remaining"]}'
+        if row.get('remaining') is not None else ''
+    )
+    return (
+        f'- {row["entry_code"]} {qty}{route}{src}{rev}{left}'
+        f' {row["status"]}{when} by {row["actor"]}'
+        f' ({row["how"]}). Reason: {reason}.'
+    )
 
 
 def _screen(draw) -> str:
@@ -402,6 +590,12 @@ def _decision(
     }
 
 
+def _section(title: str, rows: list[dict]) -> list[str]:
+    if not rows:
+        return [f'## {title}', '(none)', '']
+    return [f'## {title}', *(_line(r) for r in rows), '']
+
+
 def _briefing(
     *,
     bag,
@@ -415,6 +609,8 @@ def _briefing(
     timeline: list[dict],
     next_codes: list[str],
     dest_name: str | None,
+    ledger: dict,
+    balances: list[dict],
 ) -> str:
     code = entry_labels.entry_code(bag.id)
     name = product.name
@@ -431,12 +627,41 @@ def _briefing(
         posted_at = posting.posted_at
     recipe = product.recipe_code or ''
     lot = bag.lot.trace_number if bag.lot_id else ''
+    src = product.source_container
+    src_name = src.name if src is not None else None
     bag_line = (
         f'Bag: {code} = {_qty(abs(bag.quantity), unit)} {name}'
         f' ({recipe}, lot {lot}) at {loc_name}, posted {_short_date(posted_at)}.'
     )
-
-    parts = [headline, '', bag_line]
+    on_hand = [
+        f'{row["quantity"]} {unit or ""} at {row["location_name"]} '
+        f'(lot {row["trace_number"]})'.strip()
+        for row in balances
+        if Decimal(row['quantity']) != 0
+    ] or ['0']
+    parts = [
+        headline,
+        '',
+        '## Product',
+        f'{name} ({recipe or "no recipe code"}). '
+        f'Source {src_name or "—"}. Dest {dest_name or "—"}. '
+        f'GI type {product.goods_in_type or "—"}.',
+        '',
+        '## On hand',
+        '; '.join(on_hand),
+        '',
+        *_section('Goods in', ledger.get('goods_in') or []),
+        *_section('Goods out', ledger.get('goods_out') or []),
+        *_section(
+            'Cancelled / reversed',
+            list({
+                r['entry_id']: r
+                for r in (ledger.get('cancelled') or [])
+                + (ledger.get('reversals') or [])
+            }.values()),
+        ),
+        bag_line,
+    ]
     if day_draws:
         who = _actor(day_draws[0])
         parts.append('')
@@ -549,6 +774,16 @@ def investigate(
     timeline = _timeline_rows(day_draws, bag, unit)
     dest = product.destination_container
     dest_name = dest.name if dest is not None else None
+    src = product.source_container
+    src_name = src.name if src is not None else None
+    ledger = _split_ledger(_product_entries(product.id), unit)
+    remain_map = {
+        receipt.id: _pretty_qty(stickers.remaining_for_entry(receipt))
+        for receipt in receipts
+    }
+    for row in ledger['goods_in']:
+        if row['entry_id'] in remain_map:
+            row['remaining'] = remain_map[row['entry_id']]
     stickers_out = []
     for receipt in receipts:
         stickers_out.append({
@@ -594,13 +829,19 @@ def investigate(
         warehouse=warehouse,
         next_codes=next_codes,
     )
+    balances = _balances(product.id)
     return {
         'product': {
             'product_id': product.id,
             'name': product.name,
             'recipe_code': product.recipe_code,
+            'gff_code': product.gff_code,
+            'goods_in_type': product.goods_in_type,
+            'source_container_id': product.source_container_id,
+            'source_container_name': src_name,
             'destination_container_id': product.destination_container_id,
             'destination_container_name': dest_name,
+            'unit': unit,
         },
         'bag': {
             'entry_id': bag.id,
@@ -614,7 +855,12 @@ def investigate(
         'date': day.isoformat(),
         'stickers': stickers_out,
         'events': events,
-        'balances': _balances(product.id),
+        'goods_in': ledger['goods_in'],
+        'goods_out': ledger['goods_out'],
+        'transfer_in': ledger['transfer_in'],
+        'cancelled': ledger['cancelled'],
+        'reversals': ledger['reversals'],
+        'balances': balances,
         'decision': decision,
         'timeline': [
             {
@@ -636,5 +882,7 @@ def investigate(
             timeline=timeline,
             next_codes=next_codes,
             dest_name=dest_name,
+            ledger=ledger,
+            balances=balances,
         ),
     }

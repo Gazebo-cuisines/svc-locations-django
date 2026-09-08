@@ -26,21 +26,30 @@ from core.ai_tools import run_tool
 MAX_TOOL_HOPS = 6
 UK = ZoneInfo('Europe/London')
 _LEDGER_HINT = re.compile(
-    r'\b(E\d+|stock|bag|scan|ledger|goods.?out|spice|trace|fifo|'
-    r'sticker|barcode|powder|ingredient|queue|plan)\b',
+    r'\b(E\d+|stock|bag|scan|ledger|goods.?out|goods.?in|spice|trace|fifo|'
+    r'sticker|barcode|powder|ingredient|queue|plan|revers)\b',
     re.I,
 )
 _REASON_SYSTEM = (
-    'You are Gazebo warehouse support. Answer ONLY from FINDINGS JSON. '
-    'Use briefing as the body. You may add one "Finding:" line that restates '
-    'decision.kind in plain English for the user question. '
-    'Never invent entry codes, quantities, times, or bags. '
+    'You are Gazebo warehouse support, a ruthless ledger guard. '
+    'Answer ONLY from FINDINGS JSON. Use briefing as the body. '
+    'Cover that one product: goods in, goods out, who cancelled or reversed, '
+    'how, and the reason (or say not recorded). '
+    'You may add one "Finding:" line for the user question. '
+    'Never invent entry codes, quantities, times, users, or bags. '
     'If a field is missing, say the ledger does not have it.'
 )
 
 
 def _setting(name: str, default: str = '') -> str:
     return os.getenv(name) or getattr(settings, name, '') or default
+
+
+def _agent_id() -> str:
+    raw = (_setting('BEDROCK_AGENT_ID') or '').strip()
+    if not raw or '.' in raw or ':' in raw:
+        return ''
+    return raw
 
 
 def _aws_session():
@@ -153,9 +162,14 @@ def reason_from_findings(question: str, findings: dict) -> str | None:
     payload = json.dumps(
         {
             'briefing': findings.get('briefing'),
+            'product': findings.get('product'),
             'decision': findings.get('decision'),
             'bag': findings.get('bag'),
             'events': findings.get('events'),
+            'goods_in': findings.get('goods_in'),
+            'goods_out': findings.get('goods_out'),
+            'cancelled': findings.get('cancelled'),
+            'reversals': findings.get('reversals'),
             'balances': findings.get('balances'),
         },
         default=str,
@@ -170,7 +184,7 @@ def reason_from_findings(question: str, findings: dict) -> str | None:
                     'text': f'QUESTION:\n{question}\n\nFINDINGS:\n{payload}',
                 }],
             }],
-            inferenceConfig={'maxTokens': 800, 'temperature': 0},
+            inferenceConfig={'maxTokens': 1600, 'temperature': 0},
         )
     except Exception:
         return None
@@ -206,6 +220,16 @@ def handle_chat(
             'findings': None,
             'tool_calls': [{'tool': '/stock/investigate/', 'params': params}],
         }
+    if not _agent_id():
+        return {
+            'session_id': session_id,
+            'answer': (
+                'Ask about one bag or product. '
+                'Use the E-code on the sticker (E280) or the recipe code.'
+            ),
+            'findings': None,
+            'tool_calls': [],
+        }
     return invoke_agent(
         message, session_id=session_id, auth_header=auth_header,
     )
@@ -213,7 +237,7 @@ def handle_chat(
 
 def invoke_agent(message: str, *, session_id: str = '', auth_header: str = '') -> dict:
     """Ask the Bedrock agent, running any tool calls it asks for."""
-    agent_id = _setting('BEDROCK_AGENT_ID')
+    agent_id = _agent_id()
     alias_id = _setting('BEDROCK_AGENT_ALIAS_ID', 'TSTALIASID')
     if not agent_id:
         raise RuntimeError('BEDROCK_AGENT_ID is not configured.')
