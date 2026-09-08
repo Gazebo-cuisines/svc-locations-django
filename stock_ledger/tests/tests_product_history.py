@@ -162,3 +162,76 @@ class ProductMovementHistoryTests(TestCase):
         gi_ids = {row['entry_id'] for row in gi.json()['data']['items']}
         self.assertNotIn(out.id, gi_ids)
         self.assertNotIn(issued.id, gi_ids)
+
+    def test_goods_out_shows_source_sticker_codes(self):
+        bag_one = services.receipt(
+            idempotency_key=f'ph-bag-one-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        bag_a = services.receipt(
+            idempotency_key=f'ph-bag-a-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        bag_b = services.receipt(
+            idempotency_key=f'ph-bag-b-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('20'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        one, _ = services.transfer(
+            idempotency_key=f'ph-one-{uuid4()}',
+            lot=self.lot,
+            from_location_id=self.wh.id,
+            to_location_id=self.dest.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            source_entry=bag_one,
+        )
+        base = f'ph-cart-{uuid4()}'
+        services.transfer(
+            idempotency_key=f'{base}:l:0',
+            lot=self.lot,
+            from_location_id=self.wh.id,
+            to_location_id=self.dest.id,
+            quantity=Decimal('5'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            source_entry=bag_a,
+        )
+        services.transfer(
+            idempotency_key=f'{base}:l:1',
+            lot=self.lot,
+            from_location_id=self.wh.id,
+            to_location_id=self.dest.id,
+            quantity=Decimal('20'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+            source_entry=bag_b,
+        )
+
+        resp = self.client.get(
+            f'/stock/products/{self.product.id}/history/goods-out/',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        items = resp.json()['data']['items']
+        single = next(r for r in items if r['entry_id'] == one.id)
+        self.assertEqual(single['source_entry_code'], f'E{bag_one.id}')
+        grouped = next(r for r in items if r.get('unit_count') == 2)
+        self.assertEqual(grouped['quantity'], '-25')
+        self.assertIsNone(grouped['source_entry_code'])
+        by_src = {
+            u['source_entry_code']: u['quantity'] for u in grouped['units']
+        }
+        self.assertEqual(by_src[f'E{bag_a.id}'], '-5')
+        self.assertEqual(by_src[f'E{bag_b.id}'], '-20')

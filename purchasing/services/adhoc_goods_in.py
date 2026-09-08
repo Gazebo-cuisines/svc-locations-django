@@ -51,7 +51,7 @@ from stock_ledger.util.conversions import (
 
 def _entry_dict(entry: StockEntry) -> dict:
     # Lazy: views import purchasing in places; avoid cycle at module load.
-    from stock_ledger.views import entry_dict
+    from stock_ledger.util.serialize import entry_dict
 
     entry = (
         StockEntry.objects
@@ -68,7 +68,7 @@ def _entry_dict(entry: StockEntry) -> dict:
 
 
 def _stock_unit_dicts(units) -> list:
-    from stock_ledger.views import stock_unit_dict
+    from stock_ledger.util.serialize import stock_unit_dict
 
     return [stock_unit_dict(u) for u in units]
 

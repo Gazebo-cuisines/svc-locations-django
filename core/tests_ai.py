@@ -6,7 +6,7 @@ from unittest import mock
 from django.test import TestCase
 
 from core.ai_tools import TOOLS, openapi_schema, run_tool
-from core.bedrock import invoke_agent
+from core.bedrock import handle_chat, invoke_agent, params_from_question
 
 
 class AiToolsTests(TestCase):
@@ -29,6 +29,13 @@ class AiToolsTests(TestCase):
         po_params = schema['paths']['/purchasing/pos/{po_id}/']['get']['parameters']
         self.assertTrue(po_params[0]['required'])
         self.assertEqual(po_params[0]['in'], 'path')
+        for path in (
+            '/stock/investigate/',
+            '/stock/scan/goods-out/',
+            '/stock/entries/{pk}/',
+            '/stock/products/{product_id}/history/goods-out/',
+        ):
+            self.assertIn(path, schema['paths'])
 
 
 def _stream(events):
@@ -80,6 +87,73 @@ class InvokeAgentTests(TestCase):
     def test_missing_agent_id_raises(self, _setting):
         with self.assertRaises(RuntimeError):
             invoke_agent('hello')
+
+
+class HandleChatTests(TestCase):
+    def test_params_from_bag_code(self):
+        self.assertEqual(
+            params_from_question('what happened to E280 baking powder')['code'],
+            'E280',
+        )
+
+    def test_params_from_recipe_and_yesterday(self):
+        params = params_from_question('yesterday SPICE0-16 no stock')
+        self.assertEqual(params['recipe_code'], 'SPICE0-16')
+        self.assertIn('date', params)
+
+    def test_params_from_product_name(self):
+        params = params_from_question('what happened with baking powder')
+        self.assertEqual(params.get('q'), 'baking powder')
+
+    @mock.patch('core.bedrock.reason_from_findings', return_value=None)
+    @mock.patch('core.bedrock.run_tool')
+    def test_chat_answers_from_investigate_briefing(self, run_tool, _reason):
+        run_tool.return_value = {
+            'status': 'success',
+            'data': {
+                'briefing': 'E280 is empty now. Warehouse BAKING POWDER is not missing.',
+                'decision': {'kind': 'bag_empty'},
+            },
+        }
+        result = handle_chat('what happened to E280', session_id='s1')
+        self.assertEqual(
+            result['answer'],
+            'E280 is empty now. Warehouse BAKING POWDER is not missing.',
+        )
+        self.assertEqual(result['findings']['decision']['kind'], 'bag_empty')
+        self.assertEqual(
+            result['tool_calls'],
+            [{'tool': '/stock/investigate/', 'params': {'code': 'E280'}}],
+        )
+
+    @mock.patch('core.bedrock.reason_from_findings')
+    @mock.patch('core.bedrock.run_tool')
+    def test_chat_uses_model_reason_over_findings(self, run_tool, reason):
+        run_tool.return_value = {
+            'status': 'success',
+            'data': {
+                'briefing': 'E280 is empty now.',
+                'decision': {'kind': 'bag_empty'},
+            },
+        }
+        reason.return_value = (
+            'Finding: that bag is empty, not a warehouse hole.\n\n'
+            'E280 is empty now.'
+        )
+        result = handle_chat('why no stock in bag E280')
+        self.assertIn('Finding:', result['answer'])
+        self.assertEqual(result['findings']['decision']['kind'], 'bag_empty')
+
+    @mock.patch('core.bedrock.run_tool')
+    def test_chat_miss_does_not_invent(self, run_tool):
+        run_tool.return_value = {
+            'status': 'error',
+            'message': 'code=E1 not found',
+            'data': None,
+        }
+        result = handle_chat('what happened to E1')
+        self.assertIn('No ledger rows', result['answer'])
+        self.assertIsNone(result['findings'])
 
 
 class AiChatViewTests(TestCase):

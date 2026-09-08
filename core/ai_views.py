@@ -8,7 +8,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.ai_tools import openapi_schema
 from core.api_response import error_response, success_response
-from core.bedrock import invoke_agent
+from core.bedrock import handle_chat
 from users_rbac.auth import require_auth
 
 
@@ -26,7 +26,7 @@ def ai_chat_api(request):
         return error_response('Type a question for the assistant.')
 
     try:
-        result = invoke_agent(
+        result = handle_chat(
             message,
             session_id=str(payload.get('session_id') or ''),
             auth_header=request.headers.get('Authorization', ''),

@@ -54,6 +54,7 @@ urlpatterns = [
     ),
 
     path('scan/', views.scan_resolve_api, name='stock-scan'),
+    path('investigate/', views.investigate_api, name='stock-investigate'),
     path('recall/', views.recall_api, name='stock-recall'),
     path('products/<int:product_id>/genealogy/', views.product_genealogy_api, name='stock-product-genealogy'),
     

@@ -638,6 +638,32 @@ class ProductBarcodeTests(TestCase):
         self.assertEqual(data['lot_quantity'], '40')
         self.assertEqual(data['entry_code'], f'E{bag_a.id}')
 
+    def test_scan_goods_out_rejects_goods_out_barcode(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag = self._receipt(lot, '20')
+        posted = self._transfer(lot, '5', sticker=bag)
+        self.assertEqual(posted.status_code, 201, posted.content)
+        out_id = posted.json()['data']['out']['id']
+
+        resp = self.client.get(
+            f'/stock/scan/goods-out/?code=E{out_id}'
+            f'&location_id={self.wh.id}',
+        )
+        self.assertEqual(resp.status_code, 409, resp.content)
+        body = resp.json()
+        self.assertEqual(
+            body['message'],
+            'You have scanned a Goods OUT barcode. '
+            'Please scan the Goods IN barcode.',
+        )
+        self.assertEqual(body['data']['error'], 'goods_out_barcode')
+
+        ok = self.client.get(
+            f'/stock/scan/goods-out/?code=E{bag.id}'
+            f'&location_id={self.wh.id}',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+
     def _scan_out(self, entry, *, location=None):
         loc_id = (location or self.wh).id
         resp = self.client.get(
@@ -881,6 +907,23 @@ class ProductBarcodeTests(TestCase):
 
         bad = self.client.get(f'/stock/balances/?product_id={self.product.id}&order=zzz')
         self.assertEqual(bad.status_code, 400)
+
+    def test_balances_list_sticker_barcodes(self):
+        lot = self._lot(use_by=self.today + timedelta(days=10))
+        bag_a = self._receipt(lot, '20')
+        bag_b = self._receipt(lot, '20')
+        self.assertEqual(self._transfer(lot, '5', sticker=bag_a).status_code, 201)
+
+        resp = self.client.get(
+            f'/stock/balances/?product_id={self.product.id}&lot_id={lot.id}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        row = resp.json()['data'][0]
+        by_code = {
+            s['entry_code']: Decimal(s['quantity']) for s in row['stickers']
+        }
+        self.assertEqual(by_code[f'E{bag_a.id}'], Decimal('15'))
+        self.assertEqual(by_code[f'E{bag_b.id}'], Decimal('20'))
 
     def test_product_mode_refuses_batch_labels(self):
         entry = self._receipt(self._lot(use_by=date(2026, 9, 1)), '500')
