@@ -312,6 +312,75 @@ def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, 
     return by_line
 
 
+def _receipts_by_line_no(po_id: int, delivery_id: int | None) -> dict[int, list]:
+    by_line: dict[int, list] = {}
+    for entry in _iter_delivery_receipts(po_id, delivery_id):
+        line_no = entry.source_document_line
+        if line_no is None:
+            continue
+        by_line.setdefault(line_no, []).append(entry)
+    return by_line
+
+
+def _entry_purchase_qty(entry: StockEntry) -> Decimal:
+    try:
+        raw = (entry.posting.meta or {}).get('purchase_qty')
+    except StockEntryPosting.DoesNotExist:
+        raw = None
+    if raw not in (None, ''):
+        try:
+            return Decimal(str(raw))
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+    if entry.quantity_base is not None:
+        return entry.quantity_base
+    return entry.quantity
+
+
+def _lot_groups(entries: list) -> list[dict]:
+    """One group per stock lot so mixed use-by dates become separate form rows."""
+    groups: dict[int, dict] = {}
+    order: list[int] = []
+    for entry in entries:
+        lot_id = entry.lot_id
+        if lot_id is None:
+            continue
+        if lot_id not in groups:
+            lot = entry.lot
+            groups[lot_id] = {
+                'lot_id': lot_id,
+                'use_by': _iso_date(lot.use_by) if lot is not None else None,
+                'qty': Decimal('0'),
+                'entries': [],
+            }
+            order.append(lot_id)
+        group = groups[lot_id]
+        group['entries'].append(entry)
+        group['qty'] += _entry_purchase_qty(entry)
+    return [groups[lot_id] for lot_id in order]
+
+
+def _split_line_by_lots(block: dict, entries: list) -> list[tuple[dict, list[dict]]]:
+    groups = _lot_groups(entries)
+    if len(groups) <= 1:
+        return [(block, [_entry_label_step(entry) for entry in entries])]
+    rows = []
+    for group in groups:
+        row = dict(block)
+        row['lot_id'] = group['lot_id']
+        row['use_by'] = group['use_by']
+        row['delivery_qty_received'] = _qty_str(group['qty'])
+        answers = dict(block.get('saved_answers') or {})
+        if group['use_by']:
+            use_by_answer = dict(answers.get('use_by') or {})
+            use_by_answer['value'] = group['use_by']
+            answers['use_by'] = use_by_answer
+        row['saved_answers'] = answers
+        labels = [_entry_label_step(entry) for entry in group['entries']]
+        rows.append((row, labels))
+    return rows
+
+
 def delivery_label_counts(po_id: int, delivery_ids: list[int]) -> dict[int, dict]:
     """Labels made vs still queued, per visit."""
     out: dict[int, dict] = {}
@@ -480,6 +549,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         line_blocks.append({
             'line_id': line.id,
             'line_no': line.line_no,
+            'lot_id': None,
             'product_id': line.product_id,
             'product_name': line.product.name,
             'goods_in_type': gin_type,
