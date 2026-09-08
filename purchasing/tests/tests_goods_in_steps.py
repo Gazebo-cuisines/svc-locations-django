@@ -295,3 +295,58 @@ class GoodsInStepsTests(TestCase):
         self.assertTrue(
             filled['answers']['lines'][str(self.line.id)]['spec_check']['value'],
         )
+
+    def test_two_use_by_lots_on_one_po_line_are_two_form_rows(self):
+        use_a = date.today() + timedelta(days=10)
+        use_b = date.today() + timedelta(days=20)
+        first = receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'idempotency_key': f'step-lot-a-{uuid4()}',
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                    'shortfall_reason': 'split_pallet',
+                    'lot': {'use_by': use_a.isoformat()},
+                }],
+            },
+        )
+        receive_purchase_order(
+            self.po.id,
+            body={
+                'location_id': self.wh.id,
+                'lines': [{
+                    'line_id': self.line.id,
+                    'quantity': '1',
+                    'idempotency_key': f'step-lot-b-{uuid4()}',
+                    'label_format': 'pallet',
+                    'label_count': 1,
+                    'lot': {'use_by': use_b.isoformat()},
+                }],
+            },
+        )
+        form = resolve_goods_in_form(
+            self.po.id, delivery_id=first['delivery_id'],
+        )
+        self.assertEqual(len(form['lines']), 2)
+        self.assertEqual(
+            [row['use_by'] for row in form['lines']],
+            [use_a.isoformat(), use_b.isoformat()],
+        )
+        self.assertEqual(
+            [row['delivery_qty_received'] for row in form['lines']],
+            ['1', '1'],
+        )
+        self.assertEqual(len({row['lot_id'] for row in form['lines']}), 2)
+        self.assertEqual(len(form['steps']['lines']), 2)
+        self.assertEqual(
+            [row['lot_id'] for row in form['steps']['lines']],
+            [row['lot_id'] for row in form['lines']],
+        )
+        self.assertEqual(
+            [len(row['labels']) for row in form['steps']['lines']],
+            [1, 1],
+        )

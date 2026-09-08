@@ -2,11 +2,14 @@
 
 import json
 from unittest import mock
+from unittest.mock import patch
 
 from django.test import TestCase
 
 from core.ai_tools import TOOLS, openapi_schema, run_tool
 from core.bedrock import handle_chat, invoke_agent, params_from_question
+from core.models import AiCase
+from users_rbac.models import RbacUser
 
 
 class AiToolsTests(TestCase):
@@ -155,6 +158,17 @@ class HandleChatTests(TestCase):
         self.assertIn('No ledger rows', result['answer'])
         self.assertIsNone(result['findings'])
 
+    @mock.patch(
+        'core.bedrock._setting',
+        side_effect=lambda name, default='': {
+            'BEDROCK_AGENT_ID': 'anthropic.claude-sonnet-4-5-20250929-v1:0',
+        }.get(name, default),
+    )
+    def test_chat_without_bag_does_not_need_agent(self, _setting):
+        result = handle_chat('hello')
+        self.assertIn('E-code', result['answer'])
+        self.assertIsNone(result['findings'])
+
 
 class AiChatViewTests(TestCase):
     def test_chat_requires_auth(self):
@@ -164,3 +178,57 @@ class AiChatViewTests(TestCase):
             content_type='application/json',
         )
         self.assertEqual(response.status_code, 401)
+
+
+class AiCaseTests(TestCase):
+    def setUp(self):
+        self.user = RbacUser.objects.create(
+            cognito_sub='sub-case',
+            username='akshay',
+            display_name='AKSHAY',
+        )
+        patcher = patch('users_rbac.auth.attach_user')
+
+        def _set(request, **kwargs):
+            request.rbac_user = self.user
+            return None
+
+        mock_attach = patcher.start()
+        mock_attach.side_effect = _set
+        self.addCleanup(patcher.stop)
+
+    @patch('core.ai_views.handle_chat')
+    def test_chat_saves_and_pulls_json(self, handle):
+        handle.return_value = {
+            'session_id': 'sess-1',
+            'answer': 'E280 empty',
+            'findings': {
+                'product': {'product_id': 72, 'recipe_code': 'SPICE0-16'},
+                'bag': {'entry_code': 'E280'},
+                'decision': {'kind': 'bag_empty'},
+                'briefing': 'E280 is empty now.',
+                'goods_out': [{'entry_code': 'E3001', 'actor': 'AKSHAY'}],
+            },
+            'tool_calls': [],
+        }
+        resp = self.client.post(
+            '/ai/chat/',
+            data=json.dumps({
+                'message': 'what happened to E280',
+                'session_id': 'sess-1',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        case = AiCase.objects.get(session_id='sess-1')
+        self.assertEqual(case.opened_by_username, 'akshay')
+        self.assertEqual(case.bag_code, 'E280')
+        pull = self.client.get('/ai/cases/sess-1/')
+        self.assertEqual(pull.status_code, 200, pull.content)
+        data = pull.json()['data']
+        self.assertEqual(data['opened_by_name'], 'AKSHAY')
+        self.assertEqual(data['turns'][0]['message'], 'what happened to E280')
+        self.assertEqual(data['turns'][0]['goods_out'][0]['actor'], 'AKSHAY')
+        listed = self.client.get('/ai/cases/?username=akshay')
+        self.assertEqual(listed.status_code, 200, listed.content)
+        self.assertEqual(listed.json()['data'][0]['session_id'], 'sess-1')

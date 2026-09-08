@@ -36,9 +36,9 @@ TOOLS: dict[str, dict] = {
     },
     '/stock/investigate/': {
         'summary': (
-            'Read-only bag/product incident briefing: remaining, same-day '
-            'queue/cancel/post timeline, balances, next bag to scan. '
-            'Return data.briefing verbatim.'
+            'Read-only one-product warehouse dossier: product, goods in, '
+            'goods out, cancelled/reversed (who, how, reason), remaining '
+            'stickers, same-day scan timeline. Return data.briefing verbatim.'
         ),
         'params': {
             'code': 'Bag or product barcode (E280, P72).',

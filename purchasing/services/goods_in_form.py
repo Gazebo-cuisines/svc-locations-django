@@ -225,7 +225,7 @@ def _receipt_entries(po_ids: list[int]):
             source_document_id__in=po_ids,
         )
         .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
-        .select_related('label', 'posting')
+        .select_related('label', 'posting', 'lot')
         .order_by('id')
     )
 
@@ -279,12 +279,12 @@ def _delivery_entry_bounds(po_id: int, delivery_id: int) -> dict[int, tuple[int,
     return bounds
 
 
-def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, list[dict]]:
-    """This visit's labels only: entries stamped with another delivery drop out."""
+def _iter_delivery_receipts(po_id: int, delivery_id: int | None):
+    """This visit's receipts only; unstamped rows use the entry-id window."""
     if delivery_id is None:
-        return _label_steps_by_line_no(po_id)
+        yield from _receipt_entries([po_id])
+        return
     bounds = _delivery_entry_bounds(po_id, delivery_id)
-    by_line: dict[int, list[dict]] = {}
     for entry in _receipt_entries([po_id]):
         line_no = entry.source_document_line
         if line_no is None:
@@ -295,6 +295,18 @@ def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, 
             if not lower < entry.id <= upper:
                 continue
         elif stamped != delivery_id:
+            continue
+        yield entry
+
+
+def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, list[dict]]:
+    """This visit's labels only: entries stamped with another delivery drop out."""
+    if delivery_id is None:
+        return _label_steps_by_line_no(po_id)
+    by_line: dict[int, list[dict]] = {}
+    for entry in _iter_delivery_receipts(po_id, delivery_id):
+        line_no = entry.source_document_line
+        if line_no is None:
             continue
         by_line.setdefault(line_no, []).append(_entry_label_step(entry))
     return by_line
@@ -370,6 +382,7 @@ def _line_steps(block: dict, labels: list[dict]) -> dict:
     )
     return {
         'line_id': block['line_id'],
+        'lot_id': block.get('lot_id'),
         'line_qc': bool(block['line_check_ok']),
         'checks': _check_flags(
             (block.get('template') or {}).get('items') or [],
@@ -513,13 +526,17 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         or {}
     )
     header_qc = session.checked_at is not None
-    labels_by_line = _label_steps_for_delivery(
-        po.id, delivery.id if delivery is not None else None,
-    )
-    line_steps = [
-        _line_steps(block, labels_by_line.get(block['line_no'], []))
-        for block in line_blocks
-    ]
+    visit_id = delivery.id if delivery is not None else None
+    receipts_by_line = _receipts_by_line_no(po.id, visit_id)
+    expanded = []
+    line_steps = []
+    for block in line_blocks:
+        for row, labels in _split_line_by_lots(
+            block, receipts_by_line.get(block['line_no'], []),
+        ):
+            expanded.append(row)
+            line_steps.append(_line_steps(row, labels))
+    line_blocks = expanded
     if delivery_id is None:
         resume = delivery
     else:

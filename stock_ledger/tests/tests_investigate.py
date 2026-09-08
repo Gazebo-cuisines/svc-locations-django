@@ -10,7 +10,7 @@ from django.utils import timezone
 from core.ai_tools import TOOLS, openapi_schema, run_tool
 from locations.models import Location
 from product.models import Category, Product, ProductClass, Range, Unit
-from stock_ledger.models import StockLot, StockLotOrigin
+from stock_ledger.models import StockEntry, StockLot, StockLotOrigin
 from stock_ledger.util import entry_posting, services  # noqa: F401
 
 
@@ -159,3 +159,36 @@ class InvestigateApiTests(TestCase):
         )
         self.assertEqual(scan['status'], 'success')
         self.assertEqual(scan['data']['quantity'], '25')
+
+    def test_product_dossier_goods_in_out_reversal_reason(self):
+        out_id = self._queue(self.bag, 25)
+        ok = self.client.post(
+            f'/stock/entries/{out_id}/labels/verify/',
+            data=f'{{"code":"E{out_id}","post_stock":true}}',
+            content_type='application/json',
+        )
+        self.assertEqual(ok.status_code, 200, ok.content)
+        out = StockEntry.objects.get(pk=out_id)
+        rev = services.reversal(
+            idempotency_key=f'inv-rev-{uuid4()}',
+            entry=out,
+            remarks='Wrong bag scanned',
+            lan_username='HARVI',
+        )
+        resp = self._get(recipe_code=self.product.recipe_code)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()['data']
+        gi = [r['entry_code'] for r in data['goods_in']]
+        self.assertIn(f'E{self.bag.id}', gi)
+        go = next(r for r in data['goods_out'] if r['entry_id'] == out_id)
+        self.assertEqual(go['source_bag'], f'E{self.bag.id}')
+        self.assertEqual(go['reversed_by'], f'E{rev.id}')
+        row = next(r for r in data['reversals'] if r['entry_id'] == rev.id)
+        self.assertEqual(row['actor'], 'HARVI')
+        self.assertEqual(row['reason'], 'Wrong bag scanned')
+        self.assertEqual(row['reverses'], f'E{out_id}')
+        briefing = data['briefing']
+        self.assertIn('## Goods in', briefing)
+        self.assertIn('## Goods out', briefing)
+        self.assertIn('Wrong bag scanned', briefing)
+        self.assertIn('HARVI', briefing)

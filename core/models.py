@@ -73,3 +73,29 @@ class MaintenanceNotice(models.Model):
 
     def __str__(self):
         return f'active={self.is_active}'
+
+
+class AiCase(models.Model):
+    """One chat session: who opened it, and every turn as JSON."""
+
+    session_id = models.CharField(max_length=64, unique=True)
+    opened_by_user_id = models.IntegerField(null=True, blank=True)
+    opened_by_username = models.CharField(max_length=128, blank=True, default='')
+    opened_by_name = models.CharField(max_length=128, blank=True, default='')
+    product_id = models.IntegerField(null=True, blank=True)
+    recipe_code = models.CharField(max_length=128, blank=True, default='')
+    bag_code = models.CharField(max_length=32, blank=True, default='')
+    turns = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ai_case'
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['opened_by_user_id', '-updated_at'], name='idx_ai_case_actor'),
+            models.Index(fields=['product_id', '-updated_at'], name='idx_ai_case_product'),
+        ]
+
+    def __str__(self):
+        return f'ai_case:{self.session_id}'
