@@ -108,23 +108,18 @@ def _parse_line_label(raw: dict, index: int) -> tuple[str | None, int | None]:
         )
     count_raw = raw.get('label_count')
     if count_raw in (None, ''):
-        count = 1 if fmt == 'pallet' else None
-    else:
-        try:
-            count = int(count_raw)
-        except (TypeError, ValueError) as exc:
-            raise PoValidationError(
-                f'lines[{index}].label_count must be an integer.',
-            ) from exc
-    if count is None:
+        # box: optional display hint; receive splits by operator qty.
+        return fmt, (1 if fmt == 'pallet' else None)
+    try:
+        count = int(count_raw)
+    except (TypeError, ValueError) as exc:
         raise PoValidationError(
-            f'lines[{index}].label_count is required when label_format=box.',
-        )
+            f'lines[{index}].label_count must be an integer.',
+        ) from exc
     if count < 1:
         raise PoValidationError(
             f'lines[{index}].label_count must be >= 1.',
         )
-    # pallet: label_count = copies of one main barcode.
     return fmt, count
 
 

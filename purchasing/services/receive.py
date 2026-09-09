@@ -165,32 +165,34 @@ def _split_quantities(total: Decimal, parts: int) -> list[Decimal]:
     return chunks
 
 
-def _resolve_label_plan(line: PurchaseOrderLine, raw: dict, index: int) -> tuple[str | None, int]:
-    """Admin line wins; warehouse body only used if line has no label plan."""
+def _resolve_label_plan(
+    line: PurchaseOrderLine,
+    raw: dict,
+    index: int,
+    purchase_qty: Decimal,
+) -> tuple[str | None, int]:
+    """Admin format wins; label count always follows this receive quantity.
+
+    box → one stock barcode per pack received
+    pallet → one barcode for the whole quantity on this receive
+    """
     if line.label_format not in (None, ''):
         fmt = str(line.label_format).strip().lower()
-        count = int(line.label_count or (1 if fmt == 'pallet' else 0))
     elif raw.get('label_format') not in (None, ''):
         fmt = str(raw.get('label_format')).strip().lower()
-        if raw.get('label_count') in (None, ''):
-            count = 1 if fmt == 'pallet' else 0
-        else:
-            count = int(raw.get('label_count'))
     else:
         return None, 1
     if fmt not in ('pallet', 'box'):
         raise ReceiveError(
             f'lines[{index}].label_format must be pallet or box.',
         )
-    if count < 1:
+    if fmt == 'pallet':
+        return fmt, 1
+    if purchase_qty != purchase_qty.to_integral_value() or purchase_qty < 1:
         raise ReceiveError(
-            f'lines[{index}]: label_count is required for label_format={fmt}.',
+            f'lines[{index}]: box receive quantity must be a whole number >= 1.',
         )
-    if fmt == 'pallet' and count != 1:
-        raise ReceiveError(
-            f'lines[{index}]: pallet requires label_count=1.',
-        )
-    return fmt, count
+    return fmt, int(purchase_qty)
 
 
 def _unit_idempotency_keys(base: str, count: int) -> list[str]:
@@ -335,7 +337,9 @@ def receive_purchase_order(
         idempotency_key = str(idempotency_key)
 
         direct_consume = product_is_direct_consume(line.product)
-        label_format, label_count = _resolve_label_plan(line, raw, index)
+        label_format, label_count = _resolve_label_plan(
+            line, raw, index, purchase_qty,
+        )
         if direct_consume:
             _reject_direct_consume_labels(
                 raw=raw, index=index, label_format=label_format,

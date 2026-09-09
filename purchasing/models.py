@@ -203,7 +203,7 @@ class PurchaseOrderLine(models.Model):
     stock_in_done = models.BooleanField(default=False)
     last_receipt_entry_id = models.BigIntegerField(null=True, blank=True)
 
-    # Admin-chosen physical labels for goods-in (warehouse does not pick these).
+    # Admin chooses format only (box/pallet). Receive splits by operator qty.
     label_format = models.CharField(max_length=16, null=True, blank=True)
     label_count = models.PositiveIntegerField(null=True, blank=True)
 
