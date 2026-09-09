@@ -211,6 +211,11 @@ class PoReceiveParityTests(TestCase):
         self.assertEqual(row['transaction_count'], 38)
         for tx in row['transactions']:
             self.assertEqual(Decimal(tx['quantity_stock']), Decimal('10'))
+            self.assertEqual(tx['label']['label_format'], 'box')
+            posting = tx.get('posting') or {}
+            meta = posting.get('meta') or {}
+            if meta.get('purchase_qty') not in (None, ''):
+                self.assertEqual(Decimal(meta['purchase_qty']), Decimal('1'))
 
     def test_queued_receive_completes_po_only_after_post(self):
         data = receive_purchase_order(

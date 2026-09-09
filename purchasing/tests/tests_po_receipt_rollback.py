@@ -28,6 +28,7 @@ from purchasing.models import (
     PurchaseOrderStatus,
 )
 from purchasing.services.delivery import create_delivery
+from purchasing.services.goods_in_form import resolve_goods_in_form
 from purchasing.services.header_qc import submit_header_qc
 from purchasing.services.line_qc import submit_line_qc
 from purchasing.services.po_qty import unapply_po_receipt_from_entry
@@ -213,6 +214,26 @@ class PoReceiptRollbackTests(TestCase):
         self.assertEqual(self.line.qty_balance, Decimal('25'))
         self.assertEqual(self.po.status, PurchaseOrderStatus.ORDERED)
 
+    def test_manage_remove_hides_labels_on_goods_in_form(self):
+        entry_id, delivery_id = self._receive_and_post(purchase_qty='25')
+        before = resolve_goods_in_form(self.po.id, delivery_id=delivery_id)
+        labels_before = before['steps']['lines'][0]['labels']
+        self.assertEqual(len(labels_before), 1)
+        self.assertEqual(labels_before[0]['entry_id'], entry_id)
+
+        manage.remove_entry(
+            entry_id=entry_id,
+            reason='System Error on Print label',
+            idempotency_key=f'rb-form-{uuid4()}',
+            actor_user_id=self.manager.id,
+            lan_username='rbmgr',
+        )
+        after = resolve_goods_in_form(self.po.id, delivery_id=delivery_id)
+        self.assertEqual(after['steps']['lines'][0]['labels'], [])
+        self.assertEqual(
+            after['answers']['lines'][str(self.line.id)]['qty_received'],
+            '0',
+        )
     def test_unapply_immediate_receive(self):
         key = f'rb-immediate-{uuid4()}'
         data = receive_purchase_order(

@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Exists, OuterRef
+
 from product.goods_in import effective_goods_in_type, product_is_direct_consume
 from product.models import ProductGoodsInType, ProductStorageRegime, ProductTechnical
 from purchasing.models import (
@@ -217,6 +219,7 @@ def _entry_label_step(entry: StockEntry) -> dict:
 def _receipt_entries(po_ids: list[int]):
     if not po_ids:
         return StockEntry.objects.none()
+    reversed_qs = StockEntry.objects.filter(reverses_entry_id=OuterRef('pk'))
     return (
         StockEntry.objects
         .filter(
@@ -225,6 +228,7 @@ def _receipt_entries(po_ids: list[int]):
             source_document_id__in=po_ids,
         )
         .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
+        .exclude(Exists(reversed_qs))
         .select_related('label', 'posting', 'lot')
         .order_by('id')
     )
