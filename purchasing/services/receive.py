@@ -173,7 +173,7 @@ def _resolve_label_plan(
 ) -> tuple[str | None, int]:
     """Admin format wins; label count always follows this receive quantity.
 
-    box → one stock barcode per pack received
+    box → one barcode per pack (1 label = 1 box of stock; no fractional split)
     pallet → one barcode for the whole quantity on this receive
     """
     if line.label_format not in (None, ''):
@@ -434,8 +434,18 @@ def receive_purchase_order(
             'authorised_by_user_id': audit.get('authorised_by_user_id'),
         }
         receipt_audit = {k: v for k, v in receipt_audit.items() if v is not None}
-        qty_parts = _split_quantities(receipt_qty, label_count)
-        purchase_parts = _split_quantities(purchase_qty, label_count)
+        if label_format == 'box':
+            # Hard rule: 1 box barcode = 1 pack. Never fractional-split qty across labels.
+            n = int(purchase_qty)
+            purchase_parts = [Decimal('1')] * n
+            if product_supplier is not None:
+                qty_parts = [Decimal('1')] * n
+            else:
+                one = _stock_quantity(line, Decimal('1'))
+                qty_parts = [one] * n
+        else:
+            qty_parts = _split_quantities(receipt_qty, label_count)
+            purchase_parts = _split_quantities(purchase_qty, label_count)
 
         transactions = []
         last_entry = None
