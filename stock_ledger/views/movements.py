@@ -577,7 +577,10 @@ def goods_out_form_api(request):
     except (TypeError, ValueError):
         return api_error('location_id must be an integer.')
     try:
-        data = resolve_adhoc_goods_out_form(location_id)
+        data = resolve_adhoc_goods_out_form(
+            location_id,
+            request.GET.get('transfer_group_id') or None,
+        )
     except GoodsOutFormError as exc:
         return api_error(str(exc), status_code=404)
     return api_success('Goods out form resolved successfully.', data)

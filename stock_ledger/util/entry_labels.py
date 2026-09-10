@@ -13,6 +13,8 @@ from stock_ledger.models import (
     StockEntryLabelScan,
     StockEntryLabelScanResult,
     StockEntryLabelStatus,
+    StockEntryPosting,
+    StockEntryPostingStatus,
     StockEntryType,
 )
 from stock_ledger.util.conversions import StockValidationError
@@ -270,6 +272,19 @@ def create_entry_label(
     )
 
 
+def _assert_not_cancelled(entry_id: int) -> None:
+    """A cancelled queue is dead: post_entry refuses it, so printing or scanning
+    its sticker only strands the operator at the scanner."""
+    if StockEntryPosting.objects.filter(
+        stock_entry_id=entry_id,
+        status=StockEntryPostingStatus.CANCELLED,
+    ).exists():
+        raise StockValidationError(
+            f'entry_id={entry_id} posting is cancelled; '
+            f'queue it again before print or scan.',
+        )
+
+
 def mark_printed(
     *,
     entry_id: int,
@@ -289,6 +304,7 @@ def mark_printed(
             f'No label record for entry_id={entry_id}. '
             f'Pass label_format on receive first.',
         )
+    _assert_not_cancelled(entry_id)
     update_fields = ['printed_count', 'printed_at']
     if label.status == StockEntryLabelStatus.PENDING:
         label.status = StockEntryLabelStatus.PRINTED
@@ -327,6 +343,7 @@ def verify_label(
         raise StockValidationError(
             f'No label record for entry_id={entry_id}.',
         )
+    _assert_not_cancelled(entry_id)
     expected = entry_code(entry_id)
     scanned = (code or '').strip().upper()
     actor_kwargs = {
