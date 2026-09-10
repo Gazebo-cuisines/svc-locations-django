@@ -80,6 +80,24 @@ class StockReportApiTests(TestCase):
             unit_id=self.unit.id,
             effective_at=self.d1,
         )
+        self.receipt.source_document_type = 'po'
+        self.receipt.source_document_id = 79
+        self.receipt.po_number = '43781'
+        self.receipt.save(
+            update_fields=['source_document_type', 'source_document_id', 'po_number'],
+        )
+        posting, created = StockEntryPosting.objects.get_or_create(
+            stock_entry=self.receipt,
+            defaults={
+                'status': StockEntryPostingStatus.POSTED,
+                'queued_at': self.d1,
+                'posted_at': self.d1,
+                'meta': {'delivery_id': 91},
+            },
+        )
+        if not created:
+            posting.meta = {**(posting.meta or {}), 'delivery_id': 91}
+            posting.save(update_fields=['meta'])
         services.receipt(
             idempotency_key=f'rpt-pack-{uuid4()}',
             lot=self.pack_lot,
@@ -125,6 +143,9 @@ class StockReportApiTests(TestCase):
         self.assertEqual(row['entry_type'], 'receipt')
         self.assertEqual(row['product_id'], self.product.id)
         self.assertEqual(row['quantity'], '100')
+        self.assertEqual(row['purchase_order_id'], 79)
+        self.assertEqual(row['delivery_id'], 91)
+        self.assertEqual(row['po_number'], '43781')
 
         # Alias product_type
         alias = self.client.get(

@@ -39,6 +39,7 @@ _MOVEMENT_SELECT = (
     'lot__product_supplier__outer_unit',
     'lot__product_supplier__inner_unit',
     'lot__shape_format',
+    'posting',
 )
 
 _DEFAULT_LIMIT = 200
@@ -95,6 +96,13 @@ def movement_row(entry: StockEntry) -> dict:
     mapping = product_supplier_for_entry(entry)
     stock_qty = abs(entry.quantity) if entry.quantity is not None else Decimal('0')
     pack = supplier_pack_fields(stock_qty, product, mapping)
+    delivery_id = None
+    try:
+        raw = (entry.posting.meta or {}).get('delivery_id')
+        if raw not in (None, ''):
+            delivery_id = int(raw)
+    except (StockEntryPosting.DoesNotExist, TypeError, ValueError):
+        delivery_id = None
     return {
         'entry_id': entry.id,
         'entry_type': entry.entry_type,
@@ -125,6 +133,12 @@ def movement_row(entry: StockEntry) -> dict:
         'unit_name': unit.name if unit is not None else None,
         'source_document_type': entry.source_document_type,
         'source_document_id': entry.source_document_id,
+        'purchase_order_id': (
+            entry.source_document_id
+            if entry.source_document_type == 'po'
+            else None
+        ),
+        'delivery_id': delivery_id,
         'po_number': entry.po_number,
         'remarks': entry.remarks,
         **pack,

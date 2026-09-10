@@ -185,6 +185,7 @@ SES_LOGO_PATH = os.getenv('SES_LOGO_PATH', '')
 BEDROCK_REGION = os.getenv('BEDROCK_REGION', '')
 BEDROCK_AGENT_ID = os.getenv('BEDROCK_AGENT_ID', '')
 BEDROCK_AGENT_ALIAS_ID = os.getenv('BEDROCK_AGENT_ALIAS_ID', 'TSTALIASID')
+BEDROCK_MODEL_ID = os.getenv('BEDROCK_MODEL_ID', '')
 # Public API origin for one-click email unsubscribe links
 PUBLIC_API_BASE_URL = os.getenv(
     'PUBLIC_API_BASE_URL',

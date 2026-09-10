@@ -179,11 +179,11 @@ class PoReceiveParityTests(TestCase):
         self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
         self.assertEqual(Decimal(row['qty_queued']), Decimal('2'))
 
-    def test_admin_line_label_drives_receive_split(self):
+    def test_admin_format_wins_count_follows_qty(self):
         self.line.label_format = 'box'
-        self.line.label_count = 2
-        self.line.qty_ordered = Decimal('2')
-        self.line.qty_balance = Decimal('2')
+        self.line.label_count = 64  # ordered hint — must not drive split
+        self.line.qty_ordered = Decimal('64')
+        self.line.qty_balance = Decimal('64')
         self.line.save(
             update_fields=[
                 'label_format', 'label_count', 'qty_ordered', 'qty_balance', 'updated_at',
@@ -196,9 +196,10 @@ class PoReceiveParityTests(TestCase):
                 'location_id': self.wh.id,
                 'lines': [{
                     'line_id': self.line.id,
-                    'quantity': '2',
+                    'quantity': '38',
                     'idempotency_key': key,
-                    # warehouse must not override admin plan
+                    'shortfall_reason': 'short_delivery',
+                    # warehouse must not override admin format
                     'label_format': 'pallet',
                     'label_count': 1,
                 }],
@@ -206,7 +207,16 @@ class PoReceiveParityTests(TestCase):
         )
         row = data['receive_results'][0]
         self.assertEqual(row['label_format'], 'box')
-        self.assertEqual(row['transaction_count'], 2)
+        self.assertEqual(row['label_count'], 38)
+        self.assertEqual(row['transaction_count'], 38)
+        for tx in row['transactions']:
+            self.assertEqual(Decimal(tx['quantity_stock']), Decimal('10'))
+            self.assertEqual(tx['label']['label_format'], 'box')
+            # posting meta purchase_qty is set after queue; each part is 1 pack
+            posting = tx.get('posting') or {}
+            meta = posting.get('meta') or {}
+            if meta.get('purchase_qty') not in (None, ''):
+                self.assertEqual(Decimal(meta['purchase_qty']), Decimal('1'))
 
     def test_queued_receive_completes_po_only_after_post(self):
         data = receive_purchase_order(

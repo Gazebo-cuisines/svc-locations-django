@@ -65,8 +65,8 @@ class ClosingStockEmailTests(TestCase):
         )
         self.client = Client()
 
-    @patch('stock_ledger.views.require_any_admin', return_value=None)
-    @patch('stock_ledger.views.attach_user', return_value=None)
+    @patch('stock_ledger.views.reports.require_any_admin', return_value=None)
+    @patch('stock_ledger.views.reports.attach_user', return_value=None)
     def test_recipient_crud(self, *_mocks):
         r = self.client.post(
             '/stock/reports/email-recipients/',

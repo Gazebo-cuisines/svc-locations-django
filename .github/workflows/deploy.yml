@@ -27,6 +27,8 @@ jobs:
           PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL }}
           DEV_SES_FROM_EMAIL: ${{ secrets.DEV_SES_FROM_EMAIL }}
           DEV_PUBLIC_API_BASE_URL: ${{ secrets.DEV_PUBLIC_API_BASE_URL }}
+          BEDROCK_MODEL_ID: ${{ secrets.BEDROCK_MODEL_ID }}
+          DEV_BEDROCK_MODEL_ID: ${{ secrets.DEV_BEDROCK_MODEL_ID }}
         run: |
           set -e
           echo "Validating deployment secrets for branch: $BRANCH"
@@ -36,6 +38,7 @@ jobs:
             [ -n "$DEV_EC2_SSH_KEY" ] || { echo "DEV_EC2_SSH_KEY secret is missing or empty"; exit 1; }
             [ -n "$DEV_SES_FROM_EMAIL" ] || { echo "DEV_SES_FROM_EMAIL secret is missing or empty"; exit 1; }
             [ -n "$DEV_PUBLIC_API_BASE_URL" ] || { echo "DEV_PUBLIC_API_BASE_URL secret is missing or empty"; exit 1; }
+            [ -n "${DEV_BEDROCK_MODEL_ID:-$BEDROCK_MODEL_ID}" ] || { echo "DEV_BEDROCK_MODEL_ID or BEDROCK_MODEL_ID secret is missing or empty"; exit 1; }
             echo "Dev secrets present"
           else
             [ -n "$EC2_HOST" ] || { echo "EC2_HOST secret is missing or empty"; exit 1; }
@@ -43,6 +46,7 @@ jobs:
             [ -n "$EC2_SSH_KEY" ] || { echo "EC2_SSH_KEY secret is missing or empty"; exit 1; }
             [ -n "$SES_FROM_EMAIL" ] || { echo "SES_FROM_EMAIL secret is missing or empty"; exit 1; }
             [ -n "$PUBLIC_API_BASE_URL" ] || { echo "PUBLIC_API_BASE_URL secret is missing or empty"; exit 1; }
+            [ -n "$BEDROCK_MODEL_ID" ] || { echo "BEDROCK_MODEL_ID secret is missing or empty"; exit 1; }
             echo "Prod secrets present"
           fi
 
@@ -53,6 +57,8 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || 'eu-west-2' }}
           SES_FROM_EMAIL: ${{ github.ref_name == 'dev' && secrets.DEV_SES_FROM_EMAIL || secrets.SES_FROM_EMAIL }}
           PUBLIC_API_BASE_URL: ${{ github.ref_name == 'dev' && secrets.DEV_PUBLIC_API_BASE_URL || secrets.PUBLIC_API_BASE_URL }}
+          BEDROCK_REGION: ${{ secrets.BEDROCK_REGION || secrets.AWS_DEFAULT_REGION || 'eu-west-2' }}
+          BEDROCK_MODEL_ID: ${{ github.ref_name == 'dev' && secrets.DEV_BEDROCK_MODEL_ID || secrets.BEDROCK_MODEL_ID }}
         with:
           host: ${{ github.ref_name == 'dev' && secrets.DEV_EC2_HOST || secrets.EC2_HOST }}
           username: ${{ github.ref_name == 'dev' && secrets.DEV_EC2_USERNAME || secrets.EC2_USERNAME }}
@@ -60,7 +66,7 @@ jobs:
           port: ${{ secrets.EC2_PORT || '22' }}
           timeout: 300s
           script_stop: true
-          envs: GITHUB_DEPLOY_TOKEN,AWS_DEFAULT_REGION,SES_FROM_EMAIL,PUBLIC_API_BASE_URL
+          envs: GITHUB_DEPLOY_TOKEN,AWS_DEFAULT_REGION,SES_FROM_EMAIL,PUBLIC_API_BASE_URL,BEDROCK_REGION,BEDROCK_MODEL_ID
           script: |
             set -e
             BASE_DIR="/home/ubuntu"
@@ -78,14 +84,18 @@ jobs:
             git clean -fdq || true
 
             # Upsert SES/email env into .env so gunicorn loads them
-            echo "Updating .env (AWS_DEFAULT_REGION, SES_FROM_EMAIL, PUBLIC_API_BASE_URL)"
+            echo "Updating .env (AWS_DEFAULT_REGION, SES_FROM_EMAIL, PUBLIC_API_BASE_URL, BEDROCK_*)"
             ENV_FILE="$APP_DIR/.env"
             touch "$ENV_FILE"
             TMP_ENV="$(mktemp)"
-            grep -vE '^(AWS_DEFAULT_REGION|SES_FROM_EMAIL|PUBLIC_API_BASE_URL)=' "$ENV_FILE" > "$TMP_ENV" || true
+            grep -vE '^(AWS_DEFAULT_REGION|SES_FROM_EMAIL|PUBLIC_API_BASE_URL|BEDROCK_REGION|BEDROCK_MODEL_ID|BEDROCK_AGENT_ID|BEDROCK_AGENT_ALIAS_ID)=' "$ENV_FILE" > "$TMP_ENV" || true
             printf '%s=%s\n' "AWS_DEFAULT_REGION" "${AWS_DEFAULT_REGION:-eu-west-2}" >> "$TMP_ENV"
             printf '%s=%s\n' "SES_FROM_EMAIL" "${SES_FROM_EMAIL}" >> "$TMP_ENV"
             printf '%s=%s\n' "PUBLIC_API_BASE_URL" "${PUBLIC_API_BASE_URL}" >> "$TMP_ENV"
+            printf '%s=%s\n' "BEDROCK_REGION" "${BEDROCK_REGION:-eu-west-2}" >> "$TMP_ENV"
+            printf '%s=%s\n' "BEDROCK_MODEL_ID" "${BEDROCK_MODEL_ID}" >> "$TMP_ENV"
+            printf '%s=%s\n' "BEDROCK_AGENT_ID" "" >> "$TMP_ENV"
+            printf '%s=%s\n' "BEDROCK_AGENT_ALIAS_ID" "TSTALIASID" >> "$TMP_ENV"
             mv "$TMP_ENV" "$ENV_FILE"
             echo "Updated .env keys"
 

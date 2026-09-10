@@ -186,7 +186,7 @@ class StockManagementHideOpsTests(TestCase):
         self.assertIn(self.posted.id, entry_ids)
 
     def test_audit_timeline_batches_device_codes(self):
-        with patch('stock_ledger.views.codes_for_serials', return_value={}) as mocked:
+        with patch('stock_ledger.views.reports.codes_for_serials', return_value={}) as mocked:
             resp = self.client.get(
                 f'/stock/audit/timeline/?product_id={self.product.id}',
             )

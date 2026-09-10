@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Exists, OuterRef
+
 from product.goods_in import effective_goods_in_type, product_is_direct_consume
 from product.models import ProductGoodsInType, ProductStorageRegime, ProductTechnical
 from purchasing.models import (
@@ -217,6 +219,7 @@ def _entry_label_step(entry: StockEntry) -> dict:
 def _receipt_entries(po_ids: list[int]):
     if not po_ids:
         return StockEntry.objects.none()
+    reversed_qs = StockEntry.objects.filter(reverses_entry_id=OuterRef('pk'))
     return (
         StockEntry.objects
         .filter(
@@ -225,7 +228,8 @@ def _receipt_entries(po_ids: list[int]):
             source_document_id__in=po_ids,
         )
         .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
-        .select_related('label', 'posting')
+        .exclude(Exists(reversed_qs))
+        .select_related('label', 'posting', 'lot')
         .order_by('id')
     )
 
@@ -279,12 +283,12 @@ def _delivery_entry_bounds(po_id: int, delivery_id: int) -> dict[int, tuple[int,
     return bounds
 
 
-def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, list[dict]]:
-    """This visit's labels only: entries stamped with another delivery drop out."""
+def _iter_delivery_receipts(po_id: int, delivery_id: int | None):
+    """This visit's receipts only; unstamped rows use the entry-id window."""
     if delivery_id is None:
-        return _label_steps_by_line_no(po_id)
+        yield from _receipt_entries([po_id])
+        return
     bounds = _delivery_entry_bounds(po_id, delivery_id)
-    by_line: dict[int, list[dict]] = {}
     for entry in _receipt_entries([po_id]):
         line_no = entry.source_document_line
         if line_no is None:
@@ -296,8 +300,90 @@ def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, 
                 continue
         elif stamped != delivery_id:
             continue
+        yield entry
+
+
+def _label_steps_for_delivery(po_id: int, delivery_id: int | None) -> dict[int, list[dict]]:
+    """This visit's labels only: entries stamped with another delivery drop out."""
+    if delivery_id is None:
+        return _label_steps_by_line_no(po_id)
+    by_line: dict[int, list[dict]] = {}
+    for entry in _iter_delivery_receipts(po_id, delivery_id):
+        line_no = entry.source_document_line
+        if line_no is None:
+            continue
         by_line.setdefault(line_no, []).append(_entry_label_step(entry))
     return by_line
+
+
+def _receipts_by_line_no(po_id: int, delivery_id: int | None) -> dict[int, list]:
+    by_line: dict[int, list] = {}
+    for entry in _iter_delivery_receipts(po_id, delivery_id):
+        line_no = entry.source_document_line
+        if line_no is None:
+            continue
+        by_line.setdefault(line_no, []).append(entry)
+    return by_line
+
+
+def _entry_purchase_qty(entry: StockEntry) -> Decimal:
+    try:
+        raw = (entry.posting.meta or {}).get('purchase_qty')
+    except StockEntryPosting.DoesNotExist:
+        raw = None
+    if raw not in (None, ''):
+        try:
+            return Decimal(str(raw))
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+    if entry.quantity_base is not None:
+        return entry.quantity_base
+    return entry.quantity
+
+
+def _lot_groups(entries: list) -> list[dict]:
+    """One group per stock lot so mixed use-by dates become separate form rows."""
+    groups: dict[int, dict] = {}
+    order: list[int] = []
+    for entry in entries:
+        lot_id = entry.lot_id
+        if lot_id is None:
+            continue
+        if lot_id not in groups:
+            lot = entry.lot
+            groups[lot_id] = {
+                'lot_id': lot_id,
+                'use_by': _iso_date(lot.use_by) if lot is not None else None,
+                'qty': Decimal('0'),
+                'entries': [],
+            }
+            order.append(lot_id)
+        group = groups[lot_id]
+        group['entries'].append(entry)
+        group['qty'] += _entry_purchase_qty(entry)
+    return [groups[lot_id] for lot_id in order]
+
+
+def _row_from_lot(block: dict, group: dict) -> tuple[dict, list[dict]]:
+    row = dict(block)
+    row['lot_id'] = group['lot_id']
+    row['use_by'] = group['use_by']
+    row['delivery_qty_received'] = _qty_str(group['qty'])
+    answers = dict(block.get('saved_answers') or {})
+    if group['use_by']:
+        use_by_answer = dict(answers.get('use_by') or {})
+        use_by_answer['value'] = group['use_by']
+        answers['use_by'] = use_by_answer
+    row['saved_answers'] = answers
+    labels = [_entry_label_step(entry) for entry in group['entries']]
+    return row, labels
+
+
+def _split_line_by_lots(block: dict, entries: list) -> list[tuple[dict, list[dict]]]:
+    groups = _lot_groups(entries)
+    if not groups:
+        return [(block, [_entry_label_step(entry) for entry in entries])]
+    return [_row_from_lot(block, group) for group in groups]
 
 
 def delivery_label_counts(po_id: int, delivery_ids: list[int]) -> dict[int, dict]:
@@ -370,6 +456,7 @@ def _line_steps(block: dict, labels: list[dict]) -> dict:
     )
     return {
         'line_id': block['line_id'],
+        'lot_id': block.get('lot_id'),
         'line_qc': bool(block['line_check_ok']),
         'checks': _check_flags(
             (block.get('template') or {}).get('items') or [],
@@ -467,6 +554,7 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         line_blocks.append({
             'line_id': line.id,
             'line_no': line.line_no,
+            'lot_id': None,
             'product_id': line.product_id,
             'product_name': line.product.name,
             'goods_in_type': gin_type,
@@ -513,13 +601,17 @@ def resolve_goods_in_form(po_id: int, delivery_id: int | None = None) -> dict:
         or {}
     )
     header_qc = session.checked_at is not None
-    labels_by_line = _label_steps_for_delivery(
-        po.id, delivery.id if delivery is not None else None,
-    )
-    line_steps = [
-        _line_steps(block, labels_by_line.get(block['line_no'], []))
-        for block in line_blocks
-    ]
+    visit_id = delivery.id if delivery is not None else None
+    receipts_by_line = _receipts_by_line_no(po.id, visit_id)
+    expanded = []
+    line_steps = []
+    for block in line_blocks:
+        for row, labels in _split_line_by_lots(
+            block, receipts_by_line.get(block['line_no'], []),
+        ):
+            expanded.append(row)
+            line_steps.append(_line_steps(row, labels))
+    line_blocks = expanded
     if delivery_id is None:
         resume = delivery
     else:

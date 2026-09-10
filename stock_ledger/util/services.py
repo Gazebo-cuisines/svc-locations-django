@@ -27,7 +27,6 @@ from stock_ledger.models import (
     StockLotOrigin,
 )
 from stock_ledger.stream import publish_balance_delta
-from stock_ledger.util import stickers
 from stock_ledger.util.conversions import (
     StockValidationError,
     packs_to_stock,
@@ -494,6 +493,8 @@ def count_adjustment(
     if counted_quantity is not None:
         counted_quantity, unit_id = _to_stock_qty(lot, counted_quantity, unit_id)
         if source_entry is not None:
+            # Cycle: services → stickers → entry_posting → services
+            from stock_ledger.util import stickers
             current = stickers.remaining_for_entry(source_entry)
         else:
             balance = (

@@ -34,6 +34,42 @@ TOOLS: dict[str, dict] = {
             'location_id': 'Restrict batches to one location.',
         },
     },
+    '/stock/investigate/': {
+        'summary': (
+            'Read-only one-product warehouse dossier: product, goods in, '
+            'goods out, cancelled/reversed (who, how, reason), remaining '
+            'stickers, same-day scan timeline. Return data.briefing verbatim.'
+        ),
+        'params': {
+            'code': 'Bag or product barcode (E280, P72).',
+            'recipe_code': 'Catalogue recipe code, e.g. SPICE0-16.',
+            'product_id': 'Product id.',
+            'q': 'Product name or code search.',
+            'date': 'UK calendar day YYYY-MM-DD. Default today.',
+            'location_id': 'Location for remaining / next-bag (default bag loc).',
+        },
+    },
+    '/stock/scan/goods-out/': {
+        'summary': 'Scan a bag for goods-out: sticker remaining and queued draws.',
+        'params': {
+            'code': 'Bag barcode E{id}.',
+            'location_id': 'Scan location (required).',
+            'expected_product_id': 'Optional product the operator should pick.',
+        },
+    },
+    '/stock/entries/{pk}/': {
+        'summary': 'One ledger entry with posting status and transfer pair.',
+        'params': {'pk': 'stock_entry id.'},
+    },
+    '/stock/products/{product_id}/history/goods-out/': {
+        'summary': 'Posted goods-out history for a product.',
+        'params': {
+            'product_id': 'Product id.',
+            'location_id': 'Optional location filter.',
+            'limit': 'Page size.',
+            'offset': 'Page offset.',
+        },
+    },
     '/stock/atp/': {
         'summary': 'Available to promise for a product.',
         'params': {'product_id': 'Product to check.'},

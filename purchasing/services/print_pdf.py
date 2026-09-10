@@ -79,6 +79,8 @@ def _qty_display(line: dict) -> str:
     visit = line.get('delivery_qty_received')
     if visit not in (None, ''):
         return _fmt(visit)
+    if line.get('lot_id') is not None:
+        return '0'
     recv = line.get('qty_received')
     if recv not in (None, '', '0'):
         return _fmt(recv)

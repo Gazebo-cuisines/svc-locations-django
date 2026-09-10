@@ -97,7 +97,7 @@ def _stock_quantity(line: PurchaseOrderLine, purchase_qty: Decimal) -> Decimal:
 
 def _entry_payload(entry: StockEntry) -> dict:
     # Lazy: avoid import cycle at module load (views → … → receive).
-    from stock_ledger.views import entry_dict
+    from stock_ledger.util.serialize import entry_dict
 
     entry = (
         StockEntry.objects
@@ -165,32 +165,34 @@ def _split_quantities(total: Decimal, parts: int) -> list[Decimal]:
     return chunks
 
 
-def _resolve_label_plan(line: PurchaseOrderLine, raw: dict, index: int) -> tuple[str | None, int]:
-    """Admin line wins; warehouse body only used if line has no label plan."""
+def _resolve_label_plan(
+    line: PurchaseOrderLine,
+    raw: dict,
+    index: int,
+    purchase_qty: Decimal,
+) -> tuple[str | None, int]:
+    """Admin format wins; label count always follows this receive quantity.
+
+    box → one barcode per pack (1 label = 1 box of stock; no fractional split)
+    pallet → one barcode for the whole quantity on this receive
+    """
     if line.label_format not in (None, ''):
         fmt = str(line.label_format).strip().lower()
-        count = int(line.label_count or (1 if fmt == 'pallet' else 0))
     elif raw.get('label_format') not in (None, ''):
         fmt = str(raw.get('label_format')).strip().lower()
-        if raw.get('label_count') in (None, ''):
-            count = 1 if fmt == 'pallet' else 0
-        else:
-            count = int(raw.get('label_count'))
     else:
         return None, 1
     if fmt not in ('pallet', 'box'):
         raise ReceiveError(
             f'lines[{index}].label_format must be pallet or box.',
         )
-    if count < 1:
+    if fmt == 'pallet':
+        return fmt, 1
+    if purchase_qty != purchase_qty.to_integral_value() or purchase_qty < 1:
         raise ReceiveError(
-            f'lines[{index}]: label_count is required for label_format={fmt}.',
+            f'lines[{index}]: box receive quantity must be a whole number >= 1.',
         )
-    if fmt == 'pallet' and count != 1:
-        raise ReceiveError(
-            f'lines[{index}]: pallet requires label_count=1.',
-        )
-    return fmt, count
+    return fmt, int(purchase_qty)
 
 
 def _unit_idempotency_keys(base: str, count: int) -> list[str]:
@@ -207,7 +209,7 @@ def _print_units_for_line(
     idempotency_key: str,
     audit: dict,
 ) -> list:
-    from stock_ledger.views import stock_unit_dict
+    from stock_ledger.util.serialize import stock_unit_dict
 
     print_count = raw.get('print_unit_count')
     print_qty = raw.get('print_quantity_per_unit')
@@ -335,7 +337,9 @@ def receive_purchase_order(
         idempotency_key = str(idempotency_key)
 
         direct_consume = product_is_direct_consume(line.product)
-        label_format, label_count = _resolve_label_plan(line, raw, index)
+        label_format, label_count = _resolve_label_plan(
+            line, raw, index, purchase_qty,
+        )
         if direct_consume:
             _reject_direct_consume_labels(
                 raw=raw, index=index, label_format=label_format,
@@ -430,8 +434,18 @@ def receive_purchase_order(
             'authorised_by_user_id': audit.get('authorised_by_user_id'),
         }
         receipt_audit = {k: v for k, v in receipt_audit.items() if v is not None}
-        qty_parts = _split_quantities(receipt_qty, label_count)
-        purchase_parts = _split_quantities(purchase_qty, label_count)
+        if label_format == 'box':
+            # Hard rule: 1 box barcode = 1 pack. Never fractional-split qty across labels.
+            n = int(purchase_qty)
+            purchase_parts = [Decimal('1')] * n
+            if product_supplier is not None:
+                qty_parts = [Decimal('1')] * n
+            else:
+                one = _stock_quantity(line, Decimal('1'))
+                qty_parts = [one] * n
+        else:
+            qty_parts = _split_quantities(receipt_qty, label_count)
+            purchase_parts = _split_quantities(purchase_qty, label_count)
 
         transactions = []
         last_entry = None
