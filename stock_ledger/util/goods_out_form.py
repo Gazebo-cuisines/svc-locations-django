@@ -53,16 +53,22 @@ def _print_verify(labels: list[dict]) -> tuple[bool, bool]:
     )
 
 
-def adhoc_line_steps(*, line_id: int | None, labels: list[dict]) -> dict:
+def adhoc_line_steps(
+    *, line_id: int | None, labels: list[dict], issued: bool = False,
+) -> dict:
     queued = bool(labels)
     printed, verified = _print_verify(labels)
+    if issued and not queued:
+        # Line was finished earlier today; nothing left to print or scan.
+        printed = verified = True
+    done = queued or issued
     return {
         'line_id': line_id,
-        'find': queued,
-        'qty': queued,
-        'fifo': queued,
-        'scan': queued,
-        'queue': queued,
+        'find': done,
+        'qty': done,
+        'fifo': done,
+        'scan': done,
+        'queue': done,
         'print': printed,
         'verify': verified,
         'labels': labels,
@@ -127,7 +133,10 @@ def _is_queued(entry: StockEntry) -> bool:
     return posting is not None and posting.status == StockEntryPostingStatus.QUEUED
 
 
-def resolve_adhoc_goods_out_form(location_id: int) -> dict:
+def resolve_adhoc_goods_out_form(
+    location_id: int,
+    transfer_group_id: str | None = None,
+) -> dict:
     loc = Location.objects.filter(pk=location_id, visible=True).first()
     if loc is None:
         raise GoodsOutFormError('Location not found.')
@@ -145,6 +154,10 @@ def resolve_adhoc_goods_out_form(location_id: int) -> dict:
         .select_related('label', 'posting', 'lot')
         .order_by('id')
     )
+    if transfer_group_id:
+        # Scope to one cart so two operators on the same location never see —
+        # or cancel — each other's queued stickers.
+        entries = entries.filter(transfer_group_id=transfer_group_id)
     live = [e for e in entries if _is_queued(e) or _posted_on(e, today)]
 
     by_product: dict[int, list[StockEntry]] = defaultdict(list)
@@ -157,16 +170,16 @@ def resolve_adhoc_goods_out_form(location_id: int) -> dict:
     step_rows = []
     answers_lines: dict[str, dict] = {}
     for product_id, group in by_product.items():
-        labels = [label_row(entry) for entry in group]
-        step_rows.append(adhoc_line_steps(line_id=product_id, labels=labels))
-        queued = Decimal('0')
-        issued = Decimal('0')
-        for entry, label in zip(group, labels):
-            qty = abs(entry.quantity)
-            if label['posted']:
-                issued += qty
-            else:
-                queued += qty
+        # Only work still awaiting print/verify is a scannable tile. Entries
+        # already posted today count towards qty_issued and nothing else.
+        queued_entries = [e for e in group if _is_queued(e)]
+        posted_entries = [e for e in group if not _is_queued(e)]
+        labels = [label_row(entry) for entry in queued_entries]
+        queued = sum((abs(e.quantity) for e in queued_entries), Decimal('0'))
+        issued = sum((abs(e.quantity) for e in posted_entries), Decimal('0'))
+        step_rows.append(adhoc_line_steps(
+            line_id=product_id, labels=labels, issued=bool(posted_entries),
+        ))
         answers_lines[str(product_id)] = {
             'qty_queued': _qty_str(queued),
             'qty_issued': _qty_str(issued),

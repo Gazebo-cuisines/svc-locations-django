@@ -432,3 +432,193 @@ class GoodsOutWithoutPlanTests(TestCase):
             data['answers']['lines'][str(self.product.id)]['qty_queued'],
             '25.000000',
         )
+
+    def _queue_goods_out(self, quantity: str) -> dict:
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-cart-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'quantity': quantity,
+                'unit_id': self.unit.id,
+                'queue_stock': True,
+                'source_entry_id': self.entry.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        return resp.json()['data']['out']
+
+    def _form(self, **params) -> dict:
+        query = ''.join(f'&{k}={v}' for k, v in params.items())
+        resp = self.client.get(
+            f'/stock/goods-out/form/?location_id={self.wh.id}{query}',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return resp.json()['data']
+
+    def test_goods_out_form_tiles_exclude_work_already_posted_today(self):
+        """Posted stickers feed qty_issued only; the scan grid stays at the
+        cart, so 'Cancel this queue' can never reach a finished entry."""
+        done = self._queue_goods_out('10')
+        self.client.post(
+            f"/stock/entries/{done['id']}/labels/print/",
+            data={}, content_type='application/json',
+        )
+        verified = self.client.post(
+            f"/stock/entries/{done['id']}/labels/verify/",
+            data={'code': done['entry_code'], 'post_stock': True},
+            content_type='application/json',
+        )
+        self.assertEqual(verified.status_code, 200, verified.content)
+
+        live = self._queue_goods_out('5')
+        line = self._form()['steps']['lines'][0]
+        self.assertEqual(
+            [row['entry_id'] for row in line['labels']], [live['id']],
+        )
+        answers = self._form()['answers']['lines'][str(self.product.id)]
+        self.assertEqual(answers['qty_queued'], '5.000000')
+        self.assertEqual(answers['qty_issued'], '10.000000')
+
+    def test_goods_out_form_scopes_to_one_cart(self):
+        mine = self._queue_goods_out('5')
+        self._queue_goods_out('5')
+        self.assertEqual(
+            len(self._form()['steps']['lines'][0]['labels']), 2,
+        )
+        scoped = self._form(transfer_group_id=mine['transfer_group_id'])
+        self.assertEqual(
+            [row['entry_id'] for row in scoped['steps']['lines'][0]['labels']],
+            [mine['id']],
+        )
+
+    def test_cancelled_entry_cannot_be_printed_or_scanned(self):
+        out = self._queue_goods_out('5')
+        cancelled = self.client.post(
+            f"/stock/entries/{out['id']}/cancel/",
+            data={}, content_type='application/json',
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.content)
+
+        printed = self.client.post(
+            f"/stock/entries/{out['id']}/labels/print/",
+            data={}, content_type='application/json',
+        )
+        self.assertEqual(printed.status_code, 400, printed.content)
+        self.assertIn('cancelled', printed.json()['message'])
+
+        scanned = self.client.post(
+            f"/stock/entries/{out['id']}/labels/verify/",
+            data={'code': out['entry_code']},
+            content_type='application/json',
+        )
+        self.assertEqual(scanned.status_code, 400, scanned.content)
+        self.assertIn('cancelled', scanned.json()['message'])
+
+    def test_amit_e4076_floor_scenario_does_not_repeat(self):
+        """Replay the Sep-10 Unit-2 complaint.
+
+        Morning crew posts many goods-outs. Afternoon guy queues one cart,
+        opens print/scan, and must see *only his live tile* — not a wall of
+        finished stickers. Cancel clears his cart; print/scan of the dead
+        sticker are refused; cancel on someone else's already-posted work
+        stays blocked.
+        """
+        # Enough stock for a busy morning + one afternoon cart.
+        bag = services.receipt(
+            idempotency_key=f'go-in-extra-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('200'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+
+        def queue_from_bag(quantity: str) -> dict:
+            resp = self.client.post(
+                '/stock/transfer/',
+                data={
+                    'idempotency_key': f'go-cart-{uuid4()}',
+                    'lot_id': self.lot.id,
+                    'from_location_id': self.wh.id,
+                    'quantity': quantity,
+                    'unit_id': self.unit.id,
+                    'queue_stock': True,
+                    'source_entry_id': bag.id,
+                },
+                content_type='application/json',
+            )
+            self.assertEqual(resp.status_code, 201, resp.content)
+            return resp.json()['data']['out']
+
+        morning = []
+        for _ in range(12):
+            out = queue_from_bag('5')
+            self.client.post(
+                f"/stock/entries/{out['id']}/labels/print/",
+                data={}, content_type='application/json',
+            )
+            ok = self.client.post(
+                f"/stock/entries/{out['id']}/labels/verify/",
+                data={'code': out['entry_code'], 'post_stock': True},
+                content_type='application/json',
+            )
+            self.assertEqual(ok.status_code, 200, ok.content)
+            morning.append(out)
+
+        amit = queue_from_bag('10')
+        form = self._form()
+        tiles = [
+            row['entry_id']
+            for line in form['steps']['lines']
+            for row in line['labels']
+        ]
+        self.assertEqual(
+            tiles, [amit['id']],
+            "print/scan grid must not list today's finished stickers",
+        )
+        scoped = self._form(transfer_group_id=amit['transfer_group_id'])
+        self.assertEqual(
+            [row['entry_id'] for row in scoped['steps']['lines'][0]['labels']],
+            [amit['id']],
+        )
+
+        cancel_mine = self.client.post(
+            f"/stock/entries/{amit['id']}/cancel/",
+            data={}, content_type='application/json',
+        )
+        self.assertEqual(cancel_mine.status_code, 200, cancel_mine.content)
+        after_cancel = self._form()
+        live_tiles = [
+            row['entry_id']
+            for line in after_cancel['steps']['lines']
+            for row in line['labels']
+        ]
+        self.assertEqual(live_tiles, [])
+
+        print_dead = self.client.post(
+            f"/stock/entries/{amit['id']}/labels/print/",
+            data={}, content_type='application/json',
+        )
+        self.assertEqual(print_dead.status_code, 400, print_dead.content)
+        self.assertIn('cancelled', print_dead.json()['message'])
+
+        scan_dead = self.client.post(
+            f"/stock/entries/{amit['id']}/labels/verify/",
+            data={'code': amit['entry_code']},
+            content_type='application/json',
+        )
+        self.assertEqual(scan_dead.status_code, 400, scan_dead.content)
+        self.assertIn('cancelled', scan_dead.json()['message'])
+
+        # After cancel, first tile would previously become a finished morning
+        # sticker — cancel on that must still be refused.
+        first_morning = morning[0]
+        cancel_posted = self.client.post(
+            f"/stock/entries/{first_morning['id']}/cancel/",
+            data={}, content_type='application/json',
+        )
+        self.assertEqual(cancel_posted.status_code, 400, cancel_posted.content)
+        self.assertIn('already posted', cancel_posted.json()['message'])

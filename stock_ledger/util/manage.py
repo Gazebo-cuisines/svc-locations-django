@@ -316,7 +316,16 @@ def _enrich_operator_copy(
 
 
 def _draw_row(entry: StockEntry, *, actor_names: dict[int, str]) -> dict:
-    return manage_entry_detail(entry, actor_names=actor_names)
+    posting = entry_posting.get_posting(entry)
+    return {
+        **manage_entry_detail(entry, actor_names=actor_names),
+        # No posting row means the entry went straight to the balance.
+        'posting_status': (
+            posting.status if posting is not None
+            else StockEntryPostingStatus.POSTED
+        ),
+        'is_adjustment': entry.entry_type == StockEntryType.COUNT_ADJUSTMENT,
+    }
 
 
 def get_entry_for_manage(entry_id: int) -> StockEntry:
@@ -596,8 +605,11 @@ def build_manage_detail(entry: StockEntry) -> dict:
             ],
         }
 
-    sticker_remaining = None
+    sticker_initial = sticker_drawn = sticker_remaining = None
     if entry.entry_type == StockEntryType.RECEIPT:
+        sticker_initial = _dec(abs(entry.quantity))
+        # Same rows remaining subtracts, so the three figures reconcile.
+        sticker_drawn = _dec(stickers.drawn_from_entry(entry))
         sticker_remaining = _dec(stickers.remaining_for_entry(entry))
 
     return {
@@ -609,6 +621,8 @@ def build_manage_detail(entry: StockEntry) -> dict:
         'posting': entry_posting.posting_dict(posting) if posting else None,
         'label': entry_labels.label_state_dict(label) if label else None,
         'stock_units': _stock_unit_rows(entry.id),
+        'sticker_initial': sticker_initial,
+        'sticker_drawn': sticker_drawn,
         'sticker_remaining': sticker_remaining,
         'queued_draws': (
             stickers.queued_draws_for_entry(entry)
