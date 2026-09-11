@@ -291,15 +291,13 @@ class AdhocGoodsInQcTests(TestCase):
         self.assertFalse(result['line']['line_check_ok'])
         self.assertEqual(result['status'], AdhocGoodsInStatus.OPEN)
         self.assertIn('use_by', result['failed_codes'])
-        self.assertIn('product_temperature', result['failed_codes'])
+        self.assertNotIn('product_temperature', result['failed_codes'])
         self.assertTrue(result['failed_details'])
         by_code = {d['code']: d for d in result['failed_details']}
         self.assertEqual(by_code['use_by']['reason'], 'shelf_life')
         self.assertIn('14 days', by_code['use_by']['message'])
-        self.assertEqual(by_code['product_temperature']['reason'], 'out_of_range')
-        self.assertIn('-25', by_code['product_temperature']['message'])
-        self.assertIn('-18', by_code['product_temperature']['message'])
         self.assertIn('Inform QC/QA', result['qc_blocked_message'])
+        self.assertEqual(result['line']['product_temperature'], '2.5')
 
     def test_http_start_and_get(self):
         client = Client()
