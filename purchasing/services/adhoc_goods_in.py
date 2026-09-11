@@ -411,10 +411,10 @@ def submit_adhoc_line_qc(session_id: int, *, body: dict) -> dict:
 
         min_v = max_v = None
         if item.source == 'product.temp_bounds':
-            min_v, max_v = temp_lo, temp_hi
+            # Record expected bounds for the UI; do not block any entered temp.
             answer['bounds'] = {
-                'min': str(min_v) if min_v is not None else None,
-                'max': str(max_v) if max_v is not None else None,
+                'min': str(temp_lo) if temp_lo is not None else None,
+                'max': str(temp_hi) if temp_hi is not None else None,
             }
 
         fails = answer_fails(item, answer, min_value=min_v, max_value=max_v)
