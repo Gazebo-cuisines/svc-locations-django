@@ -355,7 +355,7 @@ def closing_stock_report_api(request):
         {
             'as_of': as_of.isoformat(),
             'view': view,
-            'group_by': 'product_shape' if view == 'consolidated' else None,
+            'group_by': 'product' if view == 'consolidated' else None,
             'count': len(rows),
             'results': rows,
         },

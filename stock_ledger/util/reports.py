@@ -289,12 +289,13 @@ def closing_balances_as_of(
 
 def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
     """
-    Roll up lot×location detail into product × product_supplier (shape) totals.
+    Roll up lot×location detail into one row per product.
     earliest/latest use_by and production_date across lots in the group.
+    Pack/Sage fields kept only when every lot shares one product_supplier.
     """
-    buckets: dict[tuple, dict] = {}
+    buckets: dict[object, dict] = {}
     for row in detail_rows:
-        key = (row.get('product_id'), row.get('product_supplier_id'))
+        key = row.get('product_id')
         qty = Decimal(str(row.get('quantity') or 0))
         qty_base = row.get('quantity_base')
         base = Decimal(str(qty_base)) if qty_base not in (None, '') else None
@@ -302,6 +303,7 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
         production_date = row.get('production_date')
         loc_id = row.get('location_id')
         lot_id = row.get('lot_id')
+        ps_id = row.get('product_supplier_id')
 
         bucket = buckets.get(key)
         if bucket is None:
@@ -314,16 +316,11 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
                 'goods_in_type': row.get('goods_in_type'),
                 'unit_id': row.get('unit_id'),
                 'unit_name': row.get('unit_name'),
-                'product_supplier_id': row.get('product_supplier_id'),
-                'supplier_code': row.get('supplier_code'),
-                'sage_product_code': row.get('sage_product_code'),
-                'supplier_product_name': row.get('supplier_product_name'),
-                'shape_format_label': row.get('shape_format_label'),
-                'pack_unit_name': row.get('pack_unit_name'),
                 '_qty': qty,
                 '_qty_base': base,
                 '_lot_ids': {lot_id} if lot_id is not None else set(),
                 '_loc_ids': {loc_id} if loc_id is not None else set(),
+                '_ps_ids': {ps_id} if ps_id is not None else set(),
                 '_use_bys': {use_by} if use_by else set(),
                 '_production_dates': (
                     {production_date} if production_date else set()
@@ -344,19 +341,21 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
             bucket['_lot_ids'].add(lot_id)
         if loc_id is not None:
             bucket['_loc_ids'].add(loc_id)
+        if ps_id is not None:
+            bucket['_ps_ids'].add(ps_id)
         if use_by:
             bucket['_use_bys'].add(use_by)
         if production_date:
             bucket['_production_dates'].add(production_date)
 
-    ps_ids = {
-        b['product_supplier_id']
+    all_ps_ids = {
+        ps_id
         for b in buckets.values()
-        if b.get('product_supplier_id') is not None
+        for ps_id in b['_ps_ids']
     }
     mappings = {
         row.id: row
-        for row in ProductSupplier.objects.filter(id__in=ps_ids).select_related(
+        for row in ProductSupplier.objects.filter(id__in=all_ps_ids).select_related(
             'outer_unit', 'inner_unit',
         )
     }
@@ -367,10 +366,15 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
         qty_base = bucket.pop('_qty_base')
         lot_ids = bucket.pop('_lot_ids')
         loc_ids = bucket.pop('_loc_ids')
+        ps_ids = bucket.pop('_ps_ids')
         use_bys = bucket.pop('_use_bys')
         production_dates = bucket.pop('_production_dates')
         product = bucket.pop('_product')
-        mapping = mappings.get(bucket.get('product_supplier_id'))
+        mapping = (
+            mappings.get(next(iter(ps_ids)))
+            if len(ps_ids) == 1
+            else None
+        )
         pack = supplier_pack_fields(abs(qty), product, mapping)
         use_sorted = sorted(use_bys)
         prod_sorted = sorted(production_dates)
@@ -390,11 +394,7 @@ def consolidate_closing_balances(detail_rows: list[dict]) -> list[dict]:
             'location_count': len(loc_ids),
             **pack,
         })
-    out.sort(key=lambda r: (
-        (r.get('product_name') or '').lower(),
-        r.get('shape_format_label') or '',
-        r.get('product_supplier_id') or 0,
-    ))
+    out.sort(key=lambda r: (r.get('product_name') or '').lower())
     return out
 
 
