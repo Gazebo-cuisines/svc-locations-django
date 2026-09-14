@@ -461,20 +461,14 @@ class StockReportApiTests(TestCase):
         self.assertEqual(consol.status_code, 200, consol.content)
         body = consol.json()['data']
         self.assertEqual(body['view'], 'consolidated')
-        self.assertEqual(body['group_by'], 'product_shape')
-        consol_row = next(
-            r for r in body['results']
-            if r['product_supplier_id'] == mapping.id
-        )
+        self.assertEqual(body['group_by'], 'product')
+        self.assertEqual(len(body['results']), 1)
+        consol_row = body['results'][0]
         detail = self.client.get(
             '/stock/reports/closing-stock/',
             {'as_of': '2026-08-20', 'product_id': self.product.id},
         ).json()['data']['results']
-        expected_qty = sum(
-            Decimal(r['quantity'])
-            for r in detail
-            if r.get('product_supplier_id') == mapping.id
-        )
+        expected_qty = sum(Decimal(r['quantity']) for r in detail)
         self.assertEqual(Decimal(consol_row['quantity']), expected_qty)
         self.assertEqual(
             Decimal(consol_row['pack_quantity']),
