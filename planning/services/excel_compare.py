@@ -26,7 +26,6 @@ from planning.models import (
 )
 from planning.services import explode, explode_batchmult, lifecycle
 from product.models import Product
-from recipe.models import Recipe
 
 PACK_SHEET = 'PACKING PLAN'
 NAME_MATCH_MIN = 0.84
@@ -339,7 +338,21 @@ def _ensure_draft(*, plan_id, plan_date, location, remarks):
 
 
 def _system_rm_kg(run_id: int) -> dict[int, dict]:
-    cooked = set(Recipe.objects.values_list('product_id', flat=True))
+    """Leaf RM on this run. Skip only nodes that have children here.
+
+    A draft/empty Recipe row (water, salt, sugar) used to hide the line
+    even though explode stored the grams on that product.
+    """
+    parent_req_ids = PlanRequirement.objects.filter(
+        run_id=run_id,
+        parent_requirement_id__isnull=False,
+    ).values_list('parent_requirement_id', flat=True)
+    intermediate = set(
+        PlanRequirement.objects.filter(
+            run_id=run_id,
+            id__in=parent_req_ids,
+        ).values_list('product_id', flat=True)
+    )
     rows = (
         PlanRequirement.objects.filter(run_id=run_id)
         .values('product_id')
@@ -354,7 +367,7 @@ def _system_rm_kg(run_id: int) -> dict[int, dict]:
     out = {}
     for row in rows:
         product = products[row['product_id']]
-        if product.id in cooked:
+        if product.id in intermediate:
             continue
         unit = product.unit.name if product.unit_id else ''
         out[product.id] = {
@@ -530,12 +543,13 @@ def run_excel_compare(
             if pid in used:
                 continue
             product = sys['product']
+            kg = sys['kg']
             system_only.append({
                 'product_id': pid,
                 'recipe_code': product.recipe_code,
                 'product_name': product.name,
-                'system_kg': _qty(sys['kg'] if sys['kg'] is not None else sys['gross']),
-                'unit': sys['unit'],
+                'system_kg': _qty(kg if kg is not None else sys['gross']),
+                'unit': 'kg' if kg is not None else sys['unit'],
                 'fix': 'in explode, not in Excel — extra BOM or code mismatch',
             })
 
@@ -584,19 +598,15 @@ def rerun_excel_compare(row: ExcelCompareReport, driver: str) -> dict:
 
     run = _run_driver(driver, int(plan_id))
     sys_by_id = _system_rm_kg(run.id)
-
-    product_ids = [
-        r.get('product_id')
-        for r in (payload.get('rm_compare') or [])
-        if r.get('product_id')
-    ]
-    products = Product.objects.in_bulk(product_ids)
+    resolve = _product_index(load_code_map())
 
     used: set[int] = set()
     rm_rows = []
     for stored in payload.get('rm_compare') or []:
-        pid = stored.get('product_id')
-        product = products.get(pid) if pid else None
+        product, how = resolve(
+            stored.get('excel_code') or '',
+            stored.get('excel_name') or '',
+        )
         excel_kg = _dec(stored.get('excel_kg')) or Decimal('0')
         rebuilt = {
             'code': stored.get('excel_code'),
@@ -604,7 +614,7 @@ def rerun_excel_compare(row: ExcelCompareReport, driver: str) -> dict:
             'sheet': stored.get('sheet'),
             'kg': excel_kg,
             'product': product,
-            'how': stored.get('match') or 'code',
+            'how': how,
         }
         sys = sys_by_id.get(product.id) if product else None
         if product:
@@ -616,12 +626,13 @@ def rerun_excel_compare(row: ExcelCompareReport, driver: str) -> dict:
         if pid in used:
             continue
         product = sys['product']
+        kg = sys['kg']
         system_only.append({
             'product_id': pid,
             'recipe_code': product.recipe_code,
             'product_name': product.name,
-            'system_kg': _qty(sys['kg'] if sys['kg'] is not None else sys['gross']),
-            'unit': sys['unit'],
+            'system_kg': _qty(kg if kg is not None else sys['gross']),
+            'unit': 'kg' if kg is not None else sys['unit'],
             'fix': 'in explode, not in Excel — extra BOM or code mismatch',
         })
 
