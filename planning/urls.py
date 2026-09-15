@@ -1,6 +1,7 @@
 from django.urls import path
 
 from planning import views
+from planning import views_batchmult
 from planning import views_chain_net
 from planning import views_excel_compare
 
@@ -20,6 +21,11 @@ urlpatterns = [
         'plans/<int:plan_id>/chain-net/',
         views_chain_net.plan_chain_net_api,
         name='planning-plan-chain-net',
+    ),
+    path(
+        'plans/<int:plan_id>/batch-mult/',
+        views_batchmult.plan_batchmult_api,
+        name='planning-plan-batch-mult',
     ),
     
     
