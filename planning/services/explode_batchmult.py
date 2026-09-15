@@ -201,18 +201,57 @@ def _convert_to_stock(
     bom_unit_id: int | None,
     stock_unit_id: int | None,
     product_id: int,
-) -> Decimal:
+    meta: _Meta,
+) -> tuple[Decimal, dict | None]:
     if (
         bom_unit_id is None
         or stock_unit_id is None
         or bom_unit_id == stock_unit_id
     ):
-        return qty
+        return qty, None
+    bom_name = meta.unit_name(bom_unit_id) or bom_unit_id
+    stock_name = meta.unit_name(stock_unit_id) or stock_unit_id
     try:
         product = Product.objects.get(pk=product_id)
-        return to_product_unit(qty, bom_unit_id, product)
+        converted = to_product_unit(qty, bom_unit_id, product)
     except StockValidationError:
-        return qty
+        return qty, {
+            'op': 'convert_uom',
+            'skipped': True,
+            'reason': 'missing_uom_conversion',
+            'from': f'{_dec(qty)} {bom_name}',
+            'to': f'{_dec(qty)} {stock_name}',
+        }
+    return converted, {
+        'op': 'convert_uom',
+        'formula': 'bom_unit → stock_unit',
+        'from': f'{_dec(qty)} {bom_name}',
+        'to': f'{_dec(converted)} {stock_name}',
+    }
+
+
+def _scale_step(
+    *,
+    parent_gross: Decimal,
+    bom_qty: Decimal,
+    denom: Decimal | None,
+    yield_factor: Decimal,
+    result: Decimal,
+) -> dict:
+    formula = ['parent_gross × bom_qty']
+    values = [f'{_dec(parent_gross)} × {_dec(bom_qty)}']
+    if denom:
+        formula.append('batch_quantity')
+        values.append(_dec(denom))
+    if yield_factor != Decimal('1'):
+        formula.append('product_yield')
+        values.append(_dec(yield_factor))
+    return {
+        'op': 'scale_bom',
+        'formula': ' / '.join(formula),
+        'from': ' / '.join(values),
+        'to': _dec(result),
+    }
 
 
 def _accumulate(
@@ -277,6 +316,7 @@ def _net_node(
     run: PlanRun | None = None,
     plan_line: PlanLine | None = None,
     parent: PlanRequirement | None = None,
+    trace: list[dict] | None = None,
 ) -> dict:
     if depth > MAX_BOM_DEPTH:
         raise PlanningError(f'BOM depth exceeded MAX_BOM_DEPTH={MAX_BOM_DEPTH}')
@@ -293,6 +333,7 @@ def _net_node(
 
     # Leaf raw material: no recipe -> accumulate demand and stop.
     if recipe_spec is None:
+        leaf_unit = meta.unit_name(product.unit_id)
         leaf_spec = product_adapter.get_product_spec(product_id)
         leaf_stock, leaf_lots, leaf_by_location = _node_stock(
             leaf_spec, product_id, meta,
@@ -319,14 +360,24 @@ def _net_node(
                 process_loss=Decimal('1'),
                 balance=demand,
                 closed=False,
-                calc_json={'v': 1, 'kind': 'material', 'driver': DRIVER_VERSION},
+                calc_json={
+                    'v': 1,
+                    'kind': 'material',
+                    'driver': DRIVER_VERSION,
+                    'summary': (
+                        f'Raw material {_dec(demand)} {leaf_unit or ""}'.strip()
+                        + ' — exact, never scaled by rounded batches.'
+                    ),
+                    'steps': list(trace or []),
+                    'result': {'net': _dec(demand), 'gross': _dec(demand)},
+                },
             )
         return {
             'product_id': product_id,
             'product_name': product.name,
             'recipe_code': product.recipe_code,
             'unit_id': product.unit_id,
-            'unit_name': meta.unit_name(product.unit_id),
+            'unit_name': leaf_unit,
             'has_recipe': False,
             'demand': _dec(demand),
             'stock': _dec(leaf_stock),
@@ -393,6 +444,46 @@ def _net_node(
         increment=increment,
     )
 
+    steps = list(trace or [])
+    steps.append(
+        {
+            'op': 'stock_net',
+            'formula': 'demand - stock applied',
+            'from': f'{_dec(demand)} - {_dec(stock_applied)}',
+            'to': _dec(net_demand),
+        }
+        if consider_stock
+        else {
+            'op': 'stock_net',
+            'skipped': True,
+            'reason': 'consider_stock=false',
+        }
+    )
+    steps.append({
+        'op': 'gross',
+        'formula': 'net / recipe_yield',
+        'from': f'{_dec(net_demand)} / {_dec(process_loss)}',
+        'to': _dec(effective),
+    })
+    steps.append(
+        {
+            'op': 'batch_plan',
+            'formula': 'production schedule only — raw material stays exact',
+            'from': (
+                f'{_dec(effective if regime == REGIME_COOK else net_demand)}'
+                f' / batch {_dec(batch_yield)}'
+            ),
+            'to': f'{_dec(batches)} batches = {_dec(production_output)}',
+            'regime': regime,
+        }
+        if batches is not None
+        else {
+            'op': 'batch_plan',
+            'skipped': True,
+            'reason': f'{regime}: no batch size configured',
+        }
+    )
+
     # Persist this recipe node first so children can link it as parent.
     req = None
     if run is not None:
@@ -425,6 +516,8 @@ def _net_node(
                 'production_batches': _dec(batches),
                 'production_output': _dec(production_output),
                 'summary': explanation,
+                'steps': steps,
+                'result': {'net': _dec(net_demand), 'gross': _dec(effective)},
             },
         )
 
@@ -446,12 +539,24 @@ def _net_node(
             process_batch=recipe_spec.process_batch,
             parent_recipe_code=recipe_spec.recipe_code,
         )
-        child_net = _convert_to_stock(
+        child_trace = [
+            _scale_step(
+                parent_gross=effective,
+                bom_qty=component.quantity,
+                denom=denom,
+                yield_factor=yf,
+                result=child_net,
+            )
+        ]
+        child_net, uom_step = _convert_to_stock(
             child_net,
             bom_unit_id=component.unit_id,
             stock_unit_id=child_product.unit_id,
             product_id=child_product.id,
+            meta=meta,
         )
+        if uom_step is not None:
+            child_trace.append(uom_step)
         children.append(
             _net_node(
                 product_id=component.product_id,
@@ -466,6 +571,7 @@ def _net_node(
                 run=run,
                 plan_line=None,
                 parent=req,
+                trace=child_trace,
             )
         )
 

@@ -27,6 +27,7 @@
             {"key": "location_id", "value": "{{location_id}}", "type": "text"},
             {"key": "plan_date", "value": "2026-08-19", "type": "text"},
             {"key": "qty_mode", "value": "cases", "type": "text"},
+            {"key": "driver", "value": "explode", "type": "text"},
             {"key": "dry_run", "value": "false", "type": "text"}
           ]
         },

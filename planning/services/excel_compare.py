@@ -21,15 +21,23 @@ from planning.models import (
     PlanLine,
     PlanLineSource,
     PlanRequirement,
+    PlanRun,
     PlanStatus,
 )
-from planning.services import explode, lifecycle
+from planning.services import explode, explode_batchmult, lifecycle
 from product.models import Product
 from recipe.models import Recipe
 
 PACK_SHEET = 'PACKING PLAN'
 NAME_MATCH_MIN = 0.84
 DEFAULT_MAP = Path('docs/planning-compare/code-map.json')
+
+DRIVER_EXPLODE = 'explode'
+DRIVER_BATCHMULT = 'batchmult'
+DRIVERS = {
+    DRIVER_EXPLODE: explode.DRIVER_VERSION,
+    DRIVER_BATCHMULT: explode_batchmult.DRIVER_VERSION,
+}
 
 
 class ExcelCompareError(Exception):
@@ -429,6 +437,18 @@ def _rm_payload(row, sys, dry_run) -> dict:
     }
 
 
+def _run_driver(driver: str, plan_id: int) -> PlanRun:
+    """Explode the draft with the chosen driver and hand back its PlanRun.
+
+    Both drivers write the same PlanRequirement shape, so the RM comparison
+    below reads them identically; only the maths behind the numbers differs.
+    """
+    if driver == DRIVER_BATCHMULT:
+        result = explode_batchmult.run_batchmult_plan(plan_id, persist=True)
+        return PlanRun.objects.get(pk=result['run']['run_id'])
+    return explode.run_explode(plan_id)
+
+
 def run_excel_compare(
     *,
     source,
@@ -439,12 +459,17 @@ def run_excel_compare(
     plan_id: int | None = None,
     code_map: dict[str, str] | None = None,
     remarks: str | None = None,
+    driver: str = DRIVER_EXPLODE,
 ) -> dict:
     location = Location.objects.filter(pk=location_id).first()
     if location is None:
         raise ExcelCompareError(f'location {location_id} not found')
     if qty_mode not in ('packs', 'cases'):
         raise ExcelCompareError('qty_mode must be packs or cases')
+    if driver not in DRIVERS:
+        raise ExcelCompareError(
+            'driver must be ' + ' or '.join(sorted(DRIVERS))
+        )
 
     fg_lines, excel_rm = parse_workbook(source)
     resolve = _product_index(code_map if code_map is not None else load_code_map())
@@ -487,7 +512,7 @@ def run_excel_compare(
                 override_align_last_batch=False,
                 sort_order=i,
             )
-        run = explode.run_explode(plan.id)
+        run = _run_driver(driver, plan.id)
         sys_by_id = _system_rm_kg(run.id)
 
     used = set()
@@ -522,6 +547,8 @@ def run_excel_compare(
         'plan_date': plan_date.isoformat(),
         'qty_mode': qty_mode,
         'dry_run': dry_run,
+        'driver': driver,
+        'driver_version': run.driver_version if run else DRIVERS[driver],
         'unmapped_fg': unmapped_fg,
         'finished_goods': [_fg_payload(r) for r in mapped_fg],
         'rm_compare': rm_rows,
@@ -540,6 +567,87 @@ def public_result(result: dict) -> dict:
     return {k: v for k, v in result.items() if not k.startswith('_')}
 
 
+def rerun_excel_compare(row: ExcelCompareReport, driver: str) -> dict:
+    """Re-explode the stored draft with another driver; Excel kg stay as uploaded."""
+    if driver not in DRIVERS:
+        raise ExcelCompareError(
+            'driver must be ' + ' or '.join(sorted(DRIVERS))
+        )
+    payload = row.payload or {}
+    plan_id = row.plan_id or payload.get('plan_id')
+    if not plan_id:
+        raise ExcelCompareError(
+            'This report is a dry run — submit again (dry run off) and pick Batch mult.'
+        )
+    if not Plan.objects.filter(pk=plan_id).exists():
+        raise ExcelCompareError(f'plan {plan_id} not found')
+
+    run = _run_driver(driver, int(plan_id))
+    sys_by_id = _system_rm_kg(run.id)
+
+    product_ids = [
+        r.get('product_id')
+        for r in (payload.get('rm_compare') or [])
+        if r.get('product_id')
+    ]
+    products = Product.objects.in_bulk(product_ids)
+
+    used: set[int] = set()
+    rm_rows = []
+    for stored in payload.get('rm_compare') or []:
+        pid = stored.get('product_id')
+        product = products.get(pid) if pid else None
+        excel_kg = _dec(stored.get('excel_kg')) or Decimal('0')
+        rebuilt = {
+            'code': stored.get('excel_code'),
+            'name': stored.get('excel_name'),
+            'sheet': stored.get('sheet'),
+            'kg': excel_kg,
+            'product': product,
+            'how': stored.get('match') or 'code',
+        }
+        sys = sys_by_id.get(product.id) if product else None
+        if product:
+            used.add(product.id)
+        rm_rows.append(_rm_payload(rebuilt, sys, False))
+
+    system_only = []
+    for pid, sys in sorted(sys_by_id.items()):
+        if pid in used:
+            continue
+        product = sys['product']
+        system_only.append({
+            'product_id': pid,
+            'recipe_code': product.recipe_code,
+            'product_name': product.name,
+            'system_kg': _qty(sys['kg'] if sys['kg'] is not None else sys['gross']),
+            'unit': sys['unit'],
+            'fix': 'in explode, not in Excel — extra BOM or code mismatch',
+        })
+
+    result = {
+        'plan_id': int(plan_id),
+        'run_id': run.id,
+        'run_status': run.status,
+        'location_id': row.location_id,
+        'plan_date': (
+            row.plan_date.isoformat()
+            if row.plan_date
+            else payload.get('plan_date')
+        ),
+        'qty_mode': payload.get('qty_mode') or 'cases',
+        'dry_run': False,
+        'driver': driver,
+        'driver_version': run.driver_version,
+        'unmapped_fg': payload.get('unmapped_fg') or [],
+        'finished_goods': payload.get('finished_goods') or [],
+        'rm_compare': rm_rows,
+        'system_only': system_only,
+        'explode_audit': build_explode_audit(run.id),
+    }
+    return persist_report(result, row.file_name)
+
+
 def persist_report(result: dict, file_name: str = '') -> dict:
     pub = public_result(result)
     row = ExcelCompareReport.objects.create(
@@ -556,8 +664,11 @@ def persist_report(result: dict, file_name: str = '') -> dict:
 
 
 def report_summary(row: ExcelCompareReport) -> dict:
+    payload = row.payload or {}
     return {
         'id': row.id,
+        'driver': payload.get('driver'),
+        'driver_version': payload.get('driver_version'),
         'created_at': row.created_at.isoformat() if row.created_at else None,
         'location_id': row.location_id,
         'plan_date': row.plan_date.isoformat() if row.plan_date else None,
