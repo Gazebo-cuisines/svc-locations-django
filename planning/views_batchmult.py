@@ -1,6 +1,8 @@
-"""HTTP for the experimental batch-multiplier driver. Read-only.
+"""HTTP for the experimental batch-multiplier driver.
 
-Does not write PlanRun / PlanRequirement or touch the live explode engine.
+Read-only by default. With ``persist=true`` it writes a PlanRun /
+PlanRequirement tree tagged ``driver_version='batchmult-0.1'``, isolated
+from production runs by the tag; it never touches the live explode engine.
 """
 
 from __future__ import annotations
@@ -75,16 +77,19 @@ def plan_batchmult_api(request, plan_id: int):
     | line_ids | no | List of plan_line ids to include; omit = all lines |
     | increment | no | Fractional batch increment for the belt regime (default `0.25`) |
     | consider_stock | no | Net demand against eligible stock before batching (default `false`) |
+    | persist | no | Save a PlanRun + PlanRequirement tree tagged `batchmult-0.1` (default `false`) |
+    | actor_name | no | Stamp for the run (default `System Admin`); only used with `persist` |
 
     #### Response body
 
     Success payload includes `plan_id`, `plan_date`, `driver_version`,
-    `increment`, `consider_stock`, `items[]` (per demand line: the full BOM
-    tree with `regime`, exact `effective_output`, production-only
-    `production_batches` / `production_output` / `batch_yield`, and a
-    plain-English `explanation` on every recipe node), and `ingredients[]`
-    (raw-material rollup with `quantity`, `unit_name`, and `kg` for diffing
-    against the Fresh Products sheets).
+    `increment`, `consider_stock`, `persisted`, `run` (`run_id` / `run_number`
+    / `status` when persisted, else `null`), `items[]` (per demand line: the
+    full BOM tree with `regime`, exact `effective_output`, production-only
+    `production_batches` / `production_output` / `batch_yield`, a
+    plain-English `explanation`, and `requirement_id` when persisted), and
+    `ingredients[]` (raw-material rollup with `quantity`, `unit_name`, and
+    `kg` for diffing against the Fresh Products sheets).
 
     #### Status codes
 
@@ -119,6 +124,11 @@ def plan_batchmult_api(request, plan_id: int):
             return api_error('increment must be > 0.')
 
     consider_stock = bool(body.get('consider_stock', False))
+    persist = bool(body.get('persist', False))
+
+    actor_name = body.get('actor_name')
+    if actor_name is not None and not isinstance(actor_name, str):
+        return api_error('actor_name must be a string.')
 
     try:
         data = explode_batchmult.run_batchmult_plan(
@@ -126,6 +136,8 @@ def plan_batchmult_api(request, plan_id: int):
             line_ids=line_ids,
             increment=increment,
             consider_stock=consider_stock,
+            persist=persist,
+            actor_name=actor_name,
         )
     except PlanningError as exc:
         msg = str(exc)

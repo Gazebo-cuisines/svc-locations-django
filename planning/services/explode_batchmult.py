@@ -23,14 +23,24 @@ raw-material rollup for diffing against the day-plan workbook.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from decimal import ROUND_CEILING, Decimal
+
+from django.db import transaction
+from django.utils import timezone
 
 from product.models import Product, Unit
 
 from planning.adapters import product as product_adapter
 from planning.adapters import recipe as recipe_adapter
-from planning.models import Plan, PlanLine, ResourceProductRate
+from planning.models import (
+    Plan,
+    PlanLine,
+    PlanRequirement,
+    PlanRun,
+    PlanRunStatus,
+    Resource,
+    ResourceProductRate,
+)
 from planning.services import netting
 from planning.services.exceptions import PlanningError
 from recipe.utils import batch_scale_denom, scaled_child_net
@@ -186,6 +196,14 @@ def _accumulate(rollup: dict[int, dict], *, product: Product, qty: Decimal) -> N
         acc['quantity'] += qty
 
 
+def _safe_resource_id(resource_id: int | None) -> int | None:
+    if resource_id is None:
+        return None
+    if Resource.objects.filter(pk=resource_id).exists():
+        return resource_id
+    return None
+
+
 def _net_node(
     *,
     product_id: int,
@@ -197,6 +215,9 @@ def _net_node(
     plan_date,
     meta: _Meta,
     rollup: dict[int, dict],
+    run: PlanRun | None = None,
+    plan_line: PlanLine | None = None,
+    parent: PlanRequirement | None = None,
 ) -> dict:
     if depth > MAX_BOM_DEPTH:
         raise PlanningError(f'BOM depth exceeded MAX_BOM_DEPTH={MAX_BOM_DEPTH}')
@@ -214,6 +235,23 @@ def _net_node(
     # Leaf raw material: no recipe -> accumulate demand and stop.
     if recipe_spec is None:
         _accumulate(rollup, product=product, qty=demand)
+        if run is not None:
+            PlanRequirement.objects.create(
+                run=run,
+                plan_line=plan_line,
+                parent_requirement=parent,
+                level=depth + 1,
+                batch_number=1,
+                product_id=product_id,
+                recipe_version_id=None,
+                net_required=demand,
+                gross_required=demand,
+                yield_factor=Decimal('1'),
+                process_loss=Decimal('1'),
+                balance=demand,
+                closed=False,
+                calc_json={'v': 1, 'kind': 'material', 'driver': DRIVER_VERSION},
+            )
         return {
             'product_id': product_id,
             'product_name': product.name,
@@ -261,6 +299,59 @@ def _net_node(
     )
 
     bom_sum = sum((c.quantity for c in recipe_spec.components), Decimal('0'))
+    denom = batch_scale_denom(
+        Decimal('0'),
+        batch_quantity=recipe_spec.batch_quantity,
+        bom_sum=bom_sum,
+        process_batch=recipe_spec.process_batch,
+        parent_recipe_code=recipe_spec.recipe_code,
+    )
+    explanation = _explain(
+        regime=regime,
+        demand=net_demand,
+        process_loss=process_loss,
+        batch_yield=batch_yield,
+        batches=batches,
+        effective=effective,
+        production_output=production_output,
+        increment=increment,
+    )
+
+    # Persist this recipe node first so children can link it as parent.
+    req = None
+    if run is not None:
+        yf_node = spec.yield_factor if spec.yield_factor > 0 else Decimal('1')
+        req = PlanRequirement.objects.create(
+            run=run,
+            plan_line=plan_line,
+            parent_requirement=parent,
+            level=depth + 1,
+            batch_number=1,
+            product_id=product_id,
+            recipe_version_id=version_id,
+            net_required=net_demand,
+            gross_required=effective,
+            yield_factor=yf_node,
+            process_loss=process_loss,
+            source_location_id=spec.source_location_id,
+            destination_location_id=spec.destination_location_id,
+            default_resource_id=_safe_resource_id(spec.default_resource_id),
+            stock_on_hand=stock_applied,
+            balance=effective,
+            closed=False,
+            calc_json={
+                'v': 1,
+                'kind': 'recipe',
+                'driver': DRIVER_VERSION,
+                'regime': regime,
+                'effective_output': _dec(effective),
+                'batch_yield': _dec(batch_yield),
+                'production_batches': _dec(batches),
+                'production_output': _dec(production_output),
+                'summary': explanation,
+            },
+        )
+
     child_ancestry = ancestry | {product_id}
     children: list[dict] = []
     for component in recipe_spec.components:
@@ -296,16 +387,12 @@ def _net_node(
                 plan_date=plan_date,
                 meta=meta,
                 rollup=rollup,
+                run=run,
+                plan_line=None,
+                parent=req,
             )
         )
 
-    denom = batch_scale_denom(
-        Decimal('0'),
-        batch_quantity=recipe_spec.batch_quantity,
-        bom_sum=bom_sum,
-        process_batch=recipe_spec.process_batch,
-        parent_recipe_code=recipe_spec.recipe_code,
-    )
     return {
         'product_id': product_id,
         'product_name': product.name,
@@ -325,16 +412,8 @@ def _net_node(
         'production_batches': _dec(batches),
         'production_output': _dec(production_output),
         'scale_denominator': _dec(denom),
-        'explanation': _explain(
-            regime=regime,
-            demand=net_demand,
-            process_loss=process_loss,
-            batch_yield=batch_yield,
-            batches=batches,
-            effective=effective,
-            production_output=production_output,
-            increment=increment,
-        ),
+        'requirement_id': req.id if req is not None else None,
+        'explanation': explanation,
         'children': children,
     }
 
@@ -390,14 +469,30 @@ def _build_ingredients(rollup: dict[int, dict]) -> list[dict]:
     return out
 
 
+def _next_run_number(plan: Plan) -> int:
+    last = (
+        plan.runs.order_by('-run_number')
+        .values_list('run_number', flat=True)
+        .first()
+    )
+    return (last or 0) + 1
+
+
 def run_batchmult_plan(
     plan_id: int,
     *,
     line_ids: list[int] | None = None,
     increment: Decimal | None = None,
     consider_stock: bool = False,
+    persist: bool = False,
+    actor_name: str | None = None,
 ) -> dict:
-    """Explode a plan with the batch-multiplier driver. Read-only."""
+    """Explode a plan with the batch-multiplier driver.
+
+    Read-only by default. When ``persist=True`` a ``PlanRun`` tagged
+    ``driver_version='batchmult-0.1'`` plus its ``PlanRequirement`` tree are
+    written in one transaction, isolated from production runs by the tag.
+    """
     try:
         plan = Plan.objects.get(pk=plan_id)
     except Plan.DoesNotExist as exc:
@@ -414,20 +509,53 @@ def run_batchmult_plan(
     meta = _Meta()
     rollup: dict[int, dict] = {}
     items: list[dict] = []
-    for line in lines:
-        node = _net_node(
-            product_id=line.product_id,
-            demand=line.quantity,
-            depth=0,
-            ancestry=frozenset(),
-            increment=inc,
-            consider_stock=consider_stock,
-            plan_date=plan.plan_date,
-            meta=meta,
-            rollup=rollup,
-        )
-        node['plan_line_id'] = line.id
-        items.append(node)
+
+    def _explode(run: PlanRun | None) -> None:
+        for line in lines:
+            node = _net_node(
+                product_id=line.product_id,
+                demand=line.quantity,
+                depth=0,
+                ancestry=frozenset(),
+                increment=inc,
+                consider_stock=consider_stock,
+                plan_date=plan.plan_date,
+                meta=meta,
+                rollup=rollup,
+                run=run,
+                plan_line=line,
+                parent=None,
+            )
+            node['plan_line_id'] = line.id
+            items.append(node)
+
+    run_info = None
+    if persist:
+        now = timezone.now()
+        with transaction.atomic():
+            run = PlanRun.objects.create(
+                plan=plan,
+                run_number=_next_run_number(plan),
+                status=PlanRunStatus.RUNNING,
+                driver_version=DRIVER_VERSION,
+                started_at=now,
+                stamp_json={
+                    'actor_name': actor_name or 'System Admin',
+                    'increment': _dec(inc),
+                    'consider_stock': consider_stock,
+                },
+            )
+            _explode(run)
+            run.status = PlanRunStatus.COMPLETE
+            run.completed_at = timezone.now()
+            run.save(update_fields=['status', 'completed_at'])
+        run_info = {
+            'run_id': run.id,
+            'run_number': run.run_number,
+            'status': run.status,
+        }
+    else:
+        _explode(None)
 
     return {
         'plan_id': plan.id,
@@ -435,6 +563,8 @@ def run_batchmult_plan(
         'driver_version': DRIVER_VERSION,
         'increment': _dec(inc),
         'consider_stock': consider_stock,
+        'persisted': persist,
+        'run': run_info,
         'items': items,
         'ingredients': _build_ingredients(rollup),
     }
