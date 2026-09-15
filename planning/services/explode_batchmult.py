@@ -23,7 +23,7 @@ raw-material rollup for diffing against the day-plan workbook.
 
 from __future__ import annotations
 
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from django.db import transaction
 from django.utils import timezone
@@ -41,12 +41,12 @@ from planning.models import (
     Resource,
     ResourceProductRate,
 )
-from planning.services import netting
+from planning.services import chain_net, netting
 from planning.services.exceptions import PlanningError
 from recipe.utils import batch_scale_denom, scaled_child_net
 from stock_ledger.util.conversions import StockValidationError, to_product_unit
 
-DRIVER_VERSION = 'batchmult-0.1'
+DRIVER_VERSION = 'batchmult-0.2'
 MAX_BOM_DEPTH = 20
 DEFAULT_INCREMENT = Decimal('0.25')
 
@@ -64,15 +64,38 @@ def _dec(value: Decimal | None) -> str | None:
     return text
 
 
+_GRAM_UNITS = frozenset({'g', 'gram', 'grams', 'gm', 'gms'})
+_KG_UNITS = frozenset({'kg', 'kgs', 'kilogram', 'kilograms'})
+_MG_UNITS = frozenset({'mg', 'milligram', 'milligrams'})
+
+
+def _unit_key(unit_name: str | None) -> str:
+    return (unit_name or '').strip().lower()
+
+
 def _to_kg(qty: Decimal, unit_name: str | None) -> Decimal | None:
-    unit = (unit_name or '').strip().lower()
-    if unit in {'g', 'gram', 'grams', 'gm', 'gms'}:
+    unit = _unit_key(unit_name)
+    if unit in _GRAM_UNITS:
         return qty / Decimal('1000')
-    if unit in {'kg', 'kgs', 'kilogram', 'kilograms'}:
+    if unit in _KG_UNITS:
         return qty
-    if unit in {'mg', 'milligram', 'milligrams'}:
+    if unit in _MG_UNITS:
         return qty / Decimal('1000000')
     return None
+
+
+def _round_ingredient_qty(
+    qty: Decimal, unit_name: str | None,
+) -> tuple[Decimal, Decimal | None]:
+    """Match Excel Fresh Products display: whole grams, kg to 2 dp."""
+    unit = _unit_key(unit_name)
+    if unit in _GRAM_UNITS:
+        rounded = qty.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        return rounded, rounded / Decimal('1000')
+    kg = _to_kg(qty, unit_name)
+    if kg is not None:
+        kg = kg.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    return qty, kg
 
 
 class _Meta:
@@ -82,6 +105,7 @@ class _Meta:
         self._products: dict[int, Product] = {}
         self._one_mix: dict[int, Decimal | None] = {}
         self._unit_names: dict[int, str | None] = {}
+        self._stock: dict[tuple, tuple[Decimal, list[dict], list[dict]]] = {}
 
     def product(self, product_id: int) -> Product:
         row = self._products.get(product_id)
@@ -102,6 +126,17 @@ class _Meta:
             row = Unit.objects.filter(pk=unit_id).values_list('name', flat=True).first()
             self._unit_names[unit_id] = row
         return self._unit_names[unit_id]
+
+    def stock(
+        self, product_id: int, location_ids: list[int],
+    ) -> tuple[Decimal, list[dict], list[dict]]:
+        """Stage ATP for the product. Display only — never nets the demand."""
+        key = (product_id, tuple(location_ids))
+        hit = self._stock.get(key)
+        if hit is None:
+            hit = chain_net._stock_lots_payload(product_id, location_ids)
+            self._stock[key] = hit
+        return hit
 
     def one_mix_qty(self, product_id: int) -> Decimal | None:
         """One Mix Qty for the product, ignoring resource / staff_count."""
@@ -180,7 +215,14 @@ def _convert_to_stock(
         return qty
 
 
-def _accumulate(rollup: dict[int, dict], *, product: Product, qty: Decimal) -> None:
+def _accumulate(
+    rollup: dict[int, dict],
+    *,
+    product: Product,
+    qty: Decimal,
+    stock: Decimal,
+    stock_lots: list[dict],
+) -> None:
     acc = rollup.get(product.id)
     if acc is None:
         unit_name = product.unit.name if product.unit_id else None
@@ -191,9 +233,26 @@ def _accumulate(rollup: dict[int, dict], *, product: Product, qty: Decimal) -> N
             'unit_id': product.unit_id,
             'unit_name': unit_name,
             'quantity': qty,
+            'stock': stock,
+            'stock_lots': list(stock_lots),
         }
-    else:
-        acc['quantity'] += qty
+        return
+    acc['quantity'] += qty
+    if stock > acc['stock']:
+        acc['stock'] = stock
+        acc['stock_lots'] = list(stock_lots)
+
+
+def _node_stock(
+    spec, product_id: int, meta: _Meta,
+) -> tuple[Decimal, list[dict], list[dict]]:
+    return meta.stock(
+        product_id,
+        chain_net._stage_location_ids(
+            source_id=spec.source_location_id,
+            destination_id=spec.destination_location_id,
+        ),
+    )
 
 
 def _safe_resource_id(resource_id: int | None) -> int | None:
@@ -234,7 +293,17 @@ def _net_node(
 
     # Leaf raw material: no recipe -> accumulate demand and stop.
     if recipe_spec is None:
-        _accumulate(rollup, product=product, qty=demand)
+        leaf_spec = product_adapter.get_product_spec(product_id)
+        leaf_stock, leaf_lots, leaf_by_location = _node_stock(
+            leaf_spec, product_id, meta,
+        )
+        _accumulate(
+            rollup,
+            product=product,
+            qty=demand,
+            stock=leaf_stock,
+            stock_lots=leaf_lots,
+        )
         if run is not None:
             PlanRequirement.objects.create(
                 run=run,
@@ -257,8 +326,13 @@ def _net_node(
             'product_name': product.name,
             'recipe_code': product.recipe_code,
             'unit_id': product.unit_id,
+            'unit_name': meta.unit_name(product.unit_id),
             'has_recipe': False,
             'demand': _dec(demand),
+            'stock': _dec(leaf_stock),
+            'shortfall': _dec(max(demand - leaf_stock, Decimal('0'))),
+            'stock_lots': leaf_lots,
+            'stock_by_location': leaf_by_location,
             'children': [],
         }
 
@@ -266,6 +340,8 @@ def _net_node(
     process_loss = recipe_spec.process_loss or Decimal('1')
     if process_loss <= 0:
         process_loss = Decimal('1')
+
+    node_stock, node_lots, node_by_location = _node_stock(spec, product_id, meta)
 
     net_demand = demand
     stock_applied = Decimal('0')
@@ -398,12 +474,18 @@ def _net_node(
         'product_name': product.name,
         'recipe_code': product.recipe_code,
         'unit_id': product.unit_id,
+        'unit_name': meta.unit_name(product.unit_id),
         'has_recipe': True,
         'recipe_version_id': version_id,
         'regime': regime,
         'demand': _dec(demand),
         'net_demand': _dec(net_demand),
         'stock_applied': _dec(stock_applied),
+        # Stock overlay is display only; it never reduces the requirement.
+        'stock': _dec(node_stock),
+        'shortfall': _dec(max(demand - node_stock, Decimal('0'))),
+        'stock_lots': node_lots,
+        'stock_by_location': node_by_location,
         'process_loss': _dec(process_loss),
         # Raw materials use this exact yield-adjusted output.
         'effective_output': _dec(effective),
@@ -450,13 +532,19 @@ def _explain(
 
 
 def _build_ingredients(rollup: dict[int, dict]) -> list[dict]:
+    product_ids = list(rollup.keys())
+    suppliers = chain_net._supplier_defaults(product_ids)
+    costs = chain_net._unit_costs(product_ids)
+
     out = []
     for pid, acc in sorted(
         rollup.items(),
         key=lambda kv: (kv[1]['product_name'] or '', kv[0]),
     ):
-        qty = acc['quantity']
-        kg = _to_kg(qty, acc['unit_name'])
+        qty, kg = _round_ingredient_qty(acc['quantity'], acc['unit_name'])
+        stock = acc['stock']
+        balance = stock - qty
+        unit_cost = costs.get(pid)
         out.append({
             'product_id': pid,
             'product_name': acc['product_name'],
@@ -465,8 +553,65 @@ def _build_ingredients(rollup: dict[int, dict]) -> list[dict]:
             'unit_name': acc['unit_name'],
             'quantity': _dec(qty),
             'kg': _dec(kg) if kg is not None else None,
+            'stock': _dec(stock),
+            'balance': _dec(balance),
+            'stock_status': 'ok' if balance >= 0 else 'short',
+            'unit_cost': _dec(unit_cost) if unit_cost is not None else None,
+            'material_cost': _dec(unit_cost * qty) if unit_cost is not None else None,
+            'supplier': suppliers.get(pid),
+            'stock_lots': acc['stock_lots'],
         })
     return out
+
+
+def _walk_nodes(node: dict):
+    yield node
+    for child in node.get('children') or []:
+        yield from _walk_nodes(child)
+
+
+def _build_product_lines(items: list[dict]) -> list[dict]:
+    """Flatten recipe nodes for the 'To make' tab."""
+    rows: list[dict] = []
+    for root in items:
+        plan_line_id = root.get('plan_line_id')
+        for node in _walk_nodes(root):
+            if not node.get('has_recipe'):
+                continue
+            rows.append({
+                'plan_line_id': plan_line_id,
+                'product_id': node['product_id'],
+                'product_name': node['product_name'],
+                'recipe_code': node.get('recipe_code'),
+                'unit_id': node.get('unit_id'),
+                'unit_name': node.get('unit_name'),
+                'recipe_version_id': node.get('recipe_version_id'),
+                'regime': node.get('regime'),
+                'demand': node['demand'],
+                'effective_output': node.get('effective_output'),
+                'stock': node.get('stock'),
+                'shortfall': node.get('shortfall'),
+                'batch_yield': node.get('batch_yield'),
+                'production_batches': node.get('production_batches'),
+                'production_output': node.get('production_output'),
+                'explanation': node.get('explanation'),
+                'stock_lots': list(node.get('stock_lots') or []),
+                'stock_by_location': list(node.get('stock_by_location') or []),
+            })
+    return rows
+
+
+def _demand_breakdown(
+    *, target: Decimal, stock: Decimal, pending: Decimal, wip: Decimal,
+) -> dict:
+    """Plan-B style composition. Display only — RM always uses the target."""
+    free_dispatch = max(stock - pending, Decimal('0'))
+    return {
+        'target': _dec(target),
+        'free_despatch': _dec(free_dispatch),
+        'wip': _dec(wip),
+        'cover': _dec(free_dispatch + wip),
+    }
 
 
 def _next_run_number(plan: Plan) -> int:
@@ -486,11 +631,16 @@ def run_batchmult_plan(
     consider_stock: bool = False,
     persist: bool = False,
     actor_name: str | None = None,
+    demand_inputs: dict | None = None,
+    line_demand: dict[int, dict] | None = None,
 ) -> dict:
     """Explode a plan with the batch-multiplier driver.
 
+    Raw materials scale on the exact yield-adjusted output. Stock, supplier and
+    cost data are layered on for display and never reduce the requirement.
+
     Read-only by default. When ``persist=True`` a ``PlanRun`` tagged
-    ``driver_version='batchmult-0.1'`` plus its ``PlanRequirement`` tree are
+    ``driver_version='batchmult-0.2'`` plus its ``PlanRequirement`` tree are
     written in one transaction, isolated from production runs by the tag.
     """
     try:
@@ -506,15 +656,21 @@ def run_batchmult_plan(
     if not lines:
         raise PlanningError('plan has no demand lines')
 
+    line_demand = line_demand or {}
     meta = _Meta()
     rollup: dict[int, dict] = {}
     items: list[dict] = []
 
     def _explode(run: PlanRun | None) -> None:
         for line in lines:
+            per_line = line_demand.get(line.id) or line_demand.get(str(line.id))
+            merged = {**(demand_inputs or {}), **(per_line or {})}
+            inputs = chain_net._normalize_demand_inputs(merged or None)
+            manual = inputs['manual_make_qty']
+            target = manual if manual is not None else line.quantity
             node = _net_node(
                 product_id=line.product_id,
-                demand=line.quantity,
+                demand=target,
                 depth=0,
                 ancestry=frozenset(),
                 increment=inc,
@@ -527,6 +683,13 @@ def run_batchmult_plan(
                 parent=None,
             )
             node['plan_line_id'] = line.id
+            node['plan_quantity'] = _dec(line.quantity)
+            node['demand_breakdown'] = _demand_breakdown(
+                target=target,
+                stock=Decimal(node.get('stock') or '0'),
+                pending=inputs['today_pending_dispatch_qty'],
+                wip=inputs['wip_fg_equivalent_qty'],
+            )
             items.append(node)
 
     run_info = None
@@ -566,5 +729,6 @@ def run_batchmult_plan(
         'persisted': persist,
         'run': run_info,
         'items': items,
+        'product_lines': _build_product_lines(items),
         'ingredients': _build_ingredients(rollup),
     }
