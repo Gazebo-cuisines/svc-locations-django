@@ -6,7 +6,7 @@ from django.test import TestCase
 
 from locations.models import Location
 from planning.models import Resource
-from product.models import Category, ProductClass, Unit
+from product.models import BuyType, Category, ProductClass, Unit
 
 
 class ProductApiTests(TestCase):
@@ -170,6 +170,98 @@ class ProductApiTests(TestCase):
         batch_id = self._create_product('Batch Labelled', label_mode='batch')
         batch_detail = self.client.get(f'/product/{batch_id}/').json()['data']
         self.assertEqual(batch_detail['label_mode'], 'batch')
+
+    def test_buy_type_saves_and_is_audited(self):
+        key = BuyType.objects.get(name='Key product')
+        planner = BuyType.objects.get(name='Planner product')
+        detail = self.client.get(f'/product/{self.product_id}/').json()['data']
+        self.assertIsNone(detail['purchase_details']['buy_type_id'])
+
+        first = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'purchase_details': {'buy_type_id': key.id}}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(
+            first.json()['data']['purchase_details']['buy_type_id'],
+            key.id,
+        )
+        self.assertEqual(
+            first.json()['data']['purchase_details']['buy_type_name'],
+            'Key product',
+        )
+
+        second = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'purchase_details': {'buy_type_id': planner.id}}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(
+            second.json()['data']['purchase_details']['buy_type_id'],
+            planner.id,
+        )
+
+        bad = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'purchase_details': {'buy_type_id': 99999}}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(bad.status_code, 400)
+
+        timeline = self.client.get(
+            f'/product/{self.product_id}/timeline/',
+        )
+        self.assertEqual(timeline.status_code, 200)
+        events = timeline.json()['data']
+        updates = [e for e in events if e['action'] == 'update']
+        self.assertGreaterEqual(len(updates), 2)
+        self.assertIn('purchase_details', updates[0]['changed_fields'])
+        self.assertEqual(
+            updates[0]['after_json']['purchase_details']['buy_type_id'],
+            planner.id,
+        )
+        self.assertEqual(
+            updates[0]['before_json']['purchase_details']['buy_type_id'],
+            key.id,
+        )
+
+    def test_buy_type_lookup_cannot_be_deleted(self):
+        listed = self.client.get('/product/buy-type/')
+        self.assertEqual(listed.status_code, 200)
+        names = {row['name'] for row in listed.json()['data']}
+        self.assertTrue(
+            {'Key product', 'Other product', 'Planner product'} <= names,
+        )
+
+        created = self.client.post(
+            '/product/buy-type/',
+            data=json.dumps({'name': f'Seasonal {self.product_id}'}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(created.status_code, 201)
+        seasonal_id = created.json()['data']['id']
+
+        renamed = self.client.patch(
+            f'/product/buy-type/{seasonal_id}/',
+            data=json.dumps({'name': f'Seasonal item {self.product_id}'}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(
+            renamed.json()['data']['name'],
+            f'Seasonal item {self.product_id}',
+        )
+
+        deleted = self.client.delete(f'/product/buy-type/{seasonal_id}/')
+        self.assertEqual(deleted.status_code, 403)
+        self.assertTrue(BuyType.objects.filter(pk=seasonal_id).exists())
 
     def test_invalid_payload_returns_400(self):
         resp = self.client.put(

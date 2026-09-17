@@ -400,10 +400,13 @@ def _parse_transfer_lines(body: dict) -> list[dict] | None:
                 f'Duplicate source_entry_id {source_entry.id} in lines.',
             )
         seen_entries.add(source_entry.id)
+        line_fmt, line_count = _transfer_label_plan(row)
         lines.append({
             'lot': lot,
             'quantity': qty,
             'source_entry': source_entry,
+            'label_format': line_fmt,
+            'label_count': line_count,
         })
     product_ids = {line['lot'].product_id for line in lines}
     if len(product_ids) != 1:
@@ -604,10 +607,6 @@ def transfer_api(request):
             queue_stock = True
         lines = _parse_transfer_lines(body)
         split_labels = label_format == 'box' and label_count > 1
-        if lines is not None and split_labels:
-            raise StockValidationError(
-                'lines cannot be combined with label_count > 1.',
-            )
         if lines is not None and unit_moves is not None:
             raise StockValidationError(
                 'unit_moves cannot be combined with lines.',
@@ -642,6 +641,11 @@ def transfer_api(request):
                 lot = line['lot']
                 source_entry = line['source_entry']
                 part_qty = line['quantity']
+                line_fmt = line['label_format']
+                line_count = line['label_count']
+                if line_fmt is None:
+                    line_fmt, line_count = label_format, label_count
+                out_fmt_line = line_fmt or 'box'
                 balance = (
                     StockBalance.objects
                     .filter(lot_id=lot.id, location_id=from_location_id)
@@ -657,17 +661,30 @@ def transfer_api(request):
                         balance.quantity if balance is not None else None
                     ),
                 )
-                work.append({
-                    'key': (
-                        body['idempotency_key']
-                        if len(lines) == 1
-                        else f"{body['idempotency_key']}:l:{i}"
-                    ),
-                    'lot': lot,
-                    'quantity': part_qty,
-                    'source_entry': source_entry,
-                    'unit_moves': None,
-                })
+                qty_parts = _split_label_quantities(
+                    part_qty,
+                    1 if line_fmt == 'pallet' else line_count,
+                )
+                split_n = len(qty_parts)
+                line_key = (
+                    body['idempotency_key']
+                    if len(lines) == 1
+                    else f"{body['idempotency_key']}:l:{i}"
+                )
+                for j, qty in enumerate(qty_parts, start=1):
+                    if split_n == 1:
+                        key = line_key
+                    else:
+                        key = f"{body['idempotency_key']}:l:{i}:u:{j}"
+                    work.append({
+                        'key': key,
+                        'lot': lot,
+                        'quantity': qty,
+                        'source_entry': source_entry,
+                        'unit_moves': None,
+                        'label_format': out_fmt_line,
+                        'label_count': line_count,
+                    })
             if required_quantity is not None:
                 picked = sum((item['quantity'] for item in work), Decimal('0'))
                 if picked < required_quantity:
@@ -687,6 +704,7 @@ def transfer_api(request):
                     'fifo_override_reason is required when not using oldest stock.',
                 )
             response_label_count = len(work)
+            out_fmt = work[0]['label_format']
         else:
             lot = _resolve_lot(body)
             to_location_id = _resolve_transfer_to_location_id(body, lot)
@@ -727,6 +745,8 @@ def transfer_api(request):
                     'quantity': part_qty,
                     'source_entry': source_entry,
                     'unit_moves': unit_moves if split_n == 1 else None,
+                    'label_format': out_fmt,
+                    'label_count': label_count,
                 }
                 for unit_key, part_qty in zip(unit_keys, qty_parts)
             ]
@@ -781,11 +801,13 @@ def transfer_api(request):
                     lan_username=audit.get('lan_username'),
                     source_workstation=audit.get('source_workstation'),
                 )
+                item_fmt = item['label_format']
+                item_count = item['label_count']
                 label = entry_labels.create_entry_label(
                     entry=out_entry,
-                    label_format=out_fmt,
+                    label_format=item_fmt,
                     label_count=(
-                        label_count if out_fmt == 'pallet' else 1
+                        item_count if item_fmt == 'pallet' else 1
                     ),
                     actor_user_id=audit.get('actor_user_id'),
                     lan_username=audit.get('lan_username'),

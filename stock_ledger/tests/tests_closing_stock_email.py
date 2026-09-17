@@ -97,6 +97,15 @@ class ClosingStockEmailTests(TestCase):
         self.assertTrue(result['skipped'])
         self.assertGreaterEqual(result['row_count'], 1)
 
+    def test_closing_stock_ignores_open_po_recipients(self):
+        StockReportEmailRecipient.objects.create(
+            email='po@example.com',
+            report_type=StockReportEmailRecipient.REPORT_OPEN_PO,
+        )
+        result = send_closing_stock_report(as_of=date(2026, 8, 20))
+        self.assertTrue(result['skipped'])
+        self.assertEqual(result['recipients'], [])
+
     def test_csv_and_send(self):
         StockReportEmailRecipient.objects.create(email='a@example.com')
         StockReportEmailRecipient.objects.create(
