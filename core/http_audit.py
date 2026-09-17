@@ -1,15 +1,22 @@
-"""Best-effort S3 log of mutating API request/response JSON. Never raises."""
+"""S3 log of mutating API request/response JSON. Never raises to the user.
+
+Request thread writes a local file (kept until S3 accepts it).
+One background worker uploads those files. Slow S3 does not drop logs.
+"""
 
 import json
 import logging
-import os
+import tempfile
+import time
 import uuid
 from datetime import datetime, timezone as dt_timezone
-from threading import Thread
+from pathlib import Path
+from queue import Queue
+from threading import Lock, Thread
 
-import boto3
 from django.conf import settings
 
+from core.s3 import s3_client
 from users_rbac.auth import client_ip
 
 logger = logging.getLogger('core.http_audit')
@@ -25,20 +32,10 @@ REDACT_KEYS = {
 }
 BODY_MAX = 64 * 1024
 SKIP_PREFIXES = ('/static/', '/favicon')
-
-
-def _s3_client():
-    profile = os.getenv('AWS_PROFILE') or getattr(settings, 'AWS_PROFILE', None)
-    region = (
-        os.getenv('AWS_DEFAULT_REGION')
-        or getattr(settings, 'AWS_DEFAULT_REGION', None)
-        or 'eu-west-2'
-    )
-    try:
-        session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-    except Exception:
-        session = boto3.Session()
-    return session.client('s3', region_name=region)
+_QUEUE: Queue = Queue()
+_WORKER_LOCK = Lock()
+_WORKER_STARTED = False
+_RETRY_SECONDS = 2
 
 
 def _bucket() -> str:
@@ -123,35 +120,75 @@ def build_payload(request, response):
     }
 
 
-def _put(payload: dict):
+def _spill_dir() -> Path:
+    raw = getattr(settings, 'AUDIT_LOCAL_DIR', None)
+    root = Path(raw) if raw else Path(tempfile.gettempdir()) / 'gazebo-http-audit'
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _put(payload: dict) -> None:
+    now = datetime.now(dt_timezone.utc)
+    path = (payload.get('path') or '').strip('/').replace('/', '_')[:80] or 'root'
+    key = (
+        f'api-http/{now.strftime("%Y/%m/%d")}/'
+        f'{now.strftime("%H%M%S")}-{uuid.uuid4().hex[:8]}'
+        f'-{payload.get("method")}-{path}.json'
+    )
+    body = json.dumps(payload, default=str).encode('utf-8')
+    s3_client().put_object(
+        Bucket=_bucket(),
+        Key=key,
+        Body=body,
+        ContentType='application/json',
+        ServerSideEncryption='AES256',
+    )
+
+
+def _upload_file(path: Path) -> bool:
+    if not path.exists():
+        return True
     try:
-        now = datetime.now(dt_timezone.utc)
-        path = (payload.get('path') or '').strip('/').replace('/', '_')[:80] or 'root'
-        key = (
-            f'api-http/{now.strftime("%Y/%m/%d")}/'
-            f'{now.strftime("%H%M%S")}-{uuid.uuid4().hex[:8]}'
-            f'-{payload.get("method")}-{path}.json'
-        )
-        body = json.dumps(payload, default=str).encode('utf-8')
-        _s3_client().put_object(
-            Bucket=_bucket(),
-            Key=key,
-            Body=body,
-            ContentType='application/json',
-            ServerSideEncryption='AES256',
-        )
+        payload = json.loads(path.read_text())
+        _put(payload)
+        path.unlink(missing_ok=True)
+        return True
     except Exception:
         logger.exception(
-            'audit S3 put failed method=%s path=%s status=%s',
-            payload.get('method'),
-            payload.get('path'),
-            payload.get('status'),
+            'audit S3 put failed path=%s — keeping local file for retry',
+            path,
         )
+        return False
+
+
+def _worker() -> None:
+    while True:
+        path = _QUEUE.get()
+        try:
+            if not _upload_file(path):
+                time.sleep(_RETRY_SECONDS)
+                if path.exists():
+                    _QUEUE.put(path)
+        finally:
+            _QUEUE.task_done()
+
+
+def _ensure_worker() -> None:
+    global _WORKER_STARTED
+    with _WORKER_LOCK:
+        if _WORKER_STARTED:
+            return
+        for leftover in sorted(_spill_dir().glob('*.json')):
+            _QUEUE.put(leftover)
+        Thread(target=_worker, name='http-audit-s3', daemon=True).start()
+        _WORKER_STARTED = True
 
 
 def _start_audit(payload: dict):
-    # ponytail: daemon thread; sync put if 5-user latency is fine
-    Thread(target=_put, args=(payload,), daemon=True).start()
+    path = _spill_dir() / f'{uuid.uuid4().hex}.json'
+    path.write_text(json.dumps(payload, default=str))
+    _ensure_worker()
+    _QUEUE.put(path)
 
 
 def _log_client_error(request, response) -> None:

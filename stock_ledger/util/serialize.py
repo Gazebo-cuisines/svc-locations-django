@@ -6,6 +6,10 @@ from django.core.exceptions import ObjectDoesNotExist
 
 from hardware.services import codes_for_serials
 from product.models import Product, ProductSupplier
+from purchasing.services.open_pos import (
+    open_po_slots_for_products,
+    open_pos_for_location,
+)
 from stock_ledger.models import (
     ProductionRun,
     StockBalance,
@@ -25,7 +29,9 @@ from users_rbac.models import RbacUser
 BALANCE_SELECT_RELATED = (
     'location',
     'lot__product__product_class',
+    'lot__product__category',
     'lot__product__range',
+    'lot__product__buy_type',
     'lot__product__unit',
     'lot__product__yield_data',
     'lot__product_supplier__outer_unit',
@@ -160,6 +166,7 @@ def serialize_balance_row(
     *,
     receipt_meta: dict | None = None,
     stickers: list[dict] | None = None,
+    open_pos: list[dict] | None = None,
 ) -> dict:
     product = balance.lot.product
     try:
@@ -172,6 +179,11 @@ def serialize_balance_row(
         product,
         getattr(balance.lot, 'product_supplier', None),
     )
+    if open_pos is None and balance.lot.product_id:
+        open_pos = open_po_slots_for_products({balance.lot.product_id}).get(
+            balance.lot.product_id, [],
+        )
+    open_pos = open_pos_for_location(open_pos, balance.location_id)
     return {
         'lot_id': balance.lot_id,
         'product_id': balance.lot.product_id,
@@ -183,6 +195,11 @@ def serialize_balance_row(
         ),
         'range_id': product.range_id,
         'range_name': product.range.name if product.range_id else None,
+        'category_id': product.category_id,
+        'buy_type_id': product.buy_type_id,
+        'buy_type_name': (
+            product.buy_type.name if product.buy_type_id else None
+        ),
         'unit_id': product.unit_id,
         'unit_name': product.unit.name if product.unit_id else None,
         'yield_factor': yield_factor,
@@ -211,6 +228,7 @@ def serialize_balance_row(
             }
             for row in (stickers or [])
         ],
+        'open_pos': open_pos or [],
         **pack,
     }
 
@@ -224,11 +242,15 @@ def serialize_balance_rows(
 
     meta = receipt_meta or {}
     sticker_map = stickers.open_stickers_for_balances(balances)
+    pos_map = open_po_slots_for_products(
+        {b.lot.product_id for b in balances if b.lot.product_id},
+    )
     return [
         serialize_balance_row(
             balance,
             receipt_meta=meta.get(balance.lot_id),
             stickers=sticker_map.get((balance.lot_id, balance.location_id), []),
+            open_pos=pos_map.get(balance.lot.product_id, []),
         )
         for balance in balances
     ]

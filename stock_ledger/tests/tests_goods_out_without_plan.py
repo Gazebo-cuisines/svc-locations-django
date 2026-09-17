@@ -15,7 +15,7 @@ from stock_ledger.models import (
     StockLot,
     StockLotOrigin,
 )
-from stock_ledger.util import entry_posting, services  # noqa: F401
+from stock_ledger.util import entry_labels, services, stickers
 
 
 class GoodsOutWithoutPlanTests(TestCase):
@@ -363,27 +363,57 @@ class GoodsOutWithoutPlanTests(TestCase):
         )
         self.assertEqual(ok.status_code, 201, ok.content)
 
-    def test_transfer_lines_rejects_label_count(self):
+    def test_transfer_lines_box_label_count_splits_pallet_draw(self):
+        pallet = services.receipt(
+            idempotency_key=f'go-pal-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('90'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        entry_labels.create_entry_label(
+            entry=pallet, label_format='pallet', label_count=1,
+        )
         resp = self.client.post(
             '/stock/transfer/',
             data={
-                'idempotency_key': f'go-mix-{uuid4()}',
+                'idempotency_key': f'go-box-split-{uuid4()}',
                 'from_location_id': self.wh.id,
                 'queue_stock': True,
                 'label_format': 'box',
-                'label_count': 2,
+                'label_count': 30,
                 'lines': [
                     {
                         'lot_id': self.lot.id,
-                        'quantity': '10',
-                        'source_entry_id': self.entry.id,
+                        'quantity': '30',
+                        'source_entry_id': pallet.id,
                     },
                 ],
             },
             content_type='application/json',
         )
-        self.assertEqual(resp.status_code, 400, resp.content)
-        self.assertIn('lines cannot be combined', resp.json()['message'])
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 30)
+        self.assertEqual(body['transaction_count'], 30)
+        self.assertEqual(len(body['transactions']), 30)
+        barcodes = [tx['goods_out_label']['barcode'] for tx in body['transactions']]
+        self.assertEqual(len(set(barcodes)), 30)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(sum(qtys), Decimal('30'))
+        for tx in body['transactions']:
+            self.assertEqual(tx['goods_out_label']['label_format'], 'box')
+            self.assertEqual(
+                tx['goods_out_label']['barcode'], f"E{tx['out']['id']}",
+            )
+        self.assertEqual(stickers.remaining_for_entry(pallet), Decimal('60'))
+        self.assertEqual(
+            StockBalance.objects.get(
+                lot_id=self.lot.id, location_id=self.wh.id,
+            ).quantity,
+            Decimal('115'),
+        )
 
     def test_goods_out_form_steps_after_queue(self):
         empty = self.client.get(

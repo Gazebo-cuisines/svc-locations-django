@@ -12,6 +12,8 @@ from product.views.image_views import product_image_detail_api, product_images_a
 from product.views.ingredient_label_views import product_ingredient_label_api
 from product.views.lookups_views import (
     product_allergen_code_list_api,
+    product_buy_type_detail_api,
+    product_buy_type_list_api,
     product_category_detail_api,
     product_category_image_api,
     product_category_list_api,
@@ -66,6 +68,12 @@ urlpatterns = [
         'purchase-format/<int:pk>/',
         product_purchase_format_detail_api,
         name='product-purchase-format-detail',
+    ),
+    path('buy-type/', product_buy_type_list_api, name='product-buy-type-list'),
+    path(
+        'buy-type/<int:pk>/',
+        product_buy_type_detail_api,
+        name='product-buy-type-detail',
     ),
     path('packaging-type/', product_packaging_type_list_api, name='product-packaging-type-list'),
     path('physical-state/', product_physical_state_list_api, name='product-physical-state-list'),

@@ -246,9 +246,13 @@ def build_closing_stock_html(
 </html>'''
 
 
-def active_recipients() -> list[StockReportEmailRecipient]:
+def active_recipients(
+    report_type: str = StockReportEmailRecipient.REPORT_CLOSING_STOCK,
+) -> list[StockReportEmailRecipient]:
     return list(
-        StockReportEmailRecipient.objects.filter(is_active=True).order_by('email')
+        StockReportEmailRecipient.objects.filter(
+            is_active=True, report_type=report_type,
+        ).order_by('email')
     )
 
 
