@@ -1,9 +1,13 @@
 import json
+import tempfile
+import threading
+import time
+from pathlib import Path
 from unittest.mock import patch
 
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 
-from core.http_audit import _redact
+from core.http_audit import _redact, _start_audit
 from core.middleware import OpsErrorMiddleware
 from core.models import ErrorTicket, ErrorTicketStatus
 from core.ops import record_error
@@ -148,3 +152,31 @@ class ErrorTicketTests(TestCase):
             _log_client_error(req, resp)
             log.warning.assert_called_once()
             self.assertIn('No stock_unit_conversion', log.warning.call_args.args[-1])
+
+
+class HttpAuditQueueTests(TestCase):
+    def test_enqueue_does_not_wait_for_s3(self):
+        block = threading.Event()
+
+        def hung(_payload):
+            block.wait(2)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(AUDIT_LOCAL_DIR=tmp):
+                with patch('core.http_audit._put', side_effect=hung):
+                    started = time.monotonic()
+                    _start_audit({'method': 'POST', 'path': '/purchasing/x/'})
+                    elapsed = time.monotonic() - started
+                block.set()
+        self.assertLess(elapsed, 0.2)
+
+    def test_keeps_local_file_when_s3_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(AUDIT_LOCAL_DIR=tmp):
+                with patch(
+                    'core.http_audit._put',
+                    side_effect=RuntimeError('s3 down'),
+                ):
+                    _start_audit({'method': 'POST', 'path': '/purchasing/x/'})
+                    time.sleep(0.15)
+                    self.assertTrue(list(Path(tmp).glob('*.json')))
