@@ -7,7 +7,7 @@ from django.conf import settings
 from django.db import transaction
 
 from core.images import prepare_webp, s3_image_args
-from core.s3 import s3_client as _s3_client
+from core.s3 import presigned_get, s3_client as _s3_client
 from purchasing.models import (
     GoodsInAttachment,
     GoodsInAttachmentKind,
@@ -44,14 +44,7 @@ def attachment_url(
 ) -> str | None:
     if not attachment.s3_key:
         return None
-    try:
-        return _s3_client().generate_presigned_url(
-            'get_object',
-            Params={'Bucket': _bucket(), 'Key': attachment.s3_key},
-            ExpiresIn=expires_in,
-        )
-    except Exception:
-        return None
+    return presigned_get(attachment.s3_key, expires_in=expires_in)
 
 
 def _uploader_block(user: RbacUser | None, *, user_id: int | None) -> dict:

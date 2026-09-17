@@ -334,6 +334,72 @@ class NestedDeliveryTests(TestCase):
             1,
         )
 
+    def test_new_delivery_finishes_booked_open_visit(self):
+        product_b = Product.objects.create(
+            name=f'Salt B {uuid4().hex[:8]}',
+            recipe_code=f'SB{uuid4().hex[:6]}',
+            product_class_id=91,
+            category_id=91,
+            range_id=91,
+            unit=self.kg,
+            label_mode=ProductLabelMode.PER_UNIT,
+            source_container=self.wh,
+            destination_container=self.wh,
+        )
+        mapping_b = ProductSupplier.objects.create(
+            product=product_b,
+            supplier=self.supplier,
+            supplier_code='SALT-B-1X10',
+            supplier_product_name='Salt B 1x10kg',
+            outer_qty=Decimal('1'),
+            outer_unit=self.bag,
+            inner_qty=Decimal('10'),
+            inner_unit=self.kg,
+            is_default=True,
+            is_active=True,
+        )
+        line_b = PurchaseOrderLine.objects.create(
+            purchase_order=self.po,
+            line_no=2,
+            product=product_b,
+            product_supplier=mapping_b,
+            unit=self.kg,
+            qty_ordered=Decimal('4'),
+            qty_received=Decimal('0'),
+            qty_balance=Decimal('4'),
+            multiplier=mapping_b.multiplier,
+            shape_format_label=mapping_b.shape_format_label,
+            unit_cost=Decimal('1'),
+        )
+
+        d1 = create_delivery(self.po.id)
+        self._header(d1.id)
+        self._line_qc(d1.id)
+        self._receive(d1.id, 5)
+        d1.refresh_from_db()
+        self.assertEqual(d1.status, PurchaseOrderDeliveryStatus.OPEN)
+
+        d2 = create_delivery(self.po.id)
+        d1.refresh_from_db()
+        self.line.refresh_from_db()
+        line_b.refresh_from_db()
+        self.po.refresh_from_db()
+        self.assertEqual(d1.status, PurchaseOrderDeliveryStatus.RECEIVED)
+        self.assertEqual(d2.status, PurchaseOrderDeliveryStatus.OPEN)
+        self.assertEqual(self.po.status, PurchaseOrderStatus.PARTIAL)
+        self.assertEqual(self.line.qty_balance, Decimal('0'))
+        self.assertEqual(line_b.qty_balance, Decimal('4'))
+        self.assertFalse(line_b.line_closed)
+
+        client = Client()
+        listed = client.get(f'/purchasing/pos/{self.po.id}/deliveries/')
+        self.assertEqual(listed.status_code, 200, listed.content)
+        rows = listed.json()['data']['results']
+        self.assertEqual(len(rows), 2)
+        by_id = {row['id']: row for row in rows}
+        self.assertEqual(by_id[d1.id]['status'], PurchaseOrderDeliveryStatus.RECEIVED)
+        self.assertEqual(by_id[d2.id]['status'], PurchaseOrderDeliveryStatus.OPEN)
+
     def test_finish_delivery_closes_with_balance(self):
         delivery = create_delivery(self.po.id)
         self._header(delivery.id)

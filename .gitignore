@@ -23,3 +23,6 @@ deploy/
 gazebo-erp-20260723.pem
 .cursor/audit/
 docs/Recipe-import-task
+docs/management/excalidraw/
+docs/management/diagrams/
+docs/management/_build_report.py

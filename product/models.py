@@ -128,6 +128,17 @@ class PurchaseShapeFormat(models.Model):
         return f'{self.id}:{self.name}'
 
 
+class BuyType(models.Model):
+    name = models.CharField(max_length=64, unique=True)
+
+    class Meta:
+        db_table = 'product_buy_type'
+        ordering = ['id']
+
+    def __str__(self):
+        return f'{self.id}:{self.name}'
+
+
 class ProductLabelMode(models.TextChoices):
     PRODUCT = 'product', 'Reusable product label, FIFO picked on scan'
     BATCH = 'batch', 'One label per batch'
@@ -172,6 +183,13 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
     is_downtime = models.BooleanField(default=False)
     purchasing_version = models.IntegerField(null=True, blank=True)
+    buy_type = models.ForeignKey(
+        BuyType,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='products',
+    )
     ingredient_count = models.IntegerField(null=True, blank=True)
     remarks = models.TextField(null=True, blank=True)
 

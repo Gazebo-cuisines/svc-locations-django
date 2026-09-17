@@ -419,10 +419,29 @@ def _recipient_dict(row: StockReportEmailRecipient) -> dict:
     return {
         'id': row.id,
         'email': row.email,
+        'report_type': row.report_type,
         'is_active': row.is_active,
         'created_at': row.created_at.isoformat() if row.created_at else None,
         'updated_at': row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+_REPORT_TYPES = {
+    StockReportEmailRecipient.REPORT_CLOSING_STOCK,
+    StockReportEmailRecipient.REPORT_OPEN_PO,
+}
+
+
+def _report_type(request, body=None):
+    raw = None
+    if body and body.get('report_type') not in (None, ''):
+        raw = body.get('report_type')
+    elif request.GET.get('report_type') not in (None, ''):
+        raw = request.GET.get('report_type')
+    value = str(raw or StockReportEmailRecipient.REPORT_CLOSING_STOCK).strip()
+    if value not in _REPORT_TYPES:
+        return None
+    return value
 
 
 def _gate_report_recipients(request):
@@ -435,13 +454,16 @@ def _gate_report_recipients(request):
 @csrf_exempt
 @require_http_methods(['GET', 'POST'])
 def report_email_recipients_api(request):
-    """List or add closing-stock report email recipients (admin)."""
+    """List or add report email recipients (admin)."""
     denied = _gate_report_recipients(request)
     if denied:
         return denied
 
     if request.method == 'GET':
-        rows = StockReportEmailRecipient.objects.all()
+        report_type = _report_type(request)
+        if report_type is None:
+            return api_error('report_type is invalid.')
+        rows = StockReportEmailRecipient.objects.filter(report_type=report_type)
         return api_success(
             'Report email recipients fetched.',
             [_recipient_dict(row) for row in rows],
@@ -450,6 +472,9 @@ def report_email_recipients_api(request):
     body = _parse_json_body(request)
     if body is None:
         return api_error('Invalid request body.')
+    report_type = _report_type(request, body)
+    if report_type is None:
+        return api_error('report_type is invalid.')
     email = (body.get('email') or '').strip().lower()
     if not email:
         return api_error('email is required.')
@@ -457,9 +482,13 @@ def report_email_recipients_api(request):
         validate_email(email)
     except ValidationError:
         return api_error('Enter a valid email address.')
-    if StockReportEmailRecipient.objects.filter(email__iexact=email).exists():
+    if StockReportEmailRecipient.objects.filter(
+        email__iexact=email, report_type=report_type,
+    ).exists():
         return api_error('That email is already on the list.', status_code=409)
-    row = StockReportEmailRecipient.objects.create(email=email)
+    row = StockReportEmailRecipient.objects.create(
+        email=email, report_type=report_type,
+    )
     return api_success(
         'Report email recipient added.',
         _recipient_dict(row),
@@ -496,7 +525,9 @@ def report_email_recipient_detail_api(request, pk: int):
         except ValidationError:
             return api_error('Enter a valid email address.')
         clash = (
-            StockReportEmailRecipient.objects.filter(email__iexact=email)
+            StockReportEmailRecipient.objects.filter(
+                email__iexact=email, report_type=row.report_type,
+            )
             .exclude(pk=row.pk)
             .exists()
         )
@@ -529,9 +560,14 @@ def report_email_unsubscribe_api(request):
     if row.is_active:
         row.is_active = False
         row.save(update_fields=['is_active', 'updated_at'])
+    label = (
+        'closing stock emails'
+        if row.report_type == StockReportEmailRecipient.REPORT_CLOSING_STOCK
+        else 'open purchase order reminder emails'
+    )
     return HttpResponse(
-        '<html><body><p>You have been unsubscribed from closing stock emails.</p>'
-        '<p>An admin can re-enable you in Stock report settings.</p></body></html>',
+        f'<html><body><p>You have been unsubscribed from {label}.</p>'
+        '<p>An admin can re-enable you in configuration settings.</p></body></html>',
         content_type='text/html; charset=utf-8',
     )
 

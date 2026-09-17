@@ -100,6 +100,22 @@ def _seed_lines_from_po(delivery: PurchaseOrderDelivery, po: PurchaseOrder) -> N
         PurchaseOrderDeliveryLine.objects.bulk_create(rows)
 
 
+def _finish_booked_open_delivery(delivery: PurchaseOrderDelivery, po: PurchaseOrder) -> None:
+    """Close a visit that already booked stock so leftover SKUs can start D2."""
+    before = {'delivery_id': delivery.id, 'status': delivery.status}
+    delivery.status = PurchaseOrderDeliveryStatus.RECEIVED
+    delivery.save(update_fields=['status', 'updated_at'])
+    record_history(
+        po=po,
+        delivery=delivery,
+        event_type=PurchaseOrderHistoryEvent.NOTE,
+        remarks='Visit finished — rest on next truck.',
+        before=before,
+        after={'delivery_id': delivery.id, 'status': delivery.status},
+        actor=actor_json(),
+    )
+
+
 def _create_locked(po: PurchaseOrder, *, seed_from_po: bool) -> PurchaseOrderDelivery:
     if po.status not in (
         PurchaseOrderStatus.ORDERED,
@@ -113,8 +129,20 @@ def _create_locked(po: PurchaseOrder, *, seed_from_po: bool) -> PurchaseOrderDel
         raise DeliveryError(
             'Purchase order is fully received; no further deliveries.',
         )
-    if open_delivery_for(po.id) is not None:
-        raise DeliveryError('An open delivery already exists.')
+    existing = (
+        PurchaseOrderDelivery.objects.select_for_update()
+        .filter(
+            purchase_order_id=po.id,
+            status=PurchaseOrderDeliveryStatus.OPEN,
+        )
+        .first()
+    )
+    if existing is not None:
+        if not existing.lines.filter(qty_received__gt=0).exists():
+            raise DeliveryError(
+                'An open delivery already exists. Cancel it first.',
+            )
+        _finish_booked_open_delivery(existing, po)
     delivery = PurchaseOrderDelivery.objects.create(
         purchase_order=po,
         status=PurchaseOrderDeliveryStatus.OPEN,

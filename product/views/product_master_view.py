@@ -12,6 +12,7 @@ from locations.utils.api_response import api_error, api_success
 from product.audit_log import capture_product_audit
 from product.goods_in import category_root, goods_in_type_from_category
 from product.models import (
+    BuyType,
     Category,
     Product,
     ProductClass,
@@ -40,7 +41,7 @@ _STORAGE_REGIME_ALIASES = {
 
 def _product_qs():
     return Product.objects.select_related(
-        'category', 'unit', 'shelf_life', 'recipe', 'costing', 'technical',
+        'category', 'unit', 'shelf_life', 'recipe', 'costing', 'technical', 'buy_type',
     ).prefetch_related(
         Prefetch(
             'recipe__versions',
@@ -106,6 +107,10 @@ def product_detail_dict(product: Product) -> dict:
             'purchase_unit_id': product.purchasing_unit_id,
             'purchase_format': product.purchase_shape_format_id,
             'purchase_version': product.purchasing_version,
+            'buy_type_id': product.buy_type_id,
+            'buy_type_name': (
+                product.buy_type.name if product.buy_type_id else None
+            ),
         },
         'costing': costing_data,
         'created_at': product.created_at.isoformat() if product.created_at else None,
@@ -247,6 +252,8 @@ def _purchase_details_from_body(body: dict) -> dict | None:
             payload['purchase_format'] = nested.get('purchase_format')
         if 'purchase_version' in nested:
             payload['purchase_version'] = nested.get('purchase_version')
+        if 'buy_type_id' in nested:
+            payload['buy_type_id'] = nested.get('buy_type_id')
         return payload or None
 
     payload = {}
@@ -262,6 +269,8 @@ def _purchase_details_from_body(body: dict) -> dict | None:
         payload['purchase_version'] = body.get(
             'purchase_version', body.get('purchasing_version'),
         )
+    if 'buy_type_id' in body:
+        payload['buy_type_id'] = body.get('buy_type_id')
     return payload or None
 
 
@@ -286,6 +295,19 @@ def _apply_purchase_details(product: Product, purchase: dict):
 
     if 'purchase_version' in purchase:
         product.purchasing_version = purchase.get('purchase_version')
+
+    if 'buy_type_id' in purchase:
+        raw = purchase.get('buy_type_id')
+        if raw in (None, ''):
+            product.buy_type_id = None
+        else:
+            try:
+                buy_type_id = int(raw)
+            except (TypeError, ValueError):
+                raise ValueError('buy_type_id must be an integer.')
+            if not BuyType.objects.filter(pk=buy_type_id).exists():
+                raise ValueError(f'buy_type_id={buy_type_id} not found.')
+            product.buy_type_id = buy_type_id
 
 
 def _parse_optional_int(raw, field_name: str):

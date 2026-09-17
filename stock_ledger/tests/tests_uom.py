@@ -135,6 +135,9 @@ class UomConversionTests(TestCase):
         self.assertEqual(row['pack_unit_name'], 'Box')
         self.assertEqual(Decimal(row['display_kg']), Decimal('20'))
         self.assertTrue(row['shape_format_label'])
+        self.assertEqual(row['category_id'], self.product.category_id)
+        self.assertEqual(row['buy_type_id'], self.product.buy_type_id)
+        self.assertEqual(row['buy_type_name'], None)
 
         remaining = client.get(
             f'/stock/warehouse/remaining/?location_id={self.wh.id}',

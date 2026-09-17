@@ -1049,9 +1049,13 @@ class StockFifoOverride(models.Model):
 
 
 class StockReportEmailRecipient(models.Model):
-    """Addresses that receive the daily closing-stock report email."""
+    """Addresses that receive a nightly report email (closing stock or open PO)."""
 
-    email = models.EmailField(unique=True)
+    REPORT_CLOSING_STOCK = 'closing_stock'
+    REPORT_OPEN_PO = 'open_po'
+
+    email = models.EmailField()
+    report_type = models.CharField(max_length=32, default=REPORT_CLOSING_STOCK)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1059,6 +1063,12 @@ class StockReportEmailRecipient(models.Model):
     class Meta:
         db_table = 'stock_report_email_recipient'
         ordering = ['email']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['email', 'report_type'],
+                name='uniq_stock_report_email_type',
+            ),
+        ]
 
     def __str__(self):
         return f'stock_report_email_recipient:{self.email}'

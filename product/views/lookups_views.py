@@ -9,6 +9,7 @@ from locations.utils.api_response import api_error, api_success
 from product.category_images import category_image_url, upload_category_image
 from product.models import (
     AllergenCode,
+    BuyType,
     Category,
     DeliveryState,
     PackagingType,
@@ -510,6 +511,81 @@ def product_purchase_format_detail_api(request, pk: int):
         return api_error(f'Could not update purchase format: {exc}', status_code=400)
 
     return api_success('Purchase format updated successfully.', _format_dict(row))
+
+
+@require_http_methods(['GET', 'POST'])
+@csrf_exempt
+def product_buy_type_list_api(request):
+    if request.method == 'GET':
+        return api_success(
+            'Buy types fetched successfully.',
+            [{'id': row.id, 'name': row.name} for row in BuyType.objects.all()],
+        )
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+
+    name = (body.get('name') or '').strip()
+    if not name:
+        return api_error('Missing required fields: name', status_code=400)
+
+    if BuyType.objects.filter(name__iexact=name).exists():
+        return api_error(f'Buy type "{name}" already exists.', status_code=409)
+
+    try:
+        row = BuyType.objects.create(name=name)
+    except IntegrityError as exc:
+        return api_error(f'Could not create buy type: {exc}', status_code=400)
+
+    return api_success(
+        'Buy type created successfully.',
+        {'id': row.id, 'name': row.name},
+        status_code=201,
+    )
+
+
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@csrf_exempt
+def product_buy_type_detail_api(request, pk: int):
+    try:
+        row = BuyType.objects.get(pk=pk)
+    except BuyType.DoesNotExist:
+        return api_error('Buy type not found.', status_code=404)
+
+    if request.method == 'GET':
+        return api_success(
+            'Buy type fetched successfully.',
+            {'id': row.id, 'name': row.name},
+        )
+
+    if request.method == 'DELETE':
+        return api_error('Buy types cannot be deleted.', status_code=403)
+
+    body = _parse_json_body(request)
+    if body is None:
+        return api_error('Invalid JSON body.', status_code=400)
+    if 'name' not in body:
+        return api_error('Missing required fields: name', status_code=400)
+
+    name = (body.get('name') or '').strip()
+    if not name:
+        return api_error('name cannot be empty.', status_code=400)
+
+    clash = BuyType.objects.filter(name__iexact=name).exclude(pk=row.pk)
+    if clash.exists():
+        return api_error(f'Buy type "{name}" already exists.', status_code=409)
+
+    row.name = name
+    try:
+        row.save(update_fields=['name'])
+    except IntegrityError as exc:
+        return api_error(f'Could not update buy type: {exc}', status_code=400)
+
+    return api_success(
+        'Buy type updated successfully.',
+        {'id': row.id, 'name': row.name},
+    )
 
 
 @require_GET
