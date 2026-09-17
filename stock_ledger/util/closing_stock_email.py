@@ -1,21 +1,45 @@
-"""Build and email the daily closing-stock CSV report (HTML + CSV)."""
+"""Build and email the daily closing-stock report (HTML + Excel)."""
 
 from __future__ import annotations
 
 import csv
 import io
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 
 from django.conf import settings
 from django.core.signing import BadSignature, Signer
 from django.utils import timezone
+from openpyxl import Workbook
 
 from stock_ledger.models import StockReportEmailRecipient
 from stock_ledger.util.reports import closing_balances_as_of
 from stock_ledger.util.ses_mail import SesMailError, send_email_with_attachment
 
 _UNSUB_SALT = 'stock-report-email-unsub'
+
+_XLSX_CONTENT_TYPE = (
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+)
+
+# Match FE export: docs/closing-stock-repor/Closing stock detail - *.xlsx
+_XLSX_HEADERS = (
+    'Product Code',
+    'Sage Product Code',
+    'Product Name',
+    'Trace Number',
+    'Use by / best before',
+    'Production date',
+    'Location',
+    'Pack Shape Format',
+    'Packs Qty',
+    'Packs Unit',
+    'Stock Qty',
+    'Stock Unit',
+    'Stock Qty (kg)',
+    'Stock Unit (kg)',
+)
 
 _CSV_FIELDS = (
     'as_of',
@@ -69,7 +93,87 @@ def unsubscribe_url(recipient_id: int) -> str:
     return f'{base}/stock/reports/email-unsubscribe/?token={token}'
 
 
+def _cell(value) -> str | int | float | None:
+    if value is None or value == '':
+        return None
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+def _to_decimal(value) -> Decimal | None:
+    if value is None or value == '':
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _excel_data_row(row: dict) -> tuple:
+    """Map API closing-stock row → FE Excel columns."""
+    display_kg = _to_decimal(row.get('display_kg'))
+    if display_kg is not None:
+        stock_qty = display_kg * Decimal('1000')
+        stock_unit = 'grams'
+        stock_qty_kg = display_kg
+        stock_unit_kg = 'kg'
+    else:
+        stock_qty = _to_decimal(row.get('quantity'))
+        stock_unit = row.get('unit_name')
+        stock_qty_kg = None
+        stock_unit_kg = None
+
+    product_code = row.get('recipe_code') or row.get('gff_code')
+    return (
+        _cell(product_code),
+        _cell(row.get('sage_product_code')),
+        _cell(row.get('product_name')),
+        _cell(row.get('trace_number')),
+        _cell(row.get('use_by')),
+        _cell(row.get('production_date')),
+        _cell(row.get('location_name')),
+        _cell(row.get('shape_format_label')),
+        _cell(row.get('pack_quantity')),
+        _cell(row.get('pack_unit_name')),
+        _cell(stock_qty),
+        _cell(stock_unit),
+        _cell(stock_qty_kg),
+        _cell(stock_unit_kg),
+    )
+
+
+def rows_to_xlsx(rows: list[dict], *, as_of: date) -> bytes:
+    """FE-matching workbook: Data sheet + Meta sheet."""
+    wb = Workbook()
+    data = wb.active
+    data.title = 'Data'
+    data.append(['Closing stock detail'])
+    data.append(list(_XLSX_HEADERS))
+    for row in rows:
+        data.append(list(_excel_data_row(row)))
+
+    meta = wb.create_sheet('Meta')
+    meta.append(['Field', 'Value'])
+    meta.append(['Brand', 'www.gazeboo.cloud'])
+    meta.append(['Report', 'Closing stock'])
+    meta.append(['Downloaded by', 'System Admin'])
+    meta.append(['Downloaded at (local)', timezone.localtime().isoformat()])
+    meta.append(['Timezone', str(timezone.get_current_timezone())])
+    meta.append(['Row count', len(rows)])
+    meta.append([
+        'Filters',
+        f'As of: {format_report_date(as_of)}; View: Detailed',
+    ])
+    meta.append(['View', 'detail'])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def rows_to_csv(rows: list[dict]) -> bytes:
+    """Legacy CSV helper (tests / ad-hoc). Prefer rows_to_xlsx for email."""
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=_CSV_FIELDS, extrasaction='ignore')
     writer.writeheader()
@@ -85,7 +189,7 @@ def build_closing_stock_html(
     unsubscribe_href: str | None = None,
 ) -> str:
     """Branded Gazeboo Cloud HTML body. Logo via cid:gazebo-logo. No item list."""
-    del rows  # CSV carries the detail; body is a short note only.
+    del rows  # Excel carries the detail; body is a short note only.
     day_label = format_report_date(as_of)
     unsub = ''
     if unsubscribe_href:
@@ -162,15 +266,15 @@ def send_closing_stock_report(
     dry_run: bool = False,
 ) -> dict:
     """
-    Email closing stock (HTML + CSV) to each active recipient (per-person unsub link).
+    Email closing stock (HTML + Excel) to each active recipient (per-person unsub link).
     Returns {as_of, row_count, recipients, message_ids, skipped}.
     """
     day = as_of or default_as_of()
     day_label = format_report_date(day)
     recipients = active_recipients()
     rows = closing_balances_as_of(as_of=day)
-    csv_bytes = rows_to_csv(rows)
-    filename = f'closing-stock-{day.isoformat()}.csv'
+    xlsx_bytes = rows_to_xlsx(rows, as_of=day)
+    filename = f'Closing stock detail - {day.strftime("%d-%m-%Y")}.xlsx'
     emails = [row.email for row in recipients]
 
     result = {
@@ -181,7 +285,8 @@ def send_closing_stock_report(
         'message_ids': [],
         'skipped': False,
         'filename': filename,
-        'csv_bytes': len(csv_bytes),
+        'attachment_bytes': len(xlsx_bytes),
+        'csv_bytes': len(xlsx_bytes),  # backward-compatible key for callers/tests
     }
 
     if not recipients:
@@ -198,7 +303,7 @@ def send_closing_stock_report(
             body_html = build_closing_stock_html(as_of=day, unsubscribe_href=href)
             message_id = send_email_with_attachment(
                 to_addresses=[row.email],
-                subject=f'Gazeboo Cloud — Closing stock as of {day_label}',
+                subject=f'Gazeboo Cloud - Closing stock as of {day_label}',
                 body_text=(
                     'Good Morning,\n\n'
                     'Closing stock report is available to download from Stock Section '
@@ -211,7 +316,8 @@ def send_closing_stock_report(
                 ),
                 body_html=body_html,
                 filename=filename,
-                content=csv_bytes,
+                content=xlsx_bytes,
+                content_type=_XLSX_CONTENT_TYPE,
             )
             message_ids.append(message_id)
     except SesMailError:
