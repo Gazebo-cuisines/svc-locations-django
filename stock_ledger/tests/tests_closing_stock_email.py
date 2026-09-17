@@ -22,7 +22,7 @@ from stock_ledger.models import StockReportEmailRecipient, StockLot, StockLotOri
 from stock_ledger.util import services
 from stock_ledger.util.closing_stock_email import (
     build_closing_stock_html,
-    rows_to_csv,
+    rows_to_xlsx,
     send_closing_stock_report,
     unsubscribe_token,
 )
@@ -97,7 +97,7 @@ class ClosingStockEmailTests(TestCase):
         self.assertTrue(result['skipped'])
         self.assertGreaterEqual(result['row_count'], 1)
 
-    def test_csv_and_send(self):
+    def test_xlsx_and_send(self):
         StockReportEmailRecipient.objects.create(email='a@example.com')
         StockReportEmailRecipient.objects.create(
             email='b@example.com',
@@ -110,10 +110,27 @@ class ClosingStockEmailTests(TestCase):
             result = send_closing_stock_report(as_of=date(2026, 8, 20))
         self.assertEqual(result['recipients'], ['a@example.com'])
         self.assertEqual(result['message_id'], 'msg-1')
-        self.assertIn(b'product_name', rows_to_csv([{'product_name': 'x'}]))
+        xlsx = rows_to_xlsx(
+            [{
+                'recipe_code': 'SPICE0-13',
+                'sage_product_code': None,
+                'product_name': 'AJWAIN SEEDS',
+                'trace_number': '26184',
+                'use_by': '2027-06-13',
+                'production_date': None,
+                'location_name': 'Low Risk',
+                'shape_format_label': '1CASE x 20KG = 20KG',
+                'pack_quantity': '1',
+                'pack_unit_name': 'Case',
+                'display_kg': '20',
+            }],
+            as_of=date(2026, 8, 20),
+        )
+        self.assertTrue(xlsx[:2] == b'PK')  # zip/xlsx magic
         kwargs = send.call_args.kwargs
         self.assertEqual(kwargs['to_addresses'], ['a@example.com'])
-        self.assertTrue(kwargs['filename'].endswith('.csv'))
+        self.assertTrue(kwargs['filename'].endswith('.xlsx'))
+        self.assertIn('spreadsheetml.sheet', kwargs['content_type'])
         self.assertIn('Gazeboo Cloud', kwargs['body_html'])
         self.assertIn('cid:gazebo-logo', kwargs['body_html'])
         self.assertIn('Good Morning', kwargs['body_html'])

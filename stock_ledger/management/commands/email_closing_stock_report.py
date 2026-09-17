@@ -7,7 +7,7 @@ from stock_ledger.util.ses_mail import SesMailError
 
 
 class Command(BaseCommand):
-    help = 'Email yesterday\'s closing stock CSV to active report recipients via AWS SES.'
+    help = 'Email yesterday\'s closing stock Excel to active report recipients via AWS SES.'
 
     def add_arguments(self, parser):
         parser.add_argument(
