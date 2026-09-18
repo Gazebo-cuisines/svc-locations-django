@@ -17,6 +17,8 @@ from stock_ledger.views.common import (
     _parse_effective_at,
     _parse_json_body,
 )
+from users_rbac.auth import attach_user
+from users_rbac.grants import is_admin_user
 from users_rbac.permissions import gate_floor_write, gate_warehouse_write
 
 
@@ -204,6 +206,18 @@ def entry_post_api(request, entry_id: int):
 @gate_warehouse_write()
 def entry_cancel_api(request, entry_id: int):
     """Drop a queued posting so remaining qty is no longer reserved."""
+    user = getattr(request, 'rbac_user', None)
+    if user is not None and not is_admin_user(user):
+        entry = StockEntry.objects.filter(pk=entry_id).only('actor_user_id').first()
+        if (
+            entry is not None
+            and entry.actor_user_id is not None
+            and entry.actor_user_id != user.id
+        ):
+            return api_error(
+                'You can only cancel your own queued stickers.',
+                status_code=403,
+            )
     try:
         posting = entry_posting.cancel_entry(entry_id=entry_id)
     except StockValidationError as exc:
@@ -216,6 +230,9 @@ def entry_cancel_api(request, entry_id: int):
 @require_GET
 def entry_queued_list_api(request):
     """Inbox: queued receipts and transfer_out waiting for print/verify/post."""
+    denied = attach_user(request, missing='ok', invalid='error')
+    if denied:
+        return denied
     try:
         limit = int(request.GET.get('limit') or 100)
         offset = int(request.GET.get('offset') or 0)
@@ -241,12 +258,17 @@ def entry_queued_list_api(request):
         return api_error('entry_type must be receipt or transfer_out.')
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
+    user = getattr(request, 'rbac_user', None)
+    actor_user_id = None
+    if user is not None and not is_admin_user(user):
+        actor_user_id = user.id
     preload_kg_factors()
     total = entry_posting.queued_receipts_qs(
         entry_type=entry_type,
         source_document_id=source_document_id,
         location_id=location_id,
         product_id=product_id,
+        actor_user_id=actor_user_id,
     ).count()
     rows = entry_posting.list_queued_receipts(
         limit=limit,
@@ -255,6 +277,7 @@ def entry_queued_list_api(request):
         source_document_id=source_document_id,
         location_id=location_id,
         product_id=product_id,
+        actor_user_id=actor_user_id,
     )
     results = []
     for entry in rows:

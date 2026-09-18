@@ -1,14 +1,16 @@
 """Goods Out without plan: scan dest fields + transfer auto to_location."""
 
+from contextlib import ExitStack
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 from uuid import uuid4
 
 from django.test import Client, TestCase
 from django.utils import timezone
 
 from locations.models import Location
-from product.models import Category, Product, ProductClass, Range, Unit
+from product.models import Category, Product, ProductClass, ProductSupplier, Range, Unit
 from stock_ledger.models import (
     StockBalance,
     StockEntryPostingStatus,
@@ -16,6 +18,15 @@ from stock_ledger.models import (
     StockLotOrigin,
 )
 from stock_ledger.util import entry_labels, services, stickers
+from users_rbac.models import (
+    AdminAccess,
+    AdminArea,
+    Department,
+    RbacUser,
+    UserDepartment,
+    WarehouseAccess,
+    WarehouseUnit,
+)
 
 
 class GoodsOutWithoutPlanTests(TestCase):
@@ -52,6 +63,46 @@ class GoodsOutWithoutPlanTests(TestCase):
             effective_at=timezone.now(),
         )
         self.client = Client()
+        self.floor = self._make_floor('floor01', 'sub-go-floor')
+        self.amit = self._make_floor('amit_amit', 'sub-go-amit')
+        self.akshay = self._make_floor('akshay_1667', 'sub-go-akshay')
+        self.admin = RbacUser.objects.create(
+            cognito_sub='sub-go-admin',
+            username='goadmin',
+            display_name='GO Admin',
+        )
+        UserDepartment.objects.create(
+            user=self.admin, department=Department.ADMIN,
+        )
+        AdminAccess.objects.create(
+            user=self.admin, area=AdminArea.STOCK_MANAGEMENT,
+        )
+
+    def _make_floor(self, username: str, sub: str) -> RbacUser:
+        user = RbacUser.objects.create(
+            cognito_sub=sub,
+            username=username,
+            display_name=username,
+        )
+        UserDepartment.objects.create(
+            user=user, department=Department.WAREHOUSE,
+        )
+        WarehouseAccess.objects.create(
+            user=user,
+            unit=WarehouseUnit.UNIT_2,
+            can_goods_out_without_plan=True,
+        )
+        return user
+
+    def _as(self, user, *targets):
+        def fake(request, **kwargs):
+            request.rbac_user = user
+            return None
+
+        stack = ExitStack()
+        for target in targets:
+            stack.enter_context(patch(target, side_effect=fake))
+        return stack
 
     def test_scan_goods_out_includes_auto_destination(self):
         resp = self.client.get(
@@ -155,6 +206,118 @@ class GoodsOutWithoutPlanTests(TestCase):
             )
             out_id = tx['out']['id']
             self.assertEqual(tx['goods_out_label']['barcode'], f'E{out_id}')
+
+    def test_transfer_pack_qty_splits_full_trays(self):
+        self.product.goods_out_pack_qty = Decimal('15')
+        self.product.save(update_fields=['goods_out_pack_qty'])
+        extra = services.receipt(
+            idempotency_key=f'go-pack-in-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('45'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-pack-45-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'quantity': '45',
+                'unit_id': self.unit.id,
+                'queue_stock': True,
+                'label_format': 'box',
+                'label_count': 45,
+                'source_entry_id': extra.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 3)
+        self.assertEqual(body['transaction_count'], 3)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(qtys, [Decimal('15'), Decimal('15'), Decimal('15')])
+
+    def test_transfer_pack_qty_remainder_sticker(self):
+        self.product.goods_out_pack_qty = Decimal('15')
+        self.product.save(update_fields=['goods_out_pack_qty'])
+        extra = services.receipt(
+            idempotency_key=f'go-pack-32-in-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('32'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-pack-32-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'quantity': '32',
+                'unit_id': self.unit.id,
+                'queue_stock': True,
+                'label_format': 'box',
+                'label_count': 32,
+                'source_entry_id': extra.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 3)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(qtys, [Decimal('15'), Decimal('15'), Decimal('2')])
+
+    def test_transfer_supplier_case_ignores_phone_label_count(self):
+        case = Unit.objects.create(id=72, name='Case')
+        supplier = Location.objects.create(id=73, name='GO Supplier', visible=True)
+        ProductSupplier.objects.create(
+            product=self.product,
+            supplier=supplier,
+            supplier_code='GO-10KG',
+            supplier_product_name='10KG CASE',
+            outer_qty=Decimal('1'),
+            outer_unit=case,
+            inner_qty=Decimal('10'),
+            inner_unit=self.unit,
+            is_active=True,
+        )
+        pallet = services.receipt(
+            idempotency_key=f'go-case-in-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('200'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-case-81-{uuid4()}',
+                'from_location_id': self.wh.id,
+                'queue_stock': True,
+                'label_format': 'box',
+                'label_count': 81,
+                'lines': [
+                    {
+                        'lot_id': self.lot.id,
+                        'quantity': '200',
+                        'source_entry_id': pallet.id,
+                    },
+                ],
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 20)
+        self.assertEqual(body['transaction_count'], 20)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(qtys, [Decimal('10')] * 20)
 
     def test_transfer_label_count_verify_each_posts_stock(self):
         queued = self.client.post(
@@ -415,10 +578,17 @@ class GoodsOutWithoutPlanTests(TestCase):
             Decimal('115'),
         )
 
-    def test_goods_out_form_steps_after_queue(self):
-        empty = self.client.get(
+    def test_goods_out_form_requires_sign_in(self):
+        resp = self.client.get(
             f'/stock/goods-out/form/?location_id={self.wh.id}',
         )
+        self.assertEqual(resp.status_code, 401, resp.content)
+
+    def test_goods_out_form_steps_after_queue(self):
+        with self._as(self.floor, 'stock_ledger.views.movements.attach_user'):
+            empty = self.client.get(
+                f'/stock/goods-out/form/?location_id={self.wh.id}',
+            )
         self.assertEqual(empty.status_code, 200, empty.content)
         self.assertEqual(empty.json()['data']['steps']['current'], 'find')
         self.assertEqual(empty.json()['data']['steps']['rail'], [
@@ -436,15 +606,17 @@ class GoodsOutWithoutPlanTests(TestCase):
                 'unit_id': self.unit.id,
                 'queue_stock': True,
                 'source_entry_id': self.entry.id,
+                'actor_user_id': self.floor.id,
             },
             content_type='application/json',
         )
         self.assertEqual(queued.status_code, 201, queued.content)
         out_id = queued.json()['data']['out']['id']
 
-        form = self.client.get(
-            f'/stock/goods-out/form/?location_id={self.wh.id}',
-        )
+        with self._as(self.floor, 'stock_ledger.views.movements.attach_user'):
+            form = self.client.get(
+                f'/stock/goods-out/form/?location_id={self.wh.id}',
+            )
         self.assertEqual(form.status_code, 200, form.content)
         data = form.json()['data']
         self.assertEqual(data['steps']['current'], 'print')
@@ -463,7 +635,8 @@ class GoodsOutWithoutPlanTests(TestCase):
             '25.000000',
         )
 
-    def _queue_goods_out(self, quantity: str) -> dict:
+    def _queue_goods_out(self, quantity: str, *, actor=None) -> dict:
+        actor = actor or self.floor
         resp = self.client.post(
             '/stock/transfer/',
             data={
@@ -474,17 +647,20 @@ class GoodsOutWithoutPlanTests(TestCase):
                 'unit_id': self.unit.id,
                 'queue_stock': True,
                 'source_entry_id': self.entry.id,
+                'actor_user_id': actor.id,
             },
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 201, resp.content)
         return resp.json()['data']['out']
 
-    def _form(self, **params) -> dict:
+    def _form(self, user=None, **params) -> dict:
+        user = user or self.floor
         query = ''.join(f'&{k}={v}' for k, v in params.items())
-        resp = self.client.get(
-            f'/stock/goods-out/form/?location_id={self.wh.id}{query}',
-        )
+        with self._as(user, 'stock_ledger.views.movements.attach_user'):
+            resp = self.client.get(
+                f'/stock/goods-out/form/?location_id={self.wh.id}{query}',
+            )
         self.assertEqual(resp.status_code, 200, resp.content)
         return resp.json()['data']
 
@@ -523,6 +699,60 @@ class GoodsOutWithoutPlanTests(TestCase):
             [row['entry_id'] for row in scoped['steps']['lines'][0]['labels']],
             [mine['id']],
         )
+
+    def test_floor_form_hides_other_operator_queue(self):
+        amit = self._queue_goods_out('5', actor=self.amit)
+        self._queue_goods_out('5', actor=self.amit)
+        akshay = self._queue_goods_out('10', actor=self.akshay)
+        tiles = [
+            row['entry_id']
+            for line in self._form(user=self.akshay)['steps']['lines']
+            for row in line['labels']
+        ]
+        self.assertEqual(tiles, [akshay['id']])
+        self.assertNotIn(amit['id'], tiles)
+        amit_tiles = [
+            row['entry_id']
+            for line in self._form(user=self.amit)['steps']['lines']
+            for row in line['labels']
+        ]
+        self.assertEqual(len(amit_tiles), 2)
+        self.assertNotIn(akshay['id'], amit_tiles)
+
+    def test_floor_cannot_cancel_other_operator_queue(self):
+        amit = self._queue_goods_out('5', actor=self.amit)
+        with self._as(
+            self.akshay,
+            'users_rbac.permissions.attach_user',
+        ):
+            resp = self.client.post(
+                f"/stock/entries/{amit['id']}/cancel/",
+                data={},
+                content_type='application/json',
+            )
+        self.assertEqual(resp.status_code, 403, resp.content)
+        self.assertIn('your own queued stickers', resp.json()['message'])
+
+    def test_admin_queued_list_sees_both_operators(self):
+        amit = self._queue_goods_out('5', actor=self.amit)
+        akshay = self._queue_goods_out('10', actor=self.akshay)
+        with self._as(self.akshay, 'stock_ledger.views.entries.attach_user'):
+            floor = self.client.get(
+                f'/stock/entries/queued/?location_id={self.wh.id}'
+                '&entry_type=transfer_out',
+            )
+        self.assertEqual(floor.status_code, 200, floor.content)
+        floor_ids = [row['id'] for row in floor.json()['data']['results']]
+        self.assertEqual(floor_ids, [akshay['id']])
+        with self._as(self.admin, 'stock_ledger.views.entries.attach_user'):
+            admin = self.client.get(
+                f'/stock/entries/queued/?location_id={self.wh.id}'
+                '&entry_type=transfer_out',
+            )
+        self.assertEqual(admin.status_code, 200, admin.content)
+        admin_ids = [row['id'] for row in admin.json()['data']['results']]
+        self.assertIn(amit['id'], admin_ids)
+        self.assertIn(akshay['id'], admin_ids)
 
     def test_cancelled_entry_cannot_be_printed_or_scanned(self):
         out = self._queue_goods_out('5')
@@ -577,6 +807,7 @@ class GoodsOutWithoutPlanTests(TestCase):
                     'unit_id': self.unit.id,
                     'queue_stock': True,
                     'source_entry_id': bag.id,
+                    'actor_user_id': self.amit.id,
                 },
                 content_type='application/json',
             )
@@ -599,7 +830,7 @@ class GoodsOutWithoutPlanTests(TestCase):
             morning.append(out)
 
         amit = queue_from_bag('10')
-        form = self._form()
+        form = self._form(user=self.amit)
         tiles = [
             row['entry_id']
             for line in form['steps']['lines']
@@ -609,7 +840,7 @@ class GoodsOutWithoutPlanTests(TestCase):
             tiles, [amit['id']],
             "print/scan grid must not list today's finished stickers",
         )
-        scoped = self._form(transfer_group_id=amit['transfer_group_id'])
+        scoped = self._form(transfer_group_id=amit['transfer_group_id'], user=self.amit)
         self.assertEqual(
             [row['entry_id'] for row in scoped['steps']['lines'][0]['labels']],
             [amit['id']],
@@ -620,7 +851,7 @@ class GoodsOutWithoutPlanTests(TestCase):
             data={}, content_type='application/json',
         )
         self.assertEqual(cancel_mine.status_code, 200, cancel_mine.content)
-        after_cancel = self._form()
+        after_cancel = self._form(user=self.amit)
         live_tiles = [
             row['entry_id']
             for line in after_cancel['steps']['lines']

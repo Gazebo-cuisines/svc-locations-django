@@ -99,6 +99,7 @@ def product_detail_dict(product: Product) -> dict:
         'external_barcode': product.external_barcode,
         'label_mode': product.label_mode,
         'goods_in_type': product.goods_in_type,
+        'goods_out_pack_qty': _dec_str(product.goods_out_pack_qty),
         'storage_regime': _storage_regime_of(product),
         'is_downtime': product.is_downtime,
         'ingredient_count': product.ingredient_count,
@@ -122,11 +123,32 @@ def product_detail_dict(product: Product) -> dict:
     return data
 
 
+def _dec_str(value):
+    if value is None:
+        return None
+    text = format(Decimal(str(value)), 'f')
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text or '0'
+
+
 def _parse_json_body(request):
     try:
         return json.loads(request.body.decode('utf-8') or '{}')
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _parse_goods_out_pack_qty(value):
+    if value in (None, ''):
+        return None
+    try:
+        qty = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError('goods_out_pack_qty must be a number.') from exc
+    if qty <= 0:
+        raise ValueError('goods_out_pack_qty must be > 0.')
+    return qty
 
 
 def _label_mode_error(value) -> str | None:
@@ -420,6 +442,14 @@ def product_update_api(request, product: Product):
     elif 'category_id' in body:
         category = Category.objects.select_related('parent').get(pk=product.category_id)
         product.goods_in_type = goods_in_type_from_category(category)
+
+    if 'goods_out_pack_qty' in body:
+        try:
+            product.goods_out_pack_qty = _parse_goods_out_pack_qty(
+                body['goods_out_pack_qty'],
+            )
+        except ValueError as exc:
+            return api_error(str(exc), status_code=400)
 
     for field in (
         'name',
