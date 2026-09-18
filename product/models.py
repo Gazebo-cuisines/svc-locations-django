@@ -180,6 +180,12 @@ class Product(models.Model):
         null=True,
         blank=True,
     )
+    goods_out_pack_qty = models.DecimalField(
+        max_digits=16,
+        decimal_places=6,
+        null=True,
+        blank=True,
+    )
     is_active = models.BooleanField(default=True)
     is_downtime = models.BooleanField(default=False)
     purchasing_version = models.IntegerField(null=True, blank=True)
@@ -255,6 +261,13 @@ class Product(models.Model):
     class Meta:
         db_table = 'product'
         ordering = ['name']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(goods_out_pack_qty__isnull=True)
+                | models.Q(goods_out_pack_qty__gt=0),
+                name='chk_product_goods_out_pack_qty_pos',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.id}:{self.name}'

@@ -10,7 +10,7 @@ from django.test import Client, TestCase
 from django.utils import timezone
 
 from locations.models import Location
-from product.models import Category, Product, ProductClass, Range, Unit
+from product.models import Category, Product, ProductClass, ProductSupplier, Range, Unit
 from stock_ledger.models import (
     StockBalance,
     StockEntryPostingStatus,
@@ -206,6 +206,118 @@ class GoodsOutWithoutPlanTests(TestCase):
             )
             out_id = tx['out']['id']
             self.assertEqual(tx['goods_out_label']['barcode'], f'E{out_id}')
+
+    def test_transfer_pack_qty_splits_full_trays(self):
+        self.product.goods_out_pack_qty = Decimal('15')
+        self.product.save(update_fields=['goods_out_pack_qty'])
+        extra = services.receipt(
+            idempotency_key=f'go-pack-in-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('45'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-pack-45-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'quantity': '45',
+                'unit_id': self.unit.id,
+                'queue_stock': True,
+                'label_format': 'box',
+                'label_count': 45,
+                'source_entry_id': extra.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 3)
+        self.assertEqual(body['transaction_count'], 3)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(qtys, [Decimal('15'), Decimal('15'), Decimal('15')])
+
+    def test_transfer_pack_qty_remainder_sticker(self):
+        self.product.goods_out_pack_qty = Decimal('15')
+        self.product.save(update_fields=['goods_out_pack_qty'])
+        extra = services.receipt(
+            idempotency_key=f'go-pack-32-in-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('32'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-pack-32-{uuid4()}',
+                'lot_id': self.lot.id,
+                'from_location_id': self.wh.id,
+                'quantity': '32',
+                'unit_id': self.unit.id,
+                'queue_stock': True,
+                'label_format': 'box',
+                'label_count': 32,
+                'source_entry_id': extra.id,
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 3)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(qtys, [Decimal('15'), Decimal('15'), Decimal('2')])
+
+    def test_transfer_supplier_case_ignores_phone_label_count(self):
+        case = Unit.objects.create(id=72, name='Case')
+        supplier = Location.objects.create(id=73, name='GO Supplier', visible=True)
+        ProductSupplier.objects.create(
+            product=self.product,
+            supplier=supplier,
+            supplier_code='GO-10KG',
+            supplier_product_name='10KG CASE',
+            outer_qty=Decimal('1'),
+            outer_unit=case,
+            inner_qty=Decimal('10'),
+            inner_unit=self.unit,
+            is_active=True,
+        )
+        pallet = services.receipt(
+            idempotency_key=f'go-case-in-{uuid4()}',
+            lot=self.lot,
+            location_id=self.wh.id,
+            quantity=Decimal('200'),
+            unit_id=self.unit.id,
+            effective_at=timezone.now(),
+        )
+        resp = self.client.post(
+            '/stock/transfer/',
+            data={
+                'idempotency_key': f'go-case-81-{uuid4()}',
+                'from_location_id': self.wh.id,
+                'queue_stock': True,
+                'label_format': 'box',
+                'label_count': 81,
+                'lines': [
+                    {
+                        'lot_id': self.lot.id,
+                        'quantity': '200',
+                        'source_entry_id': pallet.id,
+                    },
+                ],
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()['data']
+        self.assertEqual(body['label_count'], 20)
+        self.assertEqual(body['transaction_count'], 20)
+        qtys = [abs(Decimal(tx['out']['quantity'])) for tx in body['transactions']]
+        self.assertEqual(qtys, [Decimal('10')] * 20)
 
     def test_transfer_label_count_verify_each_posts_stock(self):
         queued = self.client.post(

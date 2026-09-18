@@ -171,6 +171,36 @@ class ProductApiTests(TestCase):
         batch_detail = self.client.get(f'/product/{batch_id}/').json()['data']
         self.assertEqual(batch_detail['label_mode'], 'batch')
 
+    def test_goods_out_pack_qty_round_trips_and_rejects_non_positive(self):
+        detail = self.client.get(f'/product/{self.product_id}/').json()['data']
+        self.assertIsNone(detail['goods_out_pack_qty'])
+
+        resp = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'goods_out_pack_qty': '15000'}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()['data']['goods_out_pack_qty'], '15000')
+
+        bad = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'goods_out_pack_qty': '0'}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(bad.status_code, 400)
+
+        cleared = self.client.patch(
+            f'/product/{self.product_id}/',
+            data=json.dumps({'goods_out_pack_qty': None}),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=self.auth_header,
+        )
+        self.assertEqual(cleared.status_code, 200, cleared.content)
+        self.assertIsNone(cleared.json()['data']['goods_out_pack_qty'])
+
     def test_buy_type_saves_and_is_audited(self):
         key = BuyType.objects.get(name='Key product')
         planner = BuyType.objects.get(name='Planner product')

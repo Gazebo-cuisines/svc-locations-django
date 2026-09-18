@@ -16,11 +16,16 @@ from stock_ledger.models import (
     StockUnit,
 )
 from stock_ledger.util import entry_labels, entry_posting, services, stickers, stock_units
-from stock_ledger.util.conversions import StockValidationError, stock_to_kg
+from stock_ledger.util.conversions import (
+    StockValidationError,
+    packs_to_stock,
+    stock_to_kg,
+)
 from stock_ledger.util.goods_out_form import (
     GoodsOutFormError,
     resolve_adhoc_goods_out_form,
 )
+from stock_ledger.util.product_supplier_lookup import product_supplier_for_lot
 from stock_ledger.util.serialize import entry_dict, stock_unit_dict, supplier_pack_fields
 from stock_ledger.views.common import (
     _common_write_kwargs,
@@ -375,6 +380,65 @@ def _split_label_quantities(total: Decimal, parts: int) -> list[Decimal]:
     return qty_parts
 
 
+def _split_by_pack(total: Decimal, pack: Decimal) -> list[Decimal]:
+    """Full packs, then leftover sticker. 32 / 15 → [15, 15, 2]."""
+    if pack <= 0:
+        raise StockValidationError('goods_out_pack_qty must be > 0.')
+    remaining = total.quantize(Decimal('0.000001'))
+    pack = pack.quantize(Decimal('0.000001'))
+    parts = []
+    while remaining > pack:
+        parts.append(pack)
+        remaining = (remaining - pack).quantize(Decimal('0.000001'))
+    if remaining > 0:
+        parts.append(remaining)
+    if not parts:
+        raise StockValidationError(
+            f'Cannot split quantity {total} into pack {pack}.',
+        )
+    return parts
+
+
+def _goods_out_pack_qty(product) -> Decimal | None:
+    qty = product.goods_out_pack_qty
+    if qty is None:
+        return None
+    pack = Decimal(qty)
+    if pack <= 0:
+        return None
+    return pack
+
+
+def _resolve_go_pack_qty(lot) -> Decimal | None:
+    """Admin tray size, else one supplier case; None → honour phone label_count."""
+    pack = _goods_out_pack_qty(lot.product)
+    if pack is not None:
+        return pack
+    mapping = product_supplier_for_lot(lot)
+    if mapping is None:
+        return None
+    try:
+        pack = packs_to_stock(Decimal('1'), mapping, lot.product)
+    except StockValidationError:
+        return None
+    if pack <= 0:
+        return None
+    return pack
+
+
+def _transfer_qty_parts(
+    total: Decimal,
+    label_format: str | None,
+    label_count: int,
+    pack_qty: Decimal | None,
+) -> list[Decimal]:
+    if label_format == 'pallet':
+        return [total]
+    if pack_qty is not None:
+        return _split_by_pack(total, pack_qty)
+    return _split_label_quantities(total, label_count)
+
+
 def _parse_transfer_lines(body: dict) -> list[dict] | None:
     """Multi-GI cart: [{lot_id, quantity, source_entry_id}, …]."""
     raw = body.get('lines')
@@ -516,6 +580,7 @@ def _suggest_goods_out_picks(
         'suggested_quantity': _dec(suggested),
         'shortfall': _dec(shortfall),
         'display_kg': _dec(stock_to_kg(suggested, product)),
+        'goods_out_pack_qty': _dec(_goods_out_pack_qty(product)),
         'pick_count': len(picks),
         'picks': picks,
         **{k: dest[k] for k in (
@@ -666,11 +731,14 @@ def transfer_api(request):
                         balance.quantity if balance is not None else None
                     ),
                 )
-                qty_parts = _split_label_quantities(
+                qty_parts = _transfer_qty_parts(
                     part_qty,
-                    1 if line_fmt == 'pallet' else line_count,
+                    line_fmt,
+                    line_count,
+                    _resolve_go_pack_qty(lot),
                 )
                 split_n = len(qty_parts)
+                box_count = 1 if line_fmt != 'pallet' else line_count
                 line_key = (
                     body['idempotency_key']
                     if len(lines) == 1
@@ -688,7 +756,7 @@ def transfer_api(request):
                         'source_entry': source_entry,
                         'unit_moves': None,
                         'label_format': out_fmt_line,
-                        'label_count': line_count,
+                        'label_count': box_count,
                     })
             if required_quantity is not None:
                 picked = sum((item['quantity'] for item in work), Decimal('0'))
@@ -731,11 +799,18 @@ def transfer_api(request):
                         balance.quantity if balance is not None else None
                     ),
                 )
-            qty_parts = _split_label_quantities(
+            qty_parts = _transfer_qty_parts(
                 total_qty,
-                1 if label_format == 'pallet' else label_count,
+                label_format,
+                label_count,
+                _resolve_go_pack_qty(lot),
             )
             split_n = len(qty_parts)
+            if unit_moves is not None and split_n > 1:
+                raise StockValidationError(
+                    'unit_moves cannot be combined with label_count > 1.',
+                )
+            box_count = 1 if label_format != 'pallet' else label_count
             if split_n == 1:
                 unit_keys = [body['idempotency_key']]
             else:
@@ -751,7 +826,7 @@ def transfer_api(request):
                     'source_entry': source_entry,
                     'unit_moves': unit_moves if split_n == 1 else None,
                     'label_format': out_fmt,
-                    'label_count': label_count,
+                    'label_count': box_count,
                 }
                 for unit_key, part_qty in zip(unit_keys, qty_parts)
             ]
@@ -771,7 +846,9 @@ def transfer_api(request):
                         'fifo_override_reason is required when not using '
                         'oldest stock.',
                     )
-            response_label_count = label_count
+            response_label_count = (
+                label_count if label_format == 'pallet' else len(work)
+            )
 
         transactions = []
         for unit_index, item in enumerate(work, start=1):
