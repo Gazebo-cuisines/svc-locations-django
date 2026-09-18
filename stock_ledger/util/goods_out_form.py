@@ -136,18 +136,27 @@ def _is_queued(entry: StockEntry) -> bool:
 def resolve_adhoc_goods_out_form(
     location_id: int,
     transfer_group_id: str | None = None,
+    actor_user_id: int | None = None,
 ) -> dict:
     loc = Location.objects.filter(pk=location_id, visible=True).first()
     if loc is None:
         raise GoodsOutFormError('Location not found.')
 
     today = timezone.localdate()
+    if actor_user_id is None:
+        payload = form_steps([], {}, order=ADHOC_ORDER, rail=RAIL)
+        payload['steps']['current'] = 'find'
+        payload['location_id'] = loc.id
+        payload['location_name'] = loc.name
+        return payload
+
     entries = (
         StockEntry.objects
         .filter(
             entry_type=StockEntryType.TRANSFER_OUT,
             source_document_type='goods_out_adhoc',
             location_id=location_id,
+            actor_user_id=actor_user_id,
             reversed_by__isnull=True,
         )
         .exclude(posting__status=StockEntryPostingStatus.CANCELLED)
@@ -155,8 +164,7 @@ def resolve_adhoc_goods_out_form(
         .order_by('id')
     )
     if transfer_group_id:
-        # Scope to one cart so two operators on the same location never see —
-        # or cancel — each other's queued stickers.
+        # One cart among this operator's queues.
         entries = entries.filter(transfer_group_id=transfer_group_id)
     live = [e for e in entries if _is_queued(e) or _posted_on(e, today)]
 

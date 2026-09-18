@@ -231,6 +231,7 @@ def queued_receipts_qs(
     source_document_id: int | None = None,
     location_id: int | None = None,
     product_id: int | None = None,
+    actor_user_id: int | None = None,
 ):
     qs = (
         StockEntry.objects
@@ -257,6 +258,8 @@ def queued_receipts_qs(
         qs = qs.filter(location_id=location_id)
     if product_id is not None:
         qs = qs.filter(lot__product_id=product_id)
+    if actor_user_id is not None:
+        qs = qs.filter(actor_user_id=actor_user_id)
     return qs
 
 
@@ -268,6 +271,7 @@ def list_queued_receipts(
     source_document_id: int | None = None,
     location_id: int | None = None,
     product_id: int | None = None,
+    actor_user_id: int | None = None,
 ) -> list[StockEntry]:
     limit = max(1, min(int(limit), 500))
     offset = max(0, int(offset))
@@ -276,5 +280,6 @@ def list_queued_receipts(
         source_document_id=source_document_id,
         location_id=location_id,
         product_id=product_id,
+        actor_user_id=actor_user_id,
     )
     return list(qs[offset:offset + limit])

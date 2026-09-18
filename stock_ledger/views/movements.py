@@ -33,6 +33,7 @@ from stock_ledger.views.common import (
     _product_destination_fields,
     _resolve_lot,
 )
+from users_rbac.auth import attach_user
 from users_rbac.permissions import gate_floor_write, gate_warehouse_write
 
 
@@ -572,6 +573,9 @@ def goods_out_suggest_api(request):
 @require_GET
 def goods_out_form_api(request):
     """Without-plan wizard: Find → Qty → FIFO → Scan → Queue → Print → Verify."""
+    denied = attach_user(request)
+    if denied:
+        return denied
     raw = request.GET.get('location_id')
     if raw in (None, ''):
         return api_error('location_id is required.')
@@ -583,6 +587,7 @@ def goods_out_form_api(request):
         data = resolve_adhoc_goods_out_form(
             location_id,
             request.GET.get('transfer_group_id') or None,
+            actor_user_id=request.rbac_user.id,
         )
     except GoodsOutFormError as exc:
         return api_error(str(exc), status_code=404)
